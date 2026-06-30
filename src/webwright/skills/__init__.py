@@ -12,8 +12,8 @@ from .library import Library, Skill
 from .retrieve import retrieve, Candidate
 from .decide import decide, Decision
 from .gate import gate, GateResult
-from .update import evolve, Trace        # NOTE: don't import the `update` function here — it would
-from .llm import configure_llm           # shadow the `update` submodule. Use update.evolve / update.update.
+from .update import evolve, Trace
+from .llm import configure_llm
 from .prompt import with_skill_hint
 
 __all__ = [

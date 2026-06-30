@@ -108,20 +108,6 @@ def _refine(traces: list[Trace], library: Library) -> list[str]:
     return [sid]
 
 
-def _grow(traces: list[Trace], library: Library) -> list[str]:
-    existing = {s.meta.get("template") for s in library.list()}
-    added = []
-    for tr in traces:
-        if not tr.template or tr.template in existing:
-            continue
-        sid = _slug(tr.template)
-        meta = {"template": tr.template, "provenance": "distilled", **tr.meta}
-        library.add(Skill(skill_id=sid, code=tr.code, meta=meta))
-        existing.add(tr.template)
-        added.append(sid)
-    return added
-
-
 def evolve(traces: list[Trace], library: Library) -> dict:
     """Unified update: evolve the EXISTING library, deciding per trace's usage (use/adapt/skip) how
     to change it. This is the core of a continuously-growing library — not rebuilt from scratch each
@@ -158,13 +144,6 @@ def evolve(traces: list[Trace], library: Library) -> dict:
             # all use-success -> skill is good enough, leave it
             changelog["use"].append(existing_templates[tmpl])
     return changelog
-
-
-_UPDATERS = {"grow": _grow, "refine": _refine}
-
-
-def update(traces, library: Library, *, method: str = "grow") -> list[str]:
-    return _UPDATERS[method](traces, library)
 
 
 # ---------- CLI: batch update via a manifest ----------
