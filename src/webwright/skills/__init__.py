@@ -14,8 +14,9 @@ from .decide import decide, Decision
 from .gate import gate, GateResult
 from .update import evolve, Trace        # NOTE: don't import the `update` function here — it would
 from .llm import configure_llm           # shadow the `update` submodule. Use update.evolve / update.update.
+from .prompt import with_skill_hint
 
 __all__ = [
     "Library", "Skill", "retrieve", "Candidate", "decide", "Decision",
-    "gate", "GateResult", "evolve", "Trace", "configure_llm",
+    "gate", "GateResult", "evolve", "Trace", "configure_llm", "with_skill_hint",
 ]
