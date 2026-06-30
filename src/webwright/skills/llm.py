@@ -25,8 +25,18 @@ def configure_llm(model: Any) -> None:
 def _model() -> Any:
     if _DEFAULT_MODEL is not None:
         return _DEFAULT_MODEL
-    # default: openai model from env (OPENAI_API_KEY / OPENAI_BASE_URL respected by the model class)
-    return get_model({"model_class": "openai"})
+    # default: build an openai-style model from env so a bare CLI invocation
+    # (e.g. `python -m webwright.tools.skill_use`) uses the SAME backend as the running agent.
+    # Honors SKILL_MODEL_NAME / SKILL_MODEL_ENDPOINT (or OPENAI_* fallbacks); no hardcoded gateway.
+    import os
+    cfg = {"model_class": os.environ.get("SKILL_MODEL_CLASS", "openai")}
+    name = os.environ.get("SKILL_MODEL_NAME") or os.environ.get("OPENAI_MODEL")
+    endpoint = os.environ.get("SKILL_MODEL_ENDPOINT") or os.environ.get("OPENAI_ENDPOINT")
+    if name:
+        cfg["model_name"] = name
+    if endpoint:
+        cfg["openai_endpoint"] = endpoint
+    return get_model(cfg)
 
 
 def llm(system: str, user: str, *, model: Any = None, **_: Any) -> str:
