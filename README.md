@@ -165,6 +165,25 @@ python assets/task_showcase/app.py \
 
 ---
 
+## 🧠 Skill Library (reuse solved tasks across tasks)
+
+[`webwright.skills`](src/webwright/skills/) turns solved tasks into **reusable, executable code
+skills**, retrieves and judges them at solve time, gates what enters the library, and grows the
+library incrementally — a self-evolving *store → retrieve → use/adapt → gate → evolve* loop on top
+of Webwright's code-as-action solves. Plugs in with **no change to the agent loop**:
+
+- **Reuse** — the agent calls `python -m webwright.tools.skill_use --task "..." --library ...`
+  (like `self_reflection`/`image_qa`); it returns `{verdict: use|adapt|skip, source_path}`.
+- **Grow** — `python -m webwright.skills.update --manifest batch.json --library ./library`
+  distills a batch of gate-passed solves into a parameterized, primitive-decomposed skill.
+
+Validated end-to-end on a real public website (read-only GitHub): solve two repos from scratch →
+`update` builds a parameterized skill → a held-out repo is solved by reusing it (agent calls
+`skill_use`, verdict `use`, answer correct); a wrong solve is kept out by the gate; a second batch
+improves the existing skill in place. See [`src/webwright/skills/README.md`](src/webwright/skills/README.md).
+
+---
+
 ## 🚀 Quick Start
 
 ### Prerequisites
