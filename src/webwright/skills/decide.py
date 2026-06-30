@@ -1,8 +1,8 @@
-"""判断用不用：候选 + 任务 → use / adapt / skip（utility）。
+"""Decide whether to use: candidates + task -> use / adapt / skip (utility).
 
-接口稳定（实现可换）：
+Stable interface (swappable implementation):
     decide(task, candidates, *, method="llm") -> Decision
-相关 ≠ 有用：retrieve 给"像不像"，decide 给"该不该用、怎么用"。
+Relevant != useful: retrieve gives "how similar", decide gives "whether and how to use it".
 """
 from __future__ import annotations
 from dataclasses import dataclass

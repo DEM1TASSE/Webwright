@@ -1,17 +1,23 @@
-"""准入闸：只有"对的"解/技能才准进库，防 correct-but-narrow / regression 污染。
-gate 是【独立第二只眼】，与解题 agent 自己的 self_reflection 不同（后者是解题完成条件）。
+"""Admission gate: only "correct" solves/skills enter the library, preventing correct-but-narrow /
+regression pollution. The gate is an INDEPENDENT second eye — distinct from the solving agent's own
+self_reflection (which is a solve-completion condition, not an admission check).
 
-接口稳定（实现可换），method 可配置：
+Stable interface (swappable implementation), configurable method:
     gate(result, *, gold=None, output_schema=None, method="auto") -> GateResult
 
-- method="gold"        : 与 gold 比对（WebArena 等有标准答案；真独立、能挡住抽错的解）。★推荐
-- method="self_verify" : 不变量（result 非空 + shape 合 output_schema）。无 gold 时的弱占位。
-                         ⚠️ 局限：只查"有没有/形状对不对"，不查"对不对"——抽错但非空的答案照样放行。
-                         （注：webwright 的 self_reflection 因 require_self_reflection_success 而恒为
-                         predicted_label==1，故不能用它当 gate；那是解题完成条件，非独立准入。）
-- method="none"        : 不把关（纯演示复用，不防污染）。
-- method="auto"        : 有 gold 用 gold，否则 self_verify。
-升级路径（next step）：真实站用 WebJudge（OM2W 官方 judge）或跨源一致核验，做真独立把关。
+- method="gold"        : compare against gold (benchmarks like WebArena; truly independent, catches
+                         mis-extracted solves). Recommended.
+- method="self_verify" : invariant only (result non-empty + shape matches output_schema). A weak
+                         placeholder when no gold exists.
+                         Limitation: only checks "present / right shape", not "correct" — a wrong but
+                         non-empty answer is admitted anyway.
+                         (Note: webwright's self_reflection is always predicted_label==1 due to
+                         require_self_reflection_success, so it cannot serve as the gate — that is a
+                         solve-completion condition, not independent admission.)
+- method="none"        : no gate (demo reuse only, no pollution protection).
+- method="auto"        : use gold if available, else self_verify.
+Upgrade path (next step): for real websites use WebJudge (OM2W's official judge) or cross-source
+consistency checks for a truly independent gate.
 """
 from __future__ import annotations
 from dataclasses import dataclass

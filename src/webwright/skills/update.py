@@ -1,11 +1,13 @@
-"""沉淀（间歇）：把通过 gate 的解蒸馏、写回 library，让库从使用中长大。
+"""Sediment (intermittent): distill gate-passed solves back into the library so it grows from use.
 
-接口稳定（实现可换）：
-    update(traces, library, *, method="grow") -> [被加/更新的 skill_id]
+Stable interface (swappable implementation):
+    update(traces, library, *, method="grow") -> [added/updated skill_ids]
 
-- method="grow"   : 库里还没覆盖这个 template 的，就把这条成功解原样提升为技能（最小形态）。
-- method="refine" : 批量提炼——对齐 N 个 gate 过的解 → 参数化(泛化) + 拆出可复用 primitive + 薄任务层
-                    → 一个更好的库技能。这是"update 加泛化性 + primitive 复用性"的实现（单次 LLM 批量调用）。
+- method="grow"   : if the library does not yet cover this template, promote the successful solve
+                    as-is into a skill (minimal form).
+- method="refine" : batch distillation — align N gate-passed solves -> parameterize (generalize) +
+                    factor out reusable primitives + a thin task layer -> one better library skill.
+                    This is where update adds generalization + primitive reusability (one batched LLM call).
 """
 from __future__ import annotations
 import json
@@ -19,10 +21,10 @@ from .llm import llm
 @dataclass
 class Trace:
     template: str
-    code: str                       # 这条任务的 final_script（已过 gate = 正确）
+    code: str                       # this task's final_script (already gate-passed = correct)
     answer: object = None
     meta: dict = field(default_factory=dict)   # params / site / start_url / output_schema ...
-    # usage：这条任务是怎么用库的（驱动 update 的信号）
+    # usage: how this task used the library (the signal that drives update)
     used_skill_id: str | None = None
     verdict: str | None = None      # use | adapt | skip
     correct: bool = True
@@ -69,14 +71,15 @@ _REFINE_INCREMENTAL = (
 
 
 def _refine(traces: list[Trace], library: Library) -> list[str]:
-    """批量提炼：对齐 N 个 gate 过的解 → 参数化 + primitive。
-    增量：若库里已有同 template 技能，则在【现有技能基础上】改进/加宽（而非从原始解重写）。"""
+    """Batch distillation: align N gate-passed solves -> parameterize + primitives.
+    Incremental: if a skill for the same template already exists, improve/widen it on top of the
+    existing skill (rather than rewriting from the raw solves)."""
     if not traces:
         return []
     template = traces[0].template
     schema = traces[0].meta.get("output_schema")
     sid = _slug(template)
-    existing = library.get(sid)   # 已有技能？→ 增量演化
+    existing = library.get(sid)   # skill already exists? -> incremental evolution
 
     blocks = [f"## Template\n{template}\n\n## Required output_schema for retrieved_data\n{json.dumps(schema)}\n"]
     if existing and existing.code:
@@ -120,21 +123,23 @@ def _grow(traces: list[Trace], library: Library) -> list[str]:
 
 
 def evolve(traces: list[Trace], library: Library) -> dict:
-    """统一 update：在【已有库】上，按每条轨迹的 usage(use/adapt/skip)决定怎么改库。
-    这是"可持续增长的库"的核心——不是每次从零建，而是在 v_{n-1} 上长出 v_n。
+    """Unified update: evolve the EXISTING library, deciding per trace's usage (use/adapt/skip) how
+    to change it. This is the core of a continuously-growing library — not rebuilt from scratch each
+    time, but grown from v_{n-1} into v_n.
 
-    - USE   成功的轨迹：技能够好，不动库（只是复用证据）。
-    - ADAPT 成功的轨迹：复用了核心、fix 了末端 → 把这批 fix 后的解【提炼回该 template 的技能】
-                        （加宽/更稳）。这就是"fix 沉淀进库"。
-    - SKIP / 库没覆盖：该 template 还没有技能 → 用这批解【新增】一个技能。
+    - USE   (successful)        : the skill is good enough, leave it untouched (just reuse evidence).
+    - ADAPT (successful)        : core reused, last step fixed -> refine this batch's fixed solves
+                                  back into the template's skill (widen/harden). This is how a fix
+                                  sediments into the library.
+    - SKIP / not yet covered    : the template has no skill yet -> add one from this batch.
 
-    只吃 gate 过(correct=True)的轨迹（防污染）。返回一份 changelog。
+    Only consumes gate-passed (correct=True) traces (pollution protection). Returns a changelog.
     """
     good = [t for t in traces if t.correct]
     changelog = {"use": [], "adapt_refined": [], "added": [], "dropped_wrong": len(traces) - len(good)}
     existing_templates = {s.meta.get("template"): s.skill_id for s in library.list()}
 
-    # 按 template 分组（同族解一起提炼/沉淀）
+    # group by template (same-family solves are distilled/sedimented together)
     by_tmpl: dict[str, list[Trace]] = {}
     for t in good:
         by_tmpl.setdefault(t.template, []).append(t)
@@ -142,15 +147,15 @@ def evolve(traces: list[Trace], library: Library) -> dict:
     for tmpl, group in by_tmpl.items():
         verdicts = {t.verdict for t in group}
         if tmpl not in existing_templates:
-            # 库没覆盖 → 新增（用这批解提炼出一个技能）
+            # not covered -> add (distill a skill from this batch)
             sid = _refine(group, library)[0]
             changelog["added"].append(sid)
         elif "adapt" in verdicts:
-            # 有 fix 发生 → 把 fix 后的解重新提炼回该技能（加宽/更稳）
-            sid = _refine(group, library)[0]   # _refine 用同 slug，覆盖加宽
+            # a fix happened -> refine the fixed solves back into the skill (widen/harden)
+            sid = _refine(group, library)[0]   # _refine uses the same slug, overwrites + widens
             changelog["adapt_refined"].append(sid)
         else:
-            # 全 use 成功 → 技能够好，不动
+            # all use-success -> skill is good enough, leave it
             changelog["use"].append(existing_templates[tmpl])
     return changelog
 

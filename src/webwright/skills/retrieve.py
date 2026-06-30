@@ -1,8 +1,9 @@
-"""取：任务 → 最相关的候选技能（relevance）。
+"""Retrieve: task -> most relevant candidate skills (relevance only).
 
-接口稳定（实现可换）：
+Stable interface (swappable implementation):
     retrieve(task, library, *, k=3, method="llm") -> [Candidate]
-MVP: 单次 LLM 调用，把整库当 flat catalog 列进 prompt 让它选。库大了换 embedding，接口不变。
+MVP: a single LLM call that lists the whole library as a flat catalog in the prompt and lets it
+pick. Swap to embeddings when the library grows large — the interface stays the same.
 """
 from __future__ import annotations
 from dataclasses import dataclass
@@ -15,6 +16,7 @@ from .llm import llm_json
 class Candidate:
     skill: Skill
     score: float          # relevance 0..1
+
     reason: str
 
 
