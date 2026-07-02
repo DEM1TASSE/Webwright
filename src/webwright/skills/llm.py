@@ -29,7 +29,10 @@ def _model() -> Any:
     # (e.g. `python -m webwright.tools.skill_use`) uses the SAME backend as the running agent.
     # Honors SKILL_MODEL_NAME / SKILL_MODEL_ENDPOINT (or OPENAI_* fallbacks); no hardcoded gateway.
     import os
-    cfg = {"model_class": os.environ.get("SKILL_MODEL_CLASS", "openai")}
+    # long request timeout: refine emits a large skill (~16k tokens) which is slow on a busy
+    # gateway; the model default (120s) truncates/ReadTimeouts. Overridable via SKILL_MODEL_TIMEOUT.
+    cfg = {"model_class": os.environ.get("SKILL_MODEL_CLASS", "openai"),
+           "request_timeout_seconds": int(os.environ.get("SKILL_MODEL_TIMEOUT", "600"))}
     name = os.environ.get("SKILL_MODEL_NAME") or os.environ.get("OPENAI_MODEL")
     endpoint = os.environ.get("SKILL_MODEL_ENDPOINT") or os.environ.get("OPENAI_ENDPOINT")
     if name:
@@ -39,13 +42,17 @@ def _model() -> Any:
     return get_model(cfg)
 
 
-def llm(system: str, user: str, *, model: Any = None, **_: Any) -> str:
-    """Single-turn call. Returns raw text. `model` overrides the configured default."""
+def llm(system: str, user: str, *, model: Any = None, max_tokens: int | None = None, **_: Any) -> str:
+    """Single-turn call. Returns raw text. `model` overrides the configured default.
+    max_tokens caps the reply length (the model default is small ~4000, which truncates a
+    refined skill); pass it through to the model so large code outputs aren't cut off."""
     m = model if model is not None else _model()
     messages = [
         m.format_message(role="system", content=system),
         m.format_message(role="user", content=user),
     ]
+    if max_tokens is not None:
+        return m(messages, max_output_tokens=max_tokens)
     return m(messages)
 
 

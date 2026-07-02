@@ -41,6 +41,7 @@ def _extract_code(txt: str) -> str:
         end = txt.rfind("```")
         if end > m.end():
             return txt[m.end():end]
+        return txt[m.end():]   # opening fence but no close (e.g. truncated) -> strip the fence anyway
     return txt
 
 
