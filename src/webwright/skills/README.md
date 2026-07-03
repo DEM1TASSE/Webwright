@@ -78,12 +78,12 @@ without one) and write one manifest per batch:
                                                  // scratch; use / adapt = reused a skill
                                                  // (adapt triggers refine-back into the skill)
       "site": "gitlab",
-      "output_schema": ["number"]                // required shape of retrieved_data
+      "output_schema": {"type": "number"}        // required shape of retrieved_data
       // "answer": optional — read from the run dir's agent_response.json when omitted
     },
     { "dir": "outputs/t132_b_20260703_121500", "admit": true,
       "params": {"user": "gao", "repo": "2019", "date": "4/6/2023"},
-      "verdict": "skip", "site": "gitlab", "output_schema": ["number"] }
+      "verdict": "skip", "site": "gitlab", "output_schema": {"type": "number"} }
   ]
 }
 ```
@@ -131,11 +131,69 @@ writes `agent_response.json`:
 cat > taskspec.json <<'EOF'
 {"params": {"user": "byte", "repo": "empathy-prompts", "date": "4/2/2023"},
  "start_url": "http://gitlab.example.com", "credentials": null,
- "output_schema": ["number"]}
+ "output_schema": {"type": "number"}}
 EOF
 python library/how_many_commits_did_user_make_to_repo_on_date/skill.py taskspec.json
 cat agent_response.json
 ```
+
+### 6. The whole pipeline in one go (a batch of tasks)
+
+Steps 1–3 driven by a single task file. `tasks.json` — one entry per instance of the template
+(`gold` is optional; with it the gate compares answers, without it it falls back to `self_verify`):
+
+```json
+[
+  {"id": "t132_a", "task": "How many commits did kilian make to a11yproject on 3/1/2023?",
+   "params": {"user": "kilian", "repo": "a11yproject", "date": "3/1/2023"}, "gold": 1},
+  {"id": "t132_b", "task": "How many commits did gao make to 2019 on 4/6/2023?",
+   "params": {"user": "gao", "repo": "2019", "date": "4/6/2023"}, "gold": 0}
+]
+```
+
+```bash
+START_URL=http://gitlab.example.com
+
+# 1) solve every instance (sequential; add xargs -P N or & to parallelize)
+jq -c '.[]' tasks.json | while read -r row; do
+  python -m webwright.run.cli main -t "$(jq -r .task <<<"$row")" \
+    --task-id "$(jq -r .id <<<"$row")" --start-url "$START_URL" -o outputs \
+    -c base.yaml -c model_openai.yaml
+done
+
+# 2) gate each run + assemble the manifest
+python - <<'PY'
+import json, glob
+from webwright.skills import gate
+
+TEMPLATE = "How many commits did {{user}} make to {{repo}} on {{date}}?"
+SCHEMA = {"type": "number"}
+runs = []
+for t in json.load(open("tasks.json")):
+    d = sorted(glob.glob(f"outputs/{t['id']}_*"))[-1]        # newest run dir of this task
+    answer = json.load(open(f"{d}/agent_response.json"))["retrieved_data"]
+    g = gate(answer, gold=t.get("gold"), output_schema=SCHEMA)   # gold if present, else self_verify
+    runs.append({"dir": d, "admit": g.admit, "params": t["params"], "verdict": "skip",
+                 "site": "gitlab", "output_schema": SCHEMA})
+json.dump({"template": TEMPLATE, "runs": runs}, open("batch.json", "w"), indent=2)
+print(sum(r["admit"] for r in runs), "of", len(runs), "admitted")
+PY
+
+# 3) evolve the library
+python -m webwright.skills.update --manifest batch.json --library ./library
+
+# 4) solve NEW instances of the template WITH the library: prepend the skill hint to the
+#    prompt (SKILL_LIBRARY_ROOT alone is not enough — the hint is what tells the agent to query)
+TASK="How many commits did byte make to empathy-prompts on 4/2/2023?"
+PROMPT=$(python -c 'import sys; from webwright.skills import with_skill_hint
+print(with_skill_hint(sys.argv[1], task=sys.argv[1], library="./library"))' "$TASK")
+SKILL_LIBRARY_ROOT=./library python -m webwright.run.cli main -t "$PROMPT" \
+  --task-id t132_new --start-url "$START_URL" -o outputs -c base.yaml -c model_openai.yaml
+```
+
+Repeat 1–3 whenever a new batch of solves lands — the library evolves in place (new templates are
+added, existing skills are refined, untouched skills stay as they are). This is exactly the loop
+our WebArena evaluation runs (train → gate → update → held-out reuse).
 
 ## Components
 
