@@ -164,6 +164,10 @@ def traces_from_manifest(manifest: dict) -> list["Trace"]:
     for r in manifest.get("runs", []):
         if "admit" not in r:
             raise KeyError(f"manifest run missing required 'admit' (gate verdict): {r.get('dir', r)}")
+        if not isinstance(r["admit"], bool):
+            # a hand-written manifest with "admit": "false" would otherwise be truthy -> admitted
+            raise TypeError(f"manifest 'admit' must be a JSON boolean, "
+                            f"got {type(r['admit']).__name__} {r['admit']!r}: {r.get('dir', r)}")
         d = Path(r["dir"])
         fs = d / "final_script.py"
         code = fs.read_text(encoding="utf-8") if fs.exists() else ""
@@ -174,7 +178,7 @@ def traces_from_manifest(manifest: dict) -> list["Trace"]:
             except Exception:
                 pass
         out.append(Trace(template=template, code=code, answer=answer,
-                         correct=bool(r["admit"]),
+                         correct=r["admit"],
                          verdict=r.get("verdict", "skip"),
                          used_skill_id=r.get("used_skill_id"),
                          meta={"params": r.get("params", {}), "site": r.get("site", ""),

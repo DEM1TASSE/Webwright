@@ -48,6 +48,12 @@ def run():
         raise AssertionError("missing 'admit' must raise")
     except KeyError:
         pass
+    # ... and a hand-written string "false" (truthy!) must be rejected, not admitted
+    try:
+        U.traces_from_manifest({"template": "T", "runs": [{"dir": "/x", "admit": "false"}]})
+        raise AssertionError("non-bool 'admit' must raise")
+    except TypeError:
+        pass
 
     # slug: two long templates sharing a 48-char prefix must NOT collide on one skill id
     long_a = "get the value of " + "x" * 60 + " variant one"
