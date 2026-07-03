@@ -88,9 +88,18 @@ without one) and write one manifest per batch:
 }
 ```
 
-`params` is each instance's concrete values — this is what powers generalization: `refine` aligns
-the runs, keeps what is identical as the skeleton, and exposes exactly these differing values as
-the skill's arguments.
+Field by field:
+
+| field | required | meaning |
+|---|---|---|
+| `template` | yes | the template sentence with `{{param}}` placeholders. **Skills are keyed by it**: a manifest whose template already has a skill refines that skill in place; a new template adds a new skill. Use the same string across batches of the same template. |
+| `runs[].dir` | yes | a Webwright run directory; `final_script.py` is read from it |
+| `runs[].admit` | yes | the gate verdict; `false` rows are dropped and never enter the library |
+| `runs[].params` | yes | this instance's concrete values — `refine` aligns the runs and exposes exactly these differing values as the skill's arguments (this is what powers generalization) |
+| `runs[].verdict` | no (default `skip`) | how this run used the library: `skip` = solved from scratch; `use` = reused a skill as-is; `adapt` = reused + fixed the last step (**`adapt` is what triggers refining the fix back into the skill**) |
+| `runs[].site` | no | site tag stored in the skill's meta (helps retrieval) |
+| `runs[].output_schema` | no | required shape of `retrieved_data`, e.g. `{"type": "number"}` |
+| `runs[].answer` | no | this run's answer; read from the run dir's `agent_response.json` when omitted |
 
 ### 3. Build / evolve the library
 
@@ -226,11 +235,23 @@ uses the same backend as the running agent. No gateway or key is hardcoded.
 ## Results (summary)
 
 Validated with this module (full data + analysis live in the companion research repo, not here):
+
+- **WebArena — 10 templates × 3 domains (shopping_admin / gitlab / map), gold gate.** Per template
+  3 train solves build the library, 2 held-out instances measure reuse (WITH library vs from
+  scratch): held-out **70% vs 55% accuracy (+15pp), 14.7 vs 17.1 steps**; train 86% vs 76%.
+  4 held-out tasks unsolvable from scratch are solved with the library; net reuse-wins 7 : 1
+  regression. Largest saving: 33 steps → 10.
+- **Retrieval stays reliable as the library grows:** all 20 held-out solves picked the correct
+  skill from the shared library (grown to 10 skills), including telling apart two near-duplicate
+  commit-counting skills.
+- **Mixed-template batches evolve safely:** mixed batches add new templates, refine existing
+  skills in place, and leave skills with no new traces byte-identical — zero cross-contamination;
+  held-out reuse against a mixed-built library matches the per-template-built one.
+- **Incremental growth:** a later batch improves the existing skill in place (keeps the working
+  functions, adds robustness) rather than rewriting it.
+- **Gate prevents pollution:** wrong solves (7 of 30 train) are dropped and never enter the library.
 - **Real website (public GitHub, read-only):** end-to-end loop works — two repos solved from
   scratch → `update` distilled a parameterized skill → a held-out repo solved by reusing it
   (agent called `skill_use`, verdict `use`, answer correct).
-- **Incremental growth:** a second batch improves the existing skill in place (keeps the working
-  functions, adds robustness) rather than rewriting it.
-- **Gate prevents pollution:** a wrong solve is dropped and never enters the library.
 - **Reuse value is task-dependent:** step savings are modest on easy tasks (query overhead ≈ the
   exploration it saves) and larger on harder tasks with more exploration to skip.
