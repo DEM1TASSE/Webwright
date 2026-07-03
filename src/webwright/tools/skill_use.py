@@ -28,6 +28,11 @@ def recommend(task: str, library_root: str) -> dict:
     if not cands:
         return {"verdict": "skip", "skill_id": None, "reason": "library has no relevant skill"}
     d = decide(task, cands)
+    # the decision must point at a RETRIEVED candidate — an LLM-hallucinated id (even one that
+    # happens to exist in the library) must not be recommended
+    if d.verdict != "skip" and d.skill_id not in {c.skill.skill_id for c in cands}:
+        return {"verdict": "skip", "skill_id": None,
+                "reason": f"decided skill '{d.skill_id}' is not among the retrieved candidates"}
     out = {"verdict": d.verdict, "skill_id": d.skill_id, "reason": d.reason}
     if d.verdict != "skip" and d.skill_id:
         sk = lib.get(d.skill_id)

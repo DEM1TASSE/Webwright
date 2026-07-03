@@ -42,6 +42,21 @@ def run():
         log4 = U.evolve(t4, lib)
         assert log4["dropped_wrong"] == 1 and not log4["added"], log4
 
+    # manifest: a run missing the gate verdict must fail loudly, never default to admitted
+    try:
+        U.traces_from_manifest({"template": "T", "runs": [{"dir": "/nonexistent"}]})
+        raise AssertionError("missing 'admit' must raise")
+    except KeyError:
+        pass
+
+    # slug: two long templates sharing a 48-char prefix must NOT collide on one skill id
+    long_a = "get the value of " + "x" * 60 + " variant one"
+    long_b = "get the value of " + "x" * 60 + " variant two"
+    assert U._slug(long_a) != U._slug(long_b), "truncated slugs must be disambiguated"
+    assert U._slug(long_a) == U._slug(long_a), "slug must stay deterministic"
+    assert U._slug("Get the top-n best-selling entity") == "get_the_top_n_best_selling_entity", \
+        "short templates keep the plain readable slug"
+
     print("test_evolve OK")
 
 

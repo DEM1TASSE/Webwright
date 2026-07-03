@@ -33,6 +33,21 @@ def run():
         d0 = decide("anything", [])
         assert isinstance(d0, Decision) and d0.verdict == "skip" and d0.skill_id is None
 
+        # skill_use.recommend: a decision pointing OUTSIDE the retrieved candidates (LLM
+        # hallucination — even an id that exists in the library) must downgrade to skip
+        import webwright.tools.skill_use as T
+        orig_retrieve, orig_decide = T.retrieve, T.decide
+        try:
+            T.retrieve = lambda task, lib: [Candidate(lib.get("bestsellers"), 0.9, "stub")]
+            T.decide = lambda task, cands: Decision("use", "reviews", "hallucinated: not a candidate")
+            r = T.recommend("top best-selling product", d)
+            assert r["verdict"] == "skip" and r["skill_id"] is None, r
+            T.decide = lambda task, cands: Decision("use", "bestsellers", "in candidates")
+            r2 = T.recommend("top best-selling product", d)
+            assert r2["verdict"] == "use" and r2["skill_id"] == "bestsellers", r2
+        finally:
+            T.retrieve, T.decide = orig_retrieve, orig_decide
+
     print("test_retrieve_decide OK")
 
 

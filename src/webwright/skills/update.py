@@ -10,6 +10,7 @@ Stable interface (swappable implementation):
                     This is where update adds generalization + primitive reusability (one batched LLM call).
 """
 from __future__ import annotations
+import hashlib
 import json
 import re
 from dataclasses import dataclass, field
@@ -32,7 +33,12 @@ class Trace:
 
 def _slug(template: str) -> str:
     s = re.sub(r"[^a-z0-9]+", "_", template.lower()).strip("_")
-    return s[:48] or "skill"
+    if not s:
+        return "skill"
+    if len(s) <= 48:
+        return s
+    # truncation could collide two templates that share a long prefix -> disambiguate with a hash
+    return f"{s[:40]}_{hashlib.md5(template.encode()).hexdigest()[:7]}"
 
 
 def _extract_code(txt: str) -> str:
@@ -150,11 +156,14 @@ def evolve(traces: list[Trace], library: Library) -> dict:
 # ---------- CLI: batch update via a manifest ----------
 def traces_from_manifest(manifest: dict) -> list["Trace"]:
     """manifest = {"template": str, "runs": [{"dir","admit","params","answer"?,"verdict"?}, ...]}.
-    Reads each run's final_script.py; builds a Trace. correct = the run's gate verdict (admit)."""
+    Reads each run's final_script.py; builds a Trace. correct = the run's gate verdict (admit).
+    "admit" is REQUIRED per run — a missing gate verdict must fail loudly, not silently enter."""
     from pathlib import Path
     template = manifest.get("template", "")
     out = []
     for r in manifest.get("runs", []):
+        if "admit" not in r:
+            raise KeyError(f"manifest run missing required 'admit' (gate verdict): {r.get('dir', r)}")
         d = Path(r["dir"])
         fs = d / "final_script.py"
         code = fs.read_text(encoding="utf-8") if fs.exists() else ""
@@ -165,7 +174,7 @@ def traces_from_manifest(manifest: dict) -> list["Trace"]:
             except Exception:
                 pass
         out.append(Trace(template=template, code=code, answer=answer,
-                         correct=bool(r.get("admit", True)),
+                         correct=bool(r["admit"]),
                          verdict=r.get("verdict", "skip"),
                          used_skill_id=r.get("used_skill_id"),
                          meta={"params": r.get("params", {}), "site": r.get("site", ""),
