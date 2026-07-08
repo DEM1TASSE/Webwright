@@ -38,6 +38,10 @@ Two touch points, **no change to the agent loop or default config**:
    ```
    Manifest schema and a full walkthrough: see **How to use** below.
 
+> **Want to see it before reading?** `examples/` ships a real skill exactly as `evolve` wrote it
+> (runnable standalone, no LLM), measured step-saving numbers, and filled-in example inputs for
+> every file this guide asks you to write. See [`examples/README.md`](examples/README.md).
+
 ## How to use (end-to-end)
 
 The library grows **offline** from batches of solved tasks, and is consumed **at solve time** by
