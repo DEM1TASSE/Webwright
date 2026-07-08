@@ -60,13 +60,41 @@ Two touch points, **no change to the agent loop or default config**:
    ```bash
    python -m webwright.skills.update --manifest batch.json --library ./library
    ```
-   Manifest schema and a full walkthrough: see **How to use** below.
+   Friendly path: see **Quickstart**. Manifest schema and full control: **Manual mode** below.
 
 > **Want to see it before reading?** `examples/` ships a real skill exactly as `evolve` wrote it
 > (runnable standalone, no LLM), measured step-saving numbers, and filled-in example inputs for
 > every file this guide asks you to write. See [`examples/README.md`](examples/README.md).
 
-## How to use (end-to-end)
+## Quickstart — the two-command version
+
+```bash
+# 1. solve tasks with the library in the loop (wrapper = hint + answer-output instruction)
+examples/solve_with_library.sh "How many commits did Jane make in Jan 2023?" \
+    http://gitlab.example.com /abs/path/library -o outputs -c base.yaml -c model_openai.yaml
+
+# 2. turn everything you've solved into skills — no manifest, no fields to learn
+export OPENAI_API_KEY=...
+python -m webwright.skills learn outputs/ --library ./library
+```
+
+`learn` scans the run folders, gates each solve (gold if you pass `--golds golds.json`,
+else a shape check), auto-groups tasks into templates with one LLM call per ~25 runs,
+extracts the parameters, and grows the library. It is **idempotent** — re-run it whenever;
+already-learned runs are skipped (`library/.learned.json`), and big folders are chunked
+automatically. `--dry-run` shows the grouping plan without changing anything.
+
+That's the whole loop: solve → learn → the next solve reuses the library automatically.
+Everything below is **manual mode** — explicit manifests, benchmark-grade gold gates, fine
+control over every field. You don't need it to get started.
+
+**Where this fits:**
+- *recurring personal queries* — releases, commit counts, price checks: pay the exploration
+  once, every repeat is cheap (or free — run the skill standalone from cron, no model);
+- *same-template batch jobs* — QA flows, report pulls: solve 3, learn, run the rest on skills;
+- *a team library* — commit `./library` to your repo; everyone's agent reuses it.
+
+## Manual mode: full control (end-to-end)
 
 The library grows **offline** from batches of solved tasks, and is consumed **at solve time** by
 the agent. Tasks are provided **manually** today — you pick which tasks to solve and batch. The
