@@ -48,6 +48,22 @@ def run():
         finally:
             T.retrieve, T.decide = orig_retrieve, orig_decide
 
+    # with_skill_hint must bake an ABSOLUTE library path into the hint (the command runs in
+    # the agent's workspace, where a relative path would point at nothing)
+    from webwright.skills.prompt import with_skill_hint
+    hinted = with_skill_hint("solve it", task="t", library="./some_rel_lib")
+    import os
+    assert f'--library "{os.path.abspath("./some_rel_lib")}"' in hinted, hinted[:300]
+
+    # recommend on a MISSING or EMPTY library -> loud skip with a warning (and no mkdir side effect)
+    import webwright.tools.skill_use as T2
+    r = T2.recommend("anything", "/nonexistent/skill/lib/path")
+    assert r["verdict"] == "skip" and "warning" in r and "empty" in r["warning"], r
+    assert not os.path.exists("/nonexistent/skill/lib/path"), "must not mkdir a bogus path"
+    with tempfile.TemporaryDirectory() as d2:
+        r2 = T2.recommend("anything", d2)   # exists but has no skills
+        assert r2["verdict"] == "skip" and "warning" in r2, r2
+
     print("test_retrieve_decide OK")
 
 

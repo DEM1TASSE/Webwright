@@ -49,16 +49,26 @@ differs between instances becomes the skill's parameters — more instances, wid
 
 ### 1. Solve a few instances of a template (normal Webwright runs)
 
+**Important:** stock Webwright does NOT write the answer to a machine-readable file by itself —
+tell the agent to, by appending an output instruction to the task (the gate in step 2 reads it):
+
 ```bash
+ANSWER_SPEC='Additionally, write the final answer into $WORKSPACE_DIR/agent_response.json
+as {"retrieved_data": <the answer, as a JSON list>}.'
+
 python -m webwright.run.cli main \
-  -t "How many commits did kilian make to a11yproject on 3/1/2023?" \
+  -t "How many commits did kilian make to a11yproject on 3/1/2023? $ANSWER_SPEC" \
   --task-id t132_a --start-url http://gitlab.example.com -o outputs \
   -c base.yaml -c model_openai.yaml
 ```
 
-Each run leaves a directory containing `final_script.py` (the executable solve) and
-`agent_response.json` (the answer). Repeat for 2–3 more instances of the same template with
-different values (another user / repo / date).
+> Custom OpenAI-compatible gateway? Copy `model_openai.yaml`, change `openai_endpoint`
+> (and `model_name`), and stack your copy instead.
+
+Each run leaves a directory containing `final_script.py` (the executable solve) and — because of
+the instruction above — `agent_response.json` (the answer). Repeat for 2–3 more instances of the
+same template with different values (another user / repo / date). If you skip the output
+instruction, fill each manifest run's `answer` field by hand in step 2 instead.
 
 ### 2. Gate the solves, write the manifest
 
@@ -119,17 +129,27 @@ left untouched. Batches may mix templates.
 
 ```python
 from webwright.skills import with_skill_hint
-prompt = with_skill_hint(prompt, task=task_text, library="./library")
+prompt = with_skill_hint(prompt, task=task_text, library="/abs/path/to/library")
 ```
 
 ```bash
-SKILL_LIBRARY_ROOT=./library python -m webwright.run.cli main -t "$prompt" ...
+python -m webwright.run.cli main -t "$prompt" ...
 ```
 
 The hint tells the agent to query the library first; the agent runs the `skill_use` tool, gets
 `{verdict, skill_id, source_path, how_to_reuse}`, reads the skill source, and reuses it
 (use = as-is with new parameter values, adapt = reuse the core + change the last step,
 skip = solve from scratch).
+
+Two path gotchas, both loud now but worth knowing:
+
+- **The library path ends up in a command that runs inside the agent's workspace** —
+  `with_skill_hint` resolves it to an absolute path for exactly that reason. If the tool is ever
+  pointed at a missing/empty library anyway, it answers `skip` with an explicit
+  `"warning": "library empty at <abspath>"` instead of failing silently.
+- **Precedence:** the hint bakes `--library` into the command, and `--library` beats the
+  `SKILL_LIBRARY_ROOT` env var (the env var is only the tool's default when `--library` is
+  omitted). Use one or the other, not both.
 
 ### 5. Run a skill directly (optional)
 
@@ -164,8 +184,11 @@ Steps 1–3 driven by a single task file. `tasks.json` — one entry per instanc
 START_URL=http://gitlab.example.com
 
 # 1) solve every instance (sequential; add xargs -P N or & to parallelize)
+#    ANSWER_SPEC (from step 1 above) makes the agent write agent_response.json — the gate reads it
+ANSWER_SPEC='Additionally, write the final answer into $WORKSPACE_DIR/agent_response.json
+as {"retrieved_data": <the answer, as a JSON list>}.'
 jq -c '.[]' tasks.json | while read -r row; do
-  python -m webwright.run.cli main -t "$(jq -r .task <<<"$row")" \
+  python -m webwright.run.cli main -t "$(jq -r .task <<<"$row") $ANSWER_SPEC" \
     --task-id "$(jq -r .id <<<"$row")" --start-url "$START_URL" -o outputs \
     -c base.yaml -c model_openai.yaml
 done
@@ -191,12 +214,13 @@ PY
 # 3) evolve the library
 python -m webwright.skills.update --manifest batch.json --library ./library
 
-# 4) solve NEW instances of the template WITH the library: prepend the skill hint to the
-#    prompt (SKILL_LIBRARY_ROOT alone is not enough — the hint is what tells the agent to query)
+# 4) solve NEW instances of the template WITH the library: prepend the skill hint
+#    (the hint is what tells the agent to query; with_skill_hint resolves ./library
+#     to an absolute path against YOUR cwd, so the agent finds it from its workspace)
 TASK="How many commits did byte make to empathy-prompts on 4/2/2023?"
 PROMPT=$(python -c 'import sys; from webwright.skills import with_skill_hint
 print(with_skill_hint(sys.argv[1], task=sys.argv[1], library="./library"))' "$TASK")
-SKILL_LIBRARY_ROOT=./library python -m webwright.run.cli main -t "$PROMPT" \
+python -m webwright.run.cli main -t "$PROMPT" \
   --task-id t132_new --start-url "$START_URL" -o outputs -c base.yaml -c model_openai.yaml
 ```
 

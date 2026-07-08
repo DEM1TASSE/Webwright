@@ -16,6 +16,7 @@ import argparse
 import json
 import os
 import sys
+from pathlib import Path
 
 from webwright.skills.library import Library
 from webwright.skills.retrieve import retrieve
@@ -23,7 +24,15 @@ from webwright.skills.decide import decide
 
 
 def recommend(task: str, library_root: str) -> dict:
-    lib = Library(library_root)
+    root = Path(library_root).resolve()
+    # A missing/empty library is almost always a wrong path (relative paths resolve inside the
+    # agent's workspace). Say so LOUDLY instead of a silent skip — checked before Library(),
+    # whose constructor would mkdir the bogus path and hide the mistake.
+    if not root.is_dir() or not any((p / "meta.json").exists() for p in root.iterdir() if p.is_dir()):
+        return {"verdict": "skip", "skill_id": None,
+                "reason": f"skill library MISSING or EMPTY at {root} — check the --library path",
+                "warning": f"library empty at {root}"}
+    lib = Library(root)
     cands = retrieve(task, lib)
     if not cands:
         return {"verdict": "skip", "skill_id": None, "reason": "library has no relevant skill"}
