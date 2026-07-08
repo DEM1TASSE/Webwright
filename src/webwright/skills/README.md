@@ -1,21 +1,45 @@
 # `webwright.skills` — a memory / skill-library module for Webwright
 
-Turn solved tasks into **reusable, executable code skills**, retrieve and judge them at solve
-time, gate what enters the library, and grow the library incrementally. A self-evolving loop:
+**Most "agent skills" are notes the model reads. Ours are programs.**
 
-```
-solve  --(gate: gold | self_verify)-->  admit  --(evolve: refine + parameterize + primitives)-->  library
-  ^                                                                                                   |
-  |  skill_use tool: retrieve + decide (use / adapt / skip)  <--------------------------------------- +
-```
+With webwright.skills, each solved task becomes runnable, parameterized code — you can verify
+it, run it without the model, and import it into the next task instead of re-exploring.
 
-This is the missing **reuse + accumulation** layer: it consumes the `final_script.py` every
-Webwright solve already produces (plain or crafted mode — both work), accumulates skills across
-tasks, judges when a prior skill applies, and improves skills as more solves arrive — with a gate
-so wrong solves don't pollute the library. It complements `crafted_cli`: where `crafted_cli`
-parameterizes a single task's script by anticipating what might vary, `update.refine`
-parameterizes **across multiple verified solves** — the differences actually observed between
-instances become the parameters.
+![data flow & interfaces](pipeline_diagram.png)
+
+**Why webwright makes this natural.** Webwright is a terminal/code-native agent: its actions
+are code, and every solve already leaves behind a working script. The agent's exhaust is
+already code — turning it into skills is a byproduct, not an extra instrumentation layer.
+It complements `crafted_cli`: where `crafted_cli` parameterizes a single task's script by
+anticipating what might vary, `update.refine` parameterizes **across multiple verified
+solves** — the differences actually observed between instances become the parameters.
+
+**Only verified solves get in.** An admission gate checks every solution before it enters the
+library, so wrong answers never pollute what the agent reuses.
+
+**One solve isn't a skill yet.** A single task's script is correct but narrow — it solves
+*that* instance. So the update step aggregates multiple verified solves of the same task
+template: values that differ across instances become parameters, patterns that recur become
+shared primitives. The merged skill is often better than any single solve it came from —
+different runs' strategies become fallbacks, and what settles into the library isn't a
+click-path but the best algorithm the solves discovered (our commit-counting skill distilled
+UI exploration into `git clone + git log`).
+
+**The library keeps growing — safely.** A self-evolving loop feeds later solves back in: new
+templates add skills, new solves refine existing ones in place (working functions kept), and
+skills with nothing new stay byte-identical. Growth never breaks what already works.
+
+**What you get, measured** (WebArena, 10 templates × 3 sites, held-out instances):
+
+- **Tasks that were unsolvable become solvable** — from-scratch failed, with the library
+  solved (4 rescues out of 20).
+- **Tasks that were expensive become cheap** — 33 steps → 10 on repeat task types; overall
+  70% vs 55% accuracy, ~2.4 fewer steps.
+
+**Cheap to adopt, honest about costs.** Integration is purely additive — one tool plus one
+CLI, no agent-loop changes. Building the library is not free, but close: it recycles solves
+you already ran (only the gate-passed ones), plus one distillation LLM call per template
+batch. Independently reproduced from a fresh clone in ~25 minutes.
 
 ## How it plugs into Webwright
 
