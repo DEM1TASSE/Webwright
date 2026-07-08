@@ -119,6 +119,9 @@ def learn(runs_dir, library_root, golds=None, chunk=25, dry_run=False):
             print(f"  gate ✗ {r['task_id']}: {g.reason}")
     print(f"{len(admitted)}/{len(runs)} runs admitted by gate "
           f"({'gold' if golds else 'self_verify'})")
+    if not golds:
+        print("  ! gate=self_verify: shape check only — wrong-but-well-formed answers PASS. "
+              "Pass --golds for real verification.")
     if not admitted:
         return
 

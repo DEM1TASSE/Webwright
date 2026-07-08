@@ -14,8 +14,12 @@ It complements `crafted_cli`: where `crafted_cli` parameterizes a single task's 
 anticipating what might vary, `update.refine` parameterizes **across multiple verified
 solves** — the differences actually observed between instances become the parameters.
 
-**Only verified solves get in.** An admission gate checks every solution before it enters the
-library, so wrong answers never pollute what the agent reuses.
+**Validation-gated — exactly as strong as the gate you give it.** Every solve passes an
+admission gate before it can enter the library. With gold answers (benchmarks — this is what
+our WebArena numbers used) the gate is real supervision: wrong answers never get in. The
+default `self_verify` gate only checks shape and non-emptiness — it filters garbage, **not
+wrong-but-plausible answers**. Pass `--golds` to `learn`, or bring your own judge, when
+correctness matters.
 
 **One solve isn't a skill yet.** A single task's script is correct but narrow — it solves
 *that* instance. So the update step aggregates multiple verified solves of the same task

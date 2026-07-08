@@ -5,6 +5,9 @@ evaluation), lightly curated. Nothing is hand-written.
 
 ```
 examples/
+├── learned_library/                  # produced by `skills learn` from 3 REAL solves (n_solves=3):
+│   └── what_is_the_latest_release…/  #   owner/repo lifted to parameters, two strategies as fallbacks;
+│                                     #   tested on an unseen repo (numpy/numpy -> v2.5.1, no model)
 ├── example_library/                  # a library with one skill, exactly as evolve wrote it
 │   └── how_many_commits_did_user_make_period_in_the_cur/
 │       ├── skill.py                  #   the executable skill (126 lines)

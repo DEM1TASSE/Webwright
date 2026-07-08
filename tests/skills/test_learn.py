@@ -33,5 +33,23 @@ def run():
     print("test_learn OK")
 
 
+def run_regressions():
+    """F3: grouping-LLM failure must exit with an actionable one-liner, not a traceback."""
+    import webwright.skills.learn as L
+    orig = L.llm_json
+    L.llm_json = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("401 unauthorized"))
+    try:
+        try:
+            L.group_chunk([{"task": "t"}], [])
+            raise AssertionError("must raise SystemExit")
+        except SystemExit as e:
+            msg = str(e)
+            assert "OPENAI_ENDPOINT" in msg and "401" in msg, msg
+    finally:
+        L.llm_json = orig
+    print("test_learn regressions OK")
+
+
 if __name__ == "__main__":
     run()
+    run_regressions()

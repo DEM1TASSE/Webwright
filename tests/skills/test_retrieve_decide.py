@@ -1,5 +1,6 @@
 """Unit test: deterministic parts of retrieve/decide (no LLM).
 The LLM paths are smoke-tested in test_front.py."""
+import json
 import sys, tempfile
 from pathlib import Path
 pass
@@ -63,6 +64,21 @@ def run():
     with tempfile.TemporaryDirectory() as d2:
         r2 = T2.recommend("anything", d2)   # exists but has no skills
         assert r2["verdict"] == "skip" and "warning" in r2, r2
+
+    # F1: a hard failure inside recommend must surface as an ERROR (loud), not a quiet skip
+    import io, contextlib
+    import webwright.tools.skill_use as TU
+    orig_rec = TU.recommend
+    TU.recommend = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom 401"))
+    try:
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            TU.main(["--task", "x", "--library", "lib"])
+        out = json.loads(buf.getvalue())
+        assert out["verdict"] == "skip" and "error" in out, out
+        assert "NOT consulted" in out["reason"], out["reason"]
+    finally:
+        TU.recommend = orig_rec
 
     print("test_retrieve_decide OK")
 
