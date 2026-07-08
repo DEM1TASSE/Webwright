@@ -15,15 +15,16 @@ def run():
         td = Path(td)
         d1 = td / "run_a"; d1.mkdir()
         (d1 / "task.json").write_text(json.dumps(
-            {"task": "## Skill library\nblah\n---\nCount commits by Jane", "task_id": "a",
-             "start_url": "http://gitlab.example.com/x"}))
+            {"task": "## Skill library\nblah\n---\nCount commits by Jane Additionally, "
+                     "write the final answer into $WORKSPACE_DIR/agent_response.json as {...}.",
+             "task_id": "a", "start_url": "http://gitlab.example.com/x"}))
         (d1 / "agent_response.json").write_text(json.dumps({"retrieved_data": [3]}))
         d2 = td / "run_b"; d2.mkdir()   # unfinished: no agent_response
         (d2 / "task.json").write_text(json.dumps({"task": "t", "task_id": "b"}))
 
         runs = collect_runs(td, {"runs": {}})
         assert len(runs) == 1 and runs[0]["task_id"] == "a", runs
-        assert runs[0]["task"] == "Count commits by Jane", "hint must be stripped"
+        assert runs[0]["task"] == "Count commits by Jane", "hint AND answer-spec must be stripped"
         assert runs[0]["answer"] == [3]
 
         # ledger makes it idempotent

@@ -75,6 +75,8 @@ examples/solve_with_library.sh "How many commits did Jane make in Jan 2023?" \
 
 # 2. turn everything you've solved into skills — no manifest, no fields to learn
 export OPENAI_API_KEY=...
+# custom / OpenAI-compatible gateway? BOTH steps need these too, or reuse is silently off:
+export OPENAI_ENDPOINT=https://your-gateway/...   OPENAI_MODEL=your-model
 python -m webwright.skills learn outputs/ --library ./library
 ```
 

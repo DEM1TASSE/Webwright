@@ -39,6 +39,7 @@ def infer_schema(answer):
 def collect_runs(runs_dir: Path, ledger: dict):
     """[{dir, task_id, task, start_url, answer}] for finished runs not yet learned."""
     out = []
+    skipped_no_answer = 0
     for d in sorted(Path(runs_dir).iterdir()):
         if not d.is_dir() or str(d.resolve()) in ledger["runs"]:
             continue
@@ -46,8 +47,8 @@ def collect_runs(runs_dir: Path, ledger: dict):
         if not tj.exists():
             continue
         if not ar.exists():
-            print(f"  skip {d.name}: no agent_response.json "
-                  f"(solve with `skills solve`, or add the answer-output instruction)")
+            skipped_no_answer += 1
+            print(f"  skip {d.name}: no agent_response.json")
             continue
         try:
             t = json.loads(tj.read_text())
@@ -55,12 +56,19 @@ def collect_runs(runs_dir: Path, ledger: dict):
         except Exception as e:
             print(f"  skip {d.name}: unreadable ({e})")
             continue
-        # strip a skill-library hint if the prompt carried one
+        # strip pipeline text the wrapper may have carried into the prompt: the
+        # skill-library hint and the answer-output instruction must not leak into templates
         task = t.get("task", "")
         if "## Skill library" in task:
             task = task.split("---", 1)[-1].strip()
+        if "Additionally, write the final answer into" in task:
+            task = task.split("Additionally, write the final answer into", 1)[0].strip()
         out.append({"dir": str(d.resolve()), "task_id": t.get("task_id", d.name),
                     "task": task, "start_url": t.get("start_url", ""), "answer": answer})
+    if skipped_no_answer:
+        print(f"  ! {skipped_no_answer} run(s) had no answer file and were skipped — their solves "
+              f"cannot be aggregated. Solve via examples/solve_with_library.sh (it adds the "
+              f"answer-output instruction), or see README 'Manual mode' step 1.")
     return out
 
 
@@ -79,7 +87,13 @@ _GROUP_SYS = (
 def group_chunk(runs, existing_templates):
     listing = "\n".join(f"{i}: {r['task'][:220]}" for i, r in enumerate(runs))
     existing = "\n".join(f"- {t}" for t in existing_templates) or "(none yet)"
-    out = llm_json(_GROUP_SYS, f"## Existing templates\n{existing}\n\n## Tasks\n{listing}")
+    try:
+        out = llm_json(_GROUP_SYS, f"## Existing templates\n{existing}\n\n## Tasks\n{listing}")
+    except Exception as exc:
+        raise SystemExit(
+            f"learn: the grouping LLM call failed: {exc}\n"
+            f"Check OPENAI_API_KEY — and on a custom gateway also set "
+            f"OPENAI_ENDPOINT (and OPENAI_MODEL), or SKILL_MODEL_ENDPOINT/SKILL_MODEL_NAME.")
     return out.get("groups", [])
 
 

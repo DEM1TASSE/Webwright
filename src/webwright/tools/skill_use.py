@@ -72,8 +72,15 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         result = recommend(args.task, args.library)
-    except Exception as exc:  # never block solving
-        result = {"verdict": "skip", "skill_id": None, "reason": f"skill_use error: {exc}"}
+    except Exception as exc:
+        # Degrade to skip so solving is never blocked — but say LOUDLY that the library
+        # was NOT consulted: a config/auth error here silently disables all reuse otherwise.
+        result = {"verdict": "skip", "skill_id": None, "error": str(exc),
+                  "reason": "LOOKUP FAILED (library was NOT consulted) — this is an error, "
+                            "not a no-match. Check OPENAI_API_KEY and, on a custom gateway, "
+                            "OPENAI_ENDPOINT / SKILL_MODEL_ENDPOINT.",
+                  }
+        print(f"skill_use ERROR: {exc}", file=sys.stderr)
     payload = json.dumps(result, ensure_ascii=False, indent=2)
     if args.output:
         with open(args.output, "w", encoding="utf-8") as f:
