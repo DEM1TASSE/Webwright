@@ -69,14 +69,15 @@ Two touch points, **no change to the agent loop or default config**:
 ## Quickstart — the two-command version
 
 ```bash
+export OPENAI_API_KEY=...
+# custom / OpenAI-compatible gateway? BOTH steps need these too, or reuse is silently off:
+export OPENAI_ENDPOINT=https://your-gateway/...   OPENAI_MODEL=your-model
+
 # 1. solve tasks with the library in the loop (wrapper = hint + answer-output instruction)
 examples/solve_with_library.sh "How many commits did Jane make in Jan 2023?" \
     http://gitlab.example.com /abs/path/library -o outputs -c base.yaml -c model_openai.yaml
 
 # 2. turn everything you've solved into skills — no manifest, no fields to learn
-export OPENAI_API_KEY=...
-# custom / OpenAI-compatible gateway? BOTH steps need these too, or reuse is silently off:
-export OPENAI_ENDPOINT=https://your-gateway/...   OPENAI_MODEL=your-model
 python -m webwright.skills learn outputs/ --library ./library
 ```
 
