@@ -51,8 +51,8 @@ def collect_runs(runs_dir: Path, ledger: dict):
             print(f"  skip {d.name}: no agent_response.json")
             continue
         try:
-            t = json.loads(tj.read_text())
-            answer = json.loads(ar.read_text()).get("retrieved_data")
+            t = json.loads(tj.read_text(encoding="utf-8"))
+            answer = json.loads(ar.read_text(encoding="utf-8")).get("retrieved_data")
         except Exception as e:
             print(f"  skip {d.name}: unreadable ({e})")
             continue
@@ -100,7 +100,7 @@ def group_chunk(runs, existing_templates):
 def learn(runs_dir, library_root, golds=None, chunk=25, dry_run=False):
     lib = Library(library_root)
     ledger_path = Path(library_root) / ".learned.json"
-    ledger = json.loads(ledger_path.read_text()) if ledger_path.exists() else {"runs": {}}
+    ledger = json.loads(ledger_path.read_text(encoding="utf-8")) if ledger_path.exists() else {"runs": {}}
     golds = golds or {}
 
     runs = collect_runs(Path(runs_dir), ledger)
@@ -145,7 +145,7 @@ def learn(runs_dir, library_root, golds=None, chunk=25, dry_run=False):
                 code_p = Path(r["dir"]) / "final_script.py"
                 traces.append(Trace(
                     template=tmpl,
-                    code=code_p.read_text() if code_p.exists() else "",
+                    code=code_p.read_text(encoding="utf-8") if code_p.exists() else "",
                     answer=r["answer"], correct=True,
                     # existing template -> mark adapt so evolve REFINES instead of ignoring
                     verdict="adapt" if tmpl in existing else "skip",
@@ -161,7 +161,7 @@ def learn(runs_dir, library_root, golds=None, chunk=25, dry_run=False):
                 if 0 <= m.get("i", -1) < len(batch):
                     ledger["runs"][batch[m["i"]]["dir"]] = {"template": tmpl}
         # audit trail + idempotence, saved per chunk
-        ledger_path.write_text(json.dumps(ledger, indent=2))
+        ledger_path.write_text(json.dumps(ledger, indent=2), encoding="utf-8")
     if not dry_run:
         print(f"\nlibrary now has {len(lib.list())} skill(s); ledger -> {ledger_path}")
 
@@ -176,7 +176,7 @@ def main(argv=None) -> int:
     p.add_argument("--chunk", type=int, default=25, help="Runs per LLM grouping call.")
     p.add_argument("--dry-run", action="store_true", help="Show the grouping plan, change nothing.")
     a = p.parse_args(argv)
-    golds = json.loads(Path(a.golds).read_text()) if a.golds else {}
+    golds = json.loads(Path(a.golds).read_text(encoding="utf-8")) if a.golds else {}
     learn(a.runs_dir, a.library, golds=golds, chunk=a.chunk, dry_run=a.dry_run)
     return 0
 

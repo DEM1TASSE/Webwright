@@ -98,7 +98,7 @@ def _refine(traces: list[Trace], library: Library) -> list[str]:
             f"answer={json.dumps(tr.answer, ensure_ascii=False)[:120]})\n```python\n{tr.code}\n```"
         )
     sys_prompt = _REFINE_SYS + (_REFINE_INCREMENTAL if existing else "")
-    code = _extract_code(llm(sys_prompt, "\n\n".join(blocks), max_tokens=16000, timeout=400))
+    code = _extract_code(llm(sys_prompt, "\n\n".join(blocks), max_tokens=16000))
     n_prev = (existing.meta.get("n_solves", 0) if existing else 0)
     meta = {
         "template": template,
@@ -174,7 +174,7 @@ def traces_from_manifest(manifest: dict) -> list["Trace"]:
         answer = r.get("answer")
         if answer is None and (d / "agent_response.json").exists():
             try:
-                answer = json.load(open(d / "agent_response.json")).get("retrieved_data")
+                answer = json.loads((d / "agent_response.json").read_text(encoding="utf-8")).get("retrieved_data")
             except Exception:
                 pass
         out.append(Trace(template=template, code=code, answer=answer,
@@ -195,7 +195,7 @@ def main(argv=None) -> int:
     p.add_argument("--manifest", required=True, help="JSON: {template, runs:[{dir,admit,params,...}]}")
     p.add_argument("--library", required=True, help="Path to the skill library directory.")
     a = p.parse_args(argv)
-    manifest = json.load(open(a.manifest, encoding="utf-8"))
+    manifest = json.loads(Path(a.manifest).read_text(encoding="utf-8"))
     traces = traces_from_manifest(manifest)
     changelog = evolve(traces, Library(a.library))
     print(json.dumps(changelog, ensure_ascii=False, indent=2))

@@ -6,7 +6,6 @@ so this works with any backend webwright supports (openai / anthropic / openrout
 from __future__ import annotations
 
 import json
-import re
 from typing import Any, Optional
 
 from webwright.models import get_model
@@ -57,18 +56,17 @@ def llm(system: str, user: str, *, model: Any = None, max_tokens: int | None = N
 
 
 def llm_json(system: str, user: str, **kw: Any) -> dict:
-    """Call + parse the first {...} JSON object out of the reply."""
+    """Call + parse the first valid {...} JSON object out of the reply (prose/fences around
+    it are fine; brace snippets that aren't valid JSON are skipped over)."""
     txt = llm(system, user, **kw)
-    match = re.search(r"\{.*\}", txt, re.S)
-    if not match:
-        return {}
-    try:
-        return json.loads(match.group(0))
-    except Exception:
-        s = match.group(0)
-        for end in range(len(s), 0, -1):
-            try:
-                return json.loads(s[:end])
-            except Exception:
-                continue
+    dec = json.JSONDecoder()
+    for i, ch in enumerate(txt):
+        if ch != "{":
+            continue
+        try:
+            obj, _ = dec.raw_decode(txt, i)
+        except ValueError:
+            continue
+        if isinstance(obj, dict):
+            return obj
     return {}

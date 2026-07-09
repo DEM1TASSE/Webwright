@@ -29,5 +29,10 @@ def run():
     print("test_library OK")
 
 
+# pytest entry point (CI also runs this file as a script)
+def test_all():
+    run()
+
+
 if __name__ == "__main__":
     run()

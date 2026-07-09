@@ -45,15 +45,16 @@ class Library:
         d = self._dir(skill_id)
         if not (d / "meta.json").exists():
             return None
-        meta = json.loads((d / "meta.json").read_text())
-        code = (d / "skill.py").read_text() if (d / "skill.py").exists() else ""
+        meta = json.loads((d / "meta.json").read_text(encoding="utf-8"))
+        code = (d / "skill.py").read_text(encoding="utf-8") if (d / "skill.py").exists() else ""
         return Skill(skill_id=skill_id, code=code, meta=meta)
 
     def add(self, skill: Skill) -> None:
         d = self._dir(skill.skill_id)
         d.mkdir(parents=True, exist_ok=True)
-        (d / "skill.py").write_text(skill.code)
-        (d / "meta.json").write_text(json.dumps(skill.meta, ensure_ascii=False, indent=2))
+        (d / "skill.py").write_text(skill.code, encoding="utf-8")
+        (d / "meta.json").write_text(json.dumps(skill.meta, ensure_ascii=False, indent=2),
+                                     encoding="utf-8")
 
     def path(self, skill_id: str) -> Path:
         return self._dir(skill_id) / "skill.py"

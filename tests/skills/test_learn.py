@@ -50,6 +50,12 @@ def run_regressions():
     print("test_learn regressions OK")
 
 
+# pytest entry point (CI also runs this file as a script)
+def test_all():
+    run()
+    run_regressions()
+
+
 if __name__ == "__main__":
     run()
     run_regressions()

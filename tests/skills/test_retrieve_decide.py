@@ -53,8 +53,14 @@ def run():
     # the agent's workspace, where a relative path would point at nothing)
     from webwright.skills.prompt import with_skill_hint
     hinted = with_skill_hint("solve it", task="t", library="./some_rel_lib")
-    import os
-    assert f'--library "{os.path.abspath("./some_rel_lib")}"' in hinted, hinted[:300]
+    import os, shlex
+    assert f'--library {os.path.abspath("./some_rel_lib")}' in hinted, hinted[:300]
+
+    # ...and shell-quote the task: $VAR / $(...) / backticks expand in bash even inside
+    # double quotes, so a task containing them must land single-quoted in the hint
+    evil = 'count $(whoami) commits in `pwd` for $USER'
+    hinted2 = with_skill_hint("solve it", task=evil, library="./some_rel_lib")
+    assert f"--task {shlex.quote(evil)}" in hinted2, hinted2[:300]
 
     # recommend on a MISSING or EMPTY library -> loud skip with a warning (and no mkdir side effect)
     import webwright.tools.skill_use as T2
@@ -81,6 +87,11 @@ def run():
         TU.recommend = orig_rec
 
     print("test_retrieve_decide OK")
+
+
+# pytest entry point (CI also runs this file as a script)
+def test_all():
+    run()
 
 
 if __name__ == "__main__":
