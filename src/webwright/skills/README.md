@@ -74,28 +74,57 @@ Two touch points, **no change to the agent loop or default config**:
 > (runnable standalone, no LLM), measured step-saving numbers, and filled-in example inputs for
 > every file this guide asks you to write. See [`examples/README.md`](examples/README.md).
 
-## Quickstart — the two-command version
+## Quickstart — the complete loop on a real example
+
+Three steps: solve a few instances of a task type, `learn` them into a skill, then watch
+the next solve reuse it. Copy-pasteable as is (public GitHub, read-only):
 
 ```bash
 export OPENAI_API_KEY=...
-# custom / OpenAI-compatible gateway? BOTH steps need these too, or reuse is silently off:
+# custom / OpenAI-compatible gateway? ALL steps need these too, or reuse is silently off:
 export OPENAI_ENDPOINT=https://your-gateway/...   OPENAI_MODEL=your-model
+cd src/webwright/skills    # commands below run from the module directory
 
-# 1. solve tasks with the library in the loop (wrapper = hint + answer-output instruction)
-examples/solve_with_library.sh "How many commits did Jane make in Jan 2023?" \
-    http://gitlab.example.com /abs/path/library -o outputs -c base.yaml -c model_openai.yaml
+# 1. SOLVE a few instances of the same task type (library is empty — these run from scratch)
+for repo in psf/requests pallets/flask tiangolo/fastapi; do
+  examples/solve_with_library.sh \
+    "What is the latest release version of $repo on GitHub?" \
+    "https://github.com/$repo" "$PWD/library" -o outputs -c base.yaml -c model_openai.yaml
+done
 
-# 2. turn everything you've solved into skills — no manifest, no fields to learn
+# 2. LEARN: distill everything you've solved into skills — no manifest, no fields to fill
 python -m webwright.skills learn outputs/ --library ./library
+# -> groups the 3 runs into ONE template, lifts owner/repo into parameters, writes
+#    library/what_is_the_latest_release_version_of_ow_.../{skill.py, meta.json}
+
+# 3. USE the library: same wrapper, an UNSEEN instance — the agent finds and reuses the skill
+examples/solve_with_library.sh \
+  "What is the latest release version of numpy/numpy on GitHub?" \
+  https://github.com/numpy/numpy "$PWD/library" -o outputs -c base.yaml -c model_openai.yaml
+# outputs/<run>/skill_decision.json -> {"verdict": "use", "skill_id": "what_is_the_latest_..."}
 ```
+
+The library is also usable **without the agent**:
+
+```bash
+# ask it whether it can help a task (the same call the agent makes — one LLM round trip)
+python -m webwright.tools.skill_use \
+  --task "What is the latest release version of pandas-dev/pandas on GitHub?" \
+  --library ./library
+
+# or run the learned skill directly — no model in the loop at all
+echo '{"params": {"owner": "pandas-dev", "repo": "pandas"}}' > taskspec.json
+python library/what_is_the_latest_release_version_of_ow_*/skill.py taskspec.json
+```
+
+Exactly this loop, already run and checked in: `examples/learned_library/` (with its
+run/learn transcript in `examples/README.md`).
 
 `learn` scans the run folders, gates each solve (gold if you pass `--golds golds.json`,
 else a shape check), auto-groups tasks into templates with one LLM call per ~25 runs,
 extracts the parameters, and grows the library. It is **idempotent** — re-run it whenever;
 already-learned runs are skipped (`library/.learned.json`), and big folders are chunked
 automatically. `--dry-run` shows the grouping plan without changing anything.
-
-That's the whole loop: solve → learn → the next solve reuses the library automatically.
 Everything below is **manual mode** — explicit manifests, benchmark-grade gold gates, fine
 control over every field. You don't need it to get started.
 

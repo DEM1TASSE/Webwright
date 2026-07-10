@@ -1,7 +1,9 @@
 # Examples — what a skill library looks like, and what reuse buys you
 
-Everything here is real output of the pipeline (produced by `update.evolve` during a WebArena
-evaluation), lightly curated. Nothing is hand-written.
+This directory is what the module README points at whenever it says "see examples": two
+real, checked-in skill libraries you can read and run (nothing is hand-written — both are
+verbatim pipeline output), the wrapper script the Quickstart uses, and filled-in copies of
+every input file the manual pipeline asks you to write.
 
 ```
 examples/
@@ -17,9 +19,37 @@ examples/
 └── batch.example.json                # a filled manifest (README step 2)
 ```
 
+## The learned library — the Quickstart loop, already run and checked in
+
+`learned_library/` is the exact artifact the README Quickstart produces. Provenance: three
+real solves of "What is the latest release version of X on GitHub?" (psf/requests,
+pallets/flask, tiangolo/fastapi) were fed to `python -m webwright.skills learn`, which
+grouped them into one template and lifted what varied into parameters:
+
+```json
+{
+  "template": "What is the latest release version of {{owner}}/{{repo}} on GitHub?",
+  "signature": { "params": ["owner", "repo"], "call": "python skill.py taskspec.json" },
+  "n_solves": 3
+}
+```
+
+It generalizes to repos none of the three solves ever saw, with no model in the loop:
+
+```bash
+cd learned_library/what_is_the_latest_release_version_of_ow_c29dab8
+echo '{"params": {"owner": "numpy", "repo": "numpy"}}' > taskspec.json
+python skill.py taskspec.json    # -> {"retrieved_data": ["v2.5.1"]}
+# pandas-dev/pandas -> ["v3.0.4"]  — any public repo works
+```
+
+`tests/skills/test_learned_example.py` locks these properties (n_solves ≥ 3, parameters
+actually lifted, code compiles) in CI.
+
 ## What a skill looks like
 
-One template = one skill = one self-contained directory. The `meta.json` is the catalog card
+`example_library/` is real output too — produced by `update.evolve` during the WebArena
+evaluation, lightly curated. One template = one skill = one self-contained directory. The `meta.json` is the catalog card
 (what `retrieve` sees); the `skill.py` is what the agent reads and reuses:
 
 ```json
