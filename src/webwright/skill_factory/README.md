@@ -2,79 +2,28 @@
 
 Module: `webwright.skill_factory`
 
-**Most "agent skills" are notes the model reads. Ours are programs.**
+**Most agent skills are context the model refers to. Ours are programs.**
 
-With Webwright Skill Factory, each solved task becomes runnable, parameterized code — you can verify
-it, run it without the model, and import it into the next task instead of re-exploring.
+Each solved task becomes runnable, parameterized code — verify it, run it without the
+model, and import it into the next task instead of re-exploring.
+
+🎬 **[Watch the 2-minute demo](../../../assets/skill_factory_demo.mp4)**
 
 ![data flow & interfaces](../../../assets/skill_factory_pipeline.png)
 
-**Why webwright makes this natural.** Webwright is a terminal/code-native agent: its actions
-are code, and every solve already leaves behind a working script. The agent's exhaust is
-already code — turning it into skills is a byproduct, not an extra instrumentation layer.
-It complements `crafted_cli`: where `crafted_cli` parameterizes a single task's script by
-anticipating what might vary, `update.refine` parameterizes **across multiple verified
-solves** — the differences actually observed between instances become the parameters.
+**Highlights**
 
-**Validation-gated — exactly as strong as the gate you give it.** Every solve passes an
-admission gate before it can enter the library. With gold answers (benchmarks — this is what
-our WebArena numbers used) the gate is real supervision: wrong answers never get in. The
-default `self_verify` gate checks shape, non-emptiness, and the agent's **own final report**
-(a run that reported `NOT_FOUND_ERROR` is rejected — the agent itself didn't believe it) —
-it filters garbage and self-admitted failures, **not wrong-but-plausible answers the agent
-believed**. Pass `--golds` to `learn`, or bring your own judge, when correctness matters.
-The gate also has an **output side**: a skill must run **standalone** on its own training
-taskspecs and reproduce the recorded answers before it may enter the library (no model in the
-loop; up to `--verify-rounds` build attempts, then rejected). For task families whose answers
-are live data (prices, listings), `--verify shape` relaxes the comparison to non-empty +
-schema-shaped; `--verify off` skips replay entirely.
+- **Skills you can import, not just refer to** — the library ships executable code; a
+  learned skill re-runs standalone in ~30 s with **no model in the loop**.
+- **Self-evolving** — each batch of solves is gated, grouped by template, distilled;
+  new templates add skills, new solves refine them, wrong answers never enter.
+- **Replay-verified** — a skill must reproduce its own training answers standalone
+  before it may land (see *Verification and grades* below).
+- **Measured** — WebArena held-out: **70% vs 55%** accuracy, 4 tasks rescued
+  (wrong → correct), 33 → 10 steps on the biggest win.
+- **Cheap to adopt** — purely additive: one tool + one CLI, no agent-loop changes.
 
-**Verification decides a skill's grade, not just its existence** (`--on-fail reference`):
-
-|                 | `executable` (verified)                          | `reference`                          |
-|-----------------|--------------------------------------------------|--------------------------------------|
-| the bar         | replays its training taskspecs standalone, reproduces the answers | failed that bar |
-| cost to build   | higher & slower: N replays + up to `--verify-rounds` distillation calls | one distillation call |
-| what it buys    | **run it directly** — plain python/playwright, no webwright, no model, cron-able | a **prior for the agent**: exact selectors, URLs, param shapes, fallbacks it reads and reuses |
-| refining        | incremental refines must pass **regression replay** of the stored training examples (`replays.json`); a verified skill is never overwritten by an unverified refine | refined freely — no execution promise to protect |
-
-Why code even at reference grade (vs. natural-language notes): the selectors, URLs and param
-shapes are **verbatim-copyable** into the agent's next script, individual primitives often
-still run even when the end-to-end skill doesn't, and a reference skill is one repair away
-from executable — prose is none of these.
-
-Honest footnote: our WebArena numbers predate this gate — that library was effectively
-all-reference (a later standalone audit: only 3/10 skills replayed clean), and it still
-delivered **+15pp held-out accuracy**. That is the evidence that reference-grade priors help
-an agent; the flights quickstart's three-way consistency is the evidence for the executable
-grade.
-
-**One solve isn't a skill yet.** A single task's script is correct but narrow — it solves
-*that* instance. So the update step aggregates multiple verified solves of the same task
-template: values that differ across instances become parameters, patterns that recur become
-shared primitives. The merged skill is often better than any single solve it came from —
-different runs' strategies become fallbacks, and what settles into the library isn't a
-click-path but the best algorithm the solves discovered (our commit-counting skill distilled
-UI exploration into `git clone + git log`).
-
-**The library keeps growing — safely.** A self-evolving loop feeds later solves back in: new
-templates add skills, new solves refine existing ones in place (working functions kept), and
-skills with nothing new stay byte-identical. Growth never breaks what already works.
-
-**What you get, measured** (WebArena, 10 templates × 3 sites, held-out instances):
-
-- **Tasks that were unsolvable become solvable** — from-scratch failed, with the library
-  solved (4 rescues out of 20).
-- **Tasks that were expensive become cheap** — 33 steps → 10 on repeat task types; overall
-  70% vs 55% accuracy, ~2.4 fewer steps.
-
-(Per-task records and a reproduction driver exist in the companion research repo and can be
-shipped here on request — kept out of the PR to keep it lean.)
-
-**Cheap to adopt, honest about costs.** Integration is purely additive — one tool plus one
-CLI, no agent-loop changes. Building the library is not free, but close: it recycles solves
-you already ran (only the gate-passed ones), plus one distillation LLM call per template
-batch. Independently reproduced from a fresh clone in ~25 minutes.
+**Try it in one command** (no API key needed): `examples/quickstart.sh`
 
 ## How it plugs into Webwright
 
@@ -97,9 +46,9 @@ Two touch points, **no change to the agent loop or default config**:
    ```
    Friendly path: see **Quickstart**. Manifest schema and full control: **Manual mode** below.
 
-> **Want to see it before reading?** `examples/` ships a real skill exactly as `evolve` wrote it
-> (runnable standalone, no LLM), measured step-saving numbers, and filled-in example inputs for
-> every file this guide asks you to write. See [`examples/README.md`](examples/README.md).
+> **Want to see it before reading?** `examples/` ships the Quickstart's learned skill
+> exactly as `learn` wrote it (runnable standalone, no LLM) plus filled-in inputs for every
+> file this guide asks you to write. See [`examples/README.md`](examples/README.md).
 
 ## Quickstart — the complete loop on Webwright's own example task
 
@@ -217,6 +166,28 @@ control over every field. You don't need it to get started.
   once, every repeat is cheap (or free — run the skill standalone from cron, no model);
 - *same-template batch jobs* — QA flows, report pulls: solve 3, learn, run the rest on skills;
 - *a team library* — commit `./library` to your repo; everyone's agent reuses it.
+
+## How it works
+
+**Why webwright makes this natural.** Webwright is a terminal/code-native agent: its actions
+are code, and every solve already leaves behind a working script. The agent's exhaust is
+already code — turning it into skills is a byproduct, not an extra instrumentation layer.
+It complements `crafted_cli`: where `crafted_cli` parameterizes a single task's script by
+anticipating what might vary, `update.refine` parameterizes **across multiple verified
+solves** — the differences actually observed between instances become the parameters.
+
+**One solve isn't a skill yet.** A single task's script is correct but narrow — it solves
+*that* instance. So the update step aggregates multiple verified solves of the same task
+template: values that differ across instances become parameters, patterns that recur become
+shared primitives. The merged skill is often better than any single solve it came from —
+different runs' strategies become fallbacks, and what settles into the library isn't a
+click-path but the best algorithm the solves discovered (our commit-counting skill distilled
+UI exploration into `git clone + git log`).
+
+**The library keeps growing — safely.** A self-evolving loop feeds later solves back in: new
+templates add skills, new solves refine existing ones in place (working functions kept), and
+skills with nothing new stay byte-identical. Growth never breaks what already works.
+
 
 ## Manual mode: full control (end-to-end)
 
@@ -420,15 +391,40 @@ our WebArena evaluation runs (train → gate → update → held-out reuse).
 | `llm.py`      | `configure_llm(model)` + `llm()`: **backend-agnostic** via Webwright's `Model` abstraction; a bare CLI builds the model from `SKILL_MODEL_NAME`/`SKILL_MODEL_ENDPOINT` (or `OPENAI_*`) env — no hardcoded endpoint/key |
 | `prompt.py`   | `with_skill_hint(prompt, task, library)`: non-invasive task-prompt hint |
 
-## Gate
+## Verification and grades
 
-`gate(method=...)` is the **admission** check (independent of the solving agent — not the same as
-`self_reflection`, which is the agent's own completion condition):
-- `gold` — compare against a known answer (benchmarks); strongest.
-- `self_verify` — invariant only (non-empty + shape); weak placeholder when no gold exists. It does
-  not check *correctness*. Note: `self_reflection` cannot serve as the gate — `require_self_reflection_success`
-  makes it always `predicted_label==1`, so it would admit everything (agent grading itself).
-- `none` — admit all (demos).
+**Validation-gated — exactly as strong as the gate you give it.** Every solve passes an
+admission gate before it can enter the library. With gold answers (benchmarks — this is what
+our WebArena numbers used) the gate is real supervision: wrong answers never get in. The
+default `self_verify` gate checks shape, non-emptiness, and the agent's **own final report**
+(a run that reported `NOT_FOUND_ERROR` is rejected — the agent itself didn't believe it) —
+it filters garbage and self-admitted failures, **not wrong-but-plausible answers the agent
+believed**. Pass `--golds` to `learn`, or bring your own judge, when correctness matters.
+The gate also has an **output side**: a skill must run **standalone** on its own training
+taskspecs and reproduce the recorded answers before it may enter the library (no model in the
+loop; up to `--verify-rounds` build attempts, then rejected). For task families whose answers
+are live data (prices, listings), `--verify shape` relaxes the comparison to non-empty +
+schema-shaped; `--verify off` skips replay entirely.
+
+**Verification decides a skill's grade, not just its existence** (`--on-fail reference`):
+
+|                 | `executable` (verified)                          | `reference`                          |
+|-----------------|--------------------------------------------------|--------------------------------------|
+| the bar         | replays its training taskspecs standalone, reproduces the answers | failed that bar |
+| cost to build   | higher & slower: N replays + up to `--verify-rounds` distillation calls | one distillation call |
+| what it buys    | **run it directly** — plain python/playwright, no webwright, no model, cron-able | a **prior for the agent**: exact selectors, URLs, param shapes, fallbacks it reads and reuses |
+| refining        | incremental refines must pass **regression replay** of the stored training examples (`replays.json`); a verified skill is never overwritten by an unverified refine | refined freely — no execution promise to protect |
+
+Why code even at reference grade (vs. natural-language notes): the selectors, URLs and param
+shapes are **verbatim-copyable** into the agent's next script, individual primitives often
+still run even when the end-to-end skill doesn't, and a reference skill is one repair away
+from executable — prose is none of these.
+
+Honest footnote: our WebArena numbers predate this gate — that library was effectively
+all-reference (a later standalone audit: only 3/10 skills replayed clean), and it still
+delivered **+15pp held-out accuracy**. That is the evidence that reference-grade priors help
+an agent; the flights quickstart's three-way consistency is the evidence for the executable
+grade.
 
 ## Backend
 
