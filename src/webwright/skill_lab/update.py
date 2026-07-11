@@ -330,7 +330,7 @@ def traces_from_manifest(manifest: dict) -> list["Trace"]:
 def main(argv=None) -> int:
     import argparse
     p = argparse.ArgumentParser(
-        prog="python -m webwright.skills.update",
+        prog="python -m webwright.skill_lab.update",
         description="Batch-update the skill library from a manifest of gate-judged solves.")
     p.add_argument("--manifest", required=True, help="JSON: {template, runs:[{dir,admit,params,...}]}")
     p.add_argument("--library", required=True, help="Path to the skill library directory.")

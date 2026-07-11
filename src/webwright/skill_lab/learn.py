@@ -1,6 +1,6 @@
 """learn — the friendly entry: turn a folder of finished runs into library skills.
 
-    python -m webwright.skills learn <runs_dir> [--library ./library] [--golds golds.json]
+    python -m webwright.skill_lab learn <runs_dir> [--library ./library] [--golds golds.json]
                                      [--chunk 25] [--dry-run]
 
 No manifest to write. For every run dir under <runs_dir> it reads task.json (task text,
@@ -177,7 +177,7 @@ def learn(runs_dir, library_root, golds=None, chunk=25, dry_run=False, verify="s
 
 def main(argv=None) -> int:
     import argparse
-    p = argparse.ArgumentParser(prog="python -m webwright.skills learn",
+    p = argparse.ArgumentParser(prog="python -m webwright.skill_lab learn",
                                 description="Distill a folder of finished runs into library skills.")
     p.add_argument("runs_dir", help="Folder containing webwright run directories.")
     p.add_argument("--library", default="library")

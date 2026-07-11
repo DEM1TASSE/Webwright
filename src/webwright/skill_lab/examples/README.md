@@ -25,7 +25,7 @@ examples/
 `learned_library/` is the exact artifact the README Quickstart produces. Three from-scratch
 solves of "cheapest one-way flight" on Google Flights (SEA→JFK, SFO→BOS, LAX→ORD; 13, 26
 and 18 agent steps — airport comboboxes and date pickers are genuinely fiddly) were grouped
-by `python -m webwright.skills learn` into one template with **five** lifted parameters:
+by `python -m webwright.skill_lab learn` into one template with **five** lifted parameters:
 
 ```json
 {
@@ -53,7 +53,7 @@ Measured on that unseen route, minutes apart (full table and reading in the modu
 Quickstart): from scratch 17 steps / 8.9 min; with the library 15 steps / 5.2 min;
 standalone ~30 s with no model — all three answers identical.
 
-`tests/skills/test_learned_example.py` locks the aggregation properties for every skill in
+`tests/skill_lab/test_learned_example.py` locks the aggregation properties for every skill in
 the directory (n_solves ≥ 3, parameters actually lifted, code compiles) in CI.
 
 ## What a skill looks like
@@ -116,7 +116,7 @@ steps, querying the library costs more than it saves — reuse pays on expensive
 **1. Run the skill directly — no LLM, no agent needed:**
 
 ```bash
-EXAMPLES="$PWD/src/webwright/skills/examples"
+EXAMPLES="$PWD/src/webwright/skill_lab/examples"
 cd "$(mktemp -d)"    # run in a scratch dir — skills write their artifacts to the cwd
 cat > taskspec.json <<'EOF'
 {"params": {"user": "Jane Doe", "period": "on January 5th 2023"},

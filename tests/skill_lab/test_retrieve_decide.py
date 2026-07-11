@@ -4,9 +4,9 @@ import json
 import sys, tempfile
 from pathlib import Path
 pass
-from webwright.skills.library import Library, Skill
-from webwright.skills.retrieve import retrieve, Candidate
-from webwright.skills.decide import decide, Decision
+from webwright.skill_lab.library import Library, Skill
+from webwright.skill_lab.retrieve import retrieve, Candidate
+from webwright.skill_lab.decide import decide, Decision
 
 
 def _lib(d):
@@ -51,7 +51,7 @@ def run():
 
     # with_skill_hint must bake an ABSOLUTE library path into the hint (the command runs in
     # the agent's workspace, where a relative path would point at nothing)
-    from webwright.skills.prompt import with_skill_hint
+    from webwright.skill_lab.prompt import with_skill_hint
     hinted = with_skill_hint("solve it", task="t", library="./some_rel_lib")
     import os, shlex
     assert f'--library {os.path.abspath("./some_rel_lib")}' in hinted, hinted[:300]

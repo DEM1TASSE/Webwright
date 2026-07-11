@@ -2,7 +2,7 @@
 import sys
 from pathlib import Path
 pass
-from webwright.skills.gate import gate
+from webwright.skill_lab.gate import gate
 
 ARR = {"type": "array", "items": {"type": "string"}}
 
