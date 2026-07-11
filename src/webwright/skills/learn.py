@@ -160,6 +160,11 @@ def learn(runs_dir, library_root, golds=None, chunk=25, dry_run=False, verify="s
                 continue
             log = evolve(traces, lib, verify=verify)
             print(f"  evolve: {json.dumps(log)}")
+            if log.get("rejected"):
+                # skill did not land -> leave these runs OUT of the ledger so a later
+                # learn (fixed model/site/verify mode) can try them again
+                print(f"  ! runs kept un-learned (skill rejected) — re-run learn to retry")
+                continue
             for m in g.get("members", []):
                 if 0 <= m.get("i", -1) < len(batch):
                     ledger["runs"][batch[m["i"]]["dir"]] = {"template": tmpl}

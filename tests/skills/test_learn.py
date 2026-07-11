@@ -76,13 +76,39 @@ def run_regressions():
 
 
 # pytest entry point (CI also runs this file as a script)
+def run_reject_ledger():
+    """A rejected skill must NOT mark its runs as learned (they get another chance)."""
+    import contextlib, io, json, tempfile
+    from unittest import mock
+    import webwright.skills.learn as L
+    with tempfile.TemporaryDirectory() as td:
+        run = Path(td) / "runs" / "r1_x"
+        run.mkdir(parents=True)
+        (run / "task.json").write_text(json.dumps(
+            {"task": "count things", "task_id": "r1", "start_url": "https://example.com"}))
+        (run / "agent_response.json").write_text(json.dumps(
+            {"status": "SUCCESS", "retrieved_data": [1]}))
+        groups = [{"template": "count {{x}}", "members": [{"i": 0, "params": {"x": "things"}}]}]
+        with mock.patch.object(L, "group_chunk", lambda *a: groups), \
+             mock.patch.object(L, "evolve", lambda *a, **k: {"added": [], "rejected": ["count_x"]}):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                L.learn(str(run.parent), str(Path(td) / "lib"))
+        led = Path(td) / "lib" / ".learned.json"
+        assert "kept un-learned" in buf.getvalue()
+        assert not led.exists() or "r1_x" not in led.read_text(), "rejected runs must stay un-learned"
+    print("test_learn reject-ledger OK")
+
+
 def test_all():
     run()
     run_regressions()
     run_status_gate()
+    run_reject_ledger()
 
 
 if __name__ == "__main__":
     run()
     run_regressions()
     run_status_gate()
+    run_reject_ledger()
