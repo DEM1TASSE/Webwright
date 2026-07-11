@@ -41,9 +41,8 @@ skills with nothing new stay byte-identical. Growth never breaks what already wo
 - **Tasks that were expensive become cheap** — 33 steps → 10 on repeat task types; overall
   70% vs 55% accuracy, ~2.4 fewer steps.
 
-These numbers aren't take-our-word-for-it: [`evals/webarena/`](../../../evals/webarena/)
-has the per-task records behind the table (aggregate them with one command, no setup) and
-a driver that re-runs the whole experiment on your own WebArena deployment.
+(Per-task records and a reproduction driver exist in the companion research repo and can be
+shipped here on request — kept out of the PR to keep it lean.)
 
 **Cheap to adopt, honest about costs.** Integration is purely additive — one tool plus one
 CLI, no agent-loop changes. Building the library is not free, but close: it recycles solves
@@ -404,9 +403,8 @@ uses the same backend as the running agent. No gateway or key is hardcoded.
 
 ## Results (summary)
 
-Validated with this module. Reproducible: [`evals/webarena/`](../../../evals/webarena/) ships
-the per-task records these summaries aggregate from (`reproduce.py table --results results`)
-plus the driver to re-run everything; CI locks the records to the numbers below.
+Validated with this module (per-task records and the reproduction driver live in the
+companion research repo).
 
 - **WebArena — 10 templates × 3 domains (shopping_admin / gitlab / map), gold gate.** Per template
   3 train solves build the library, 2 held-out instances measure reuse (WITH library vs from

@@ -106,8 +106,7 @@ scratch. Same model, same budget.
 | all reviews with <=3 stars (shopping)  | **wrong**, 31 steps| **correct**, 13 steps |
 
 Aggregate over 10 templates x 3 sites (20 held-out instances): **70% vs 55% accuracy, 14.7 vs
-17.1 steps** (per-task records + rerun driver: [`evals/webarena/`](../../../../evals/webarena/)).
-Two kinds of wins: tasks that get *cheaper* (33 -> 10) and tasks that get
+17.1 steps**. Two kinds of wins: tasks that get *cheaper* (33 -> 10) and tasks that get
 *solvable* (wrong -> correct). Honest counterpoint: on tasks the agent already solves in a few
 steps, querying the library costs more than it saves — reuse pays on expensive-to-explore tasks.
 
