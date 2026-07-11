@@ -10,8 +10,10 @@ from typing import List, Optional, Tuple
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
 
 
-ROOT = Path(os.environ.get("WORKSPACE_DIR", Path(__file__).resolve().parent)).resolve()
-RUN_DIR = Path(__file__).resolve().parent
+# All artifacts go under the caller's workspace (default: cwd) — NEVER next to __file__:
+# this file lives in a shared library, and writing here would dirty it for everyone.
+ROOT = Path(os.environ.get("WORKSPACE_DIR", Path.cwd())).resolve()
+RUN_DIR = ROOT
 AGENT_RESPONSE = ROOT / "agent_response.json"
 LOG_FILE = RUN_DIR / "final_script_log.txt"
 SCREENSHOTS_DIR = RUN_DIR / "screenshots"

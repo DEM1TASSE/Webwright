@@ -65,7 +65,10 @@ _REFINE_SYS = (
     "differs.\n"
     "Interface (fixed): the skill reads taskspec.json from sys.argv[1] "
     "(taskspec = {params, start_url, credentials, output_schema}) and writes agent_response.json with "
-    "retrieved_data MATCHING output_schema exactly. Output ONLY the python code in one ```python block."
+    "retrieved_data MATCHING output_schema exactly. ALL artifacts (answer, logs, screenshots) must go "
+    "under the WORKSPACE_DIR env var (default: the current working directory) — never next to "
+    "__file__: the skill file lives in a shared library. "
+    "Output ONLY the python code in one ```python block."
 )
 
 _REFINE_INCREMENTAL = (

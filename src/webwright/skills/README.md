@@ -95,8 +95,12 @@ What `full` does, spelled out:
 
 ```bash
 export OPENAI_API_KEY=...
-# custom / OpenAI-compatible gateway? ALL steps need these too, or reuse is silently off:
+# custom / OpenAI-compatible gateway? TWO knobs, both needed:
+#  1. env vars for learn / skill_use (or reuse is silently off):
 export OPENAI_ENDPOINT=https://your-gateway/...   OPENAI_MODEL=your-model
+#  2. the AGENT's model in the solve steps reads its yaml, NOT these env vars — copy
+#     model_openai.yaml, set openai_endpoint/model_name to your gateway, and use it
+#     below in place of `-c model_openai.yaml` (quickstart.sh: export MODEL_CFG=...).
 cd src/webwright/skills    # commands below run from the module directory
 
 # 1. SOLVE a few instances of the same task type (library is empty — these run from scratch)

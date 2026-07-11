@@ -18,6 +18,13 @@ def run():
         assert "Additionally, write" not in meta["template"], "pipeline text must not leak (F7)"
         code = (d / "skill.py").read_text()
         compile(code, d.name, "exec")
+        # artifacts must never be written next to __file__ (shared library dir)
+        assert "Path(__file__).resolve().parent\n" not in code
+        for line in code.splitlines():
+            if "__file__" in line and "=" in line:
+                assert "WORKSPACE_DIR" not in line.split("=")[0], line
+                assert not any(k in line for k in ("RUN_DIR", "SCREENSHOT", "LOG")), \
+                    f"artifact path anchored to __file__: {line.strip()}"
         for p in params:
             assert p in code, f"param {p} must appear in the skill code"
     print("test_learned_example OK")

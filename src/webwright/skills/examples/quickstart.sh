@@ -6,15 +6,17 @@
 #   ./quickstart.sh solve    # one agent solve that REUSES the checked-in skill (needs key)
 #   ./quickstart.sh full     # the whole loop: 3 solves -> learn -> reuse (needs key, ~30 min)
 #
-# Custom / OpenAI-compatible gateway? Also export OPENAI_ENDPOINT and OPENAI_MODEL,
-# or reuse is silently off.
+# Custom / OpenAI-compatible gateway? Two knobs, both needed:
+#   export OPENAI_ENDPOINT=... OPENAI_MODEL=...   (for learn / skill_use)
+#   export MODEL_CFG=/path/to/your_model.yaml     (for the agent in solve/full — copy
+#     model_openai.yaml and set openai_endpoint/model_name; env vars do NOT reach it)
 set -euo pipefail
 SELF="$(readlink -f "$0")"
 cd "$(dirname "$SELF")"
 DATE=$(date -d "+30 days" +%Y-%m-%d 2>/dev/null || date -v+30d +%Y-%m-%d)
 WORK="${QUICKSTART_WORKDIR:-$(mktemp -d /tmp/skills_quickstart.XXXX)}"
 LIB="$PWD/learned_library"
-CFG=(-c base.yaml -c model_openai.yaml)
+CFG=(-c base.yaml -c "${MODEL_CFG:-model_openai.yaml}")
 
 need_key() { : "${OPENAI_API_KEY:?export OPENAI_API_KEY first (on a gateway also OPENAI_ENDPOINT / OPENAI_MODEL)}"; }
 
