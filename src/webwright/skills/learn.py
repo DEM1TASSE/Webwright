@@ -52,7 +52,8 @@ def collect_runs(runs_dir: Path, ledger: dict):
             continue
         try:
             t = json.loads(tj.read_text(encoding="utf-8"))
-            answer = json.loads(ar.read_text(encoding="utf-8")).get("retrieved_data")
+            resp = json.loads(ar.read_text(encoding="utf-8"))
+            answer, status = resp.get("retrieved_data"), resp.get("status", "")
         except Exception as e:
             print(f"  skip {d.name}: unreadable ({e})")
             continue
@@ -64,7 +65,8 @@ def collect_runs(runs_dir: Path, ledger: dict):
         if "Additionally, write the final answer into" in task:
             task = task.split("Additionally, write the final answer into", 1)[0].strip()
         out.append({"dir": str(d.resolve()), "task_id": t.get("task_id", d.name),
-                    "task": task, "start_url": t.get("start_url", ""), "answer": answer})
+                    "task": task, "start_url": t.get("start_url", ""),
+                    "answer": answer, "status": status})
     if skipped_no_answer:
         print(f"  ! {skipped_no_answer} run(s) had no answer file and were skipped — their solves "
               f"cannot be aggregated. Solve via examples/solve_with_library.sh (it adds the "
@@ -111,7 +113,8 @@ def learn(runs_dir, library_root, golds=None, chunk=25, dry_run=False):
     admitted = []
     for r in runs:
         g = (gate(r["answer"], gold=golds[r["task_id"]], method="gold")
-             if r["task_id"] in golds else gate(r["answer"], method="self_verify"))
+             if r["task_id"] in golds
+             else gate(r["answer"], method="self_verify", status=r.get("status", "")))
         r["admit"] = g.admit
         if g.admit:
             admitted.append(r)
@@ -120,8 +123,8 @@ def learn(runs_dir, library_root, golds=None, chunk=25, dry_run=False):
     print(f"{len(admitted)}/{len(runs)} runs admitted by gate "
           f"({'gold' if golds else 'self_verify'})")
     if not golds:
-        print("  ! gate=self_verify: shape check only — wrong-but-well-formed answers PASS. "
-              "Pass --golds for real verification.")
+        print("  ! gate=self_verify: shape check + the agent's own SUCCESS report — an answer "
+              "the agent wrongly believed still PASSES. Pass --golds for real verification.")
     if not admitted:
         return
 

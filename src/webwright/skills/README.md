@@ -17,9 +17,10 @@ solves** — the differences actually observed between instances become the para
 **Validation-gated — exactly as strong as the gate you give it.** Every solve passes an
 admission gate before it can enter the library. With gold answers (benchmarks — this is what
 our WebArena numbers used) the gate is real supervision: wrong answers never get in. The
-default `self_verify` gate only checks shape and non-emptiness — it filters garbage, **not
-wrong-but-plausible answers**. Pass `--golds` to `learn`, or bring your own judge, when
-correctness matters.
+default `self_verify` gate checks shape, non-emptiness, and the agent's **own final report**
+(a run that reported `NOT_FOUND_ERROR` is rejected — the agent itself didn't believe it) —
+it filters garbage and self-admitted failures, **not wrong-but-plausible answers the agent
+believed**. Pass `--golds` to `learn`, or bring your own judge, when correctness matters.
 
 **One solve isn't a skill yet.** A single task's script is correct but narrow — it solves
 *that* instance. So the update step aggregates multiple verified solves of the same task
@@ -149,7 +150,8 @@ first runs with no model at all** — a fare watcher in cron pays ~9 minutes of 
 once, then ~30 s forever.
 
 **Verification on live data, honestly:** flight prices have no fixed gold answer, so the
-gate here is `self_verify` (shape only — the run-time warning tells you so). What the table
+gate here is `self_verify` — shape plus the agent's own SUCCESS report; the run-time warning
+spells out what that does and doesn't catch. What the table
 DOES verify: three independent paths to the same answer, minutes apart. When your task
 family has golds, pass `--golds` and admission becomes real verification.
 

@@ -3,14 +3,16 @@ regression pollution. The gate is an INDEPENDENT second eye — distinct from th
 self_reflection (which is a solve-completion condition, not an admission check).
 
 Stable interface (swappable implementation), configurable method:
-    gate(result, *, gold=None, output_schema=None, method="auto") -> GateResult
+    gate(result, *, gold=None, output_schema=None, method="auto", status="") -> GateResult
 
 - method="gold"        : compare against gold (benchmarks like WebArena; truly independent, catches
                          mis-extracted solves). Recommended.
-- method="self_verify" : invariant only (result non-empty + shape matches output_schema). A weak
-                         placeholder when no gold exists.
-                         Limitation: only checks "present / right shape", not "correct" — a wrong but
-                         non-empty answer is admitted anyway.
+- method="self_verify" : invariants (result non-empty + shape matches output_schema) plus the
+                         agent's OWN final report: a run whose agent_response.json says anything
+                         but SUCCESS (e.g. NOT_FOUND_ERROR) is rejected — the agent itself did not
+                         believe the answer. Costs nothing; no extra model call.
+                         Limitation: still self-grading — a wrong answer the agent BELIEVED is
+                         admitted anyway.
                          (Note: webwright's self_reflection is always predicted_label==1 due to
                          require_self_reflection_success, so it cannot serve as the gate — that is a
                          solve-completion condition, not independent admission.)
@@ -44,7 +46,9 @@ def _shape_ok(result, output_schema) -> bool:
     return True
 
 
-def _self_verify(result, output_schema) -> GateResult:
+def _self_verify(result, output_schema, status="") -> GateResult:
+    if status and status != "SUCCESS":
+        return GateResult(False, f"agent itself reported {status}")
     if result is None:
         return GateResult(False, "result is null")
     if isinstance(result, (list, dict, str)) and len(result) == 0:
@@ -60,9 +64,10 @@ def _gold(result, gold) -> GateResult:
     return GateResult(False, "differs from gold")
 
 
-def gate(result, *, gold=None, output_schema=None, method: str = "auto") -> GateResult:
+def gate(result, *, gold=None, output_schema=None, method: str = "auto",
+         status: str = "") -> GateResult:
     if method == "none":
         return GateResult(True, "no gate (admit all)")
     if method == "gold" or (method == "auto" and gold is not None):
         return _gold(result, gold)
-    return _self_verify(result, output_schema)
+    return _self_verify(result, output_schema, status=status)
