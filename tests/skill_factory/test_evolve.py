@@ -2,14 +2,14 @@
 import sys, tempfile
 from pathlib import Path
 pass
-import webwright.skill_lab.update as U
-from webwright.skill_lab.library import Library, Skill
+import webwright.skill_factory.update as U
+from webwright.skill_factory.library import Library, Skill
 
 
 def run():
     # stub _refine: deterministically "build/widen" a skill for the group's template
     def fake_refine(group, library, verify="off", rounds=2, on_fail="reject"):
-        from webwright.skill_lab.update import _slug
+        from webwright.skill_factory.update import _slug
         sid = _slug(group[0].template)
         library.add(Skill(sid, f"# refined from {len(group)} solves\n",
                           {"template": group[0].template, "provenance": "test-refine"}))
@@ -132,7 +132,7 @@ def run():
     with tempfile.TemporaryDirectory() as d:
         lib = Library(d)
         # guard: a failed refine must NEVER overwrite an existing skill, even with on_fail=reference
-        from webwright.skill_lab.library import Skill as _Skill
+        from webwright.skill_factory.library import Skill as _Skill
         sid = U._slug("verify template")
         lib.add(_Skill(sid, "GOOD OLD CODE", {"template": "verify template", "verified": True,
                                               "grade": "executable"}))
@@ -175,7 +175,7 @@ def run():
         log = U.evolve([t43b], lib, verify="strict")
         assert log["adapt_refined"], f"general refine passing old+new must land: {log}"
 
-    # update CLI smoke: -m webwright.skill_lab.update must not NameError on Path (regression)
+    # update CLI smoke: -m webwright.skill_factory.update must not NameError on Path (regression)
     with tempfile.TemporaryDirectory() as d:
         mf = Path(d) / "m.json"
         mf.write_text(_json.dumps({"template": "T", "runs": []}))

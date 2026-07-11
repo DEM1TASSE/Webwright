@@ -1,4 +1,4 @@
-"""webwright.skill_lab — a memory/skill library module for webwright.
+"""webwright.skill_factory — a memory/skill library module for webwright.
 
 Store solved tasks as reusable, executable code skills; retrieve + judge (use/adapt/skip) at
 solve time; admit via a gate; and grow the library incrementally (evolve). Plugs into webwright
@@ -16,9 +16,9 @@ from .llm import configure_llm
 from .prompt import with_skill_hint
 
 # NOTE: `update` (evolve / Trace) is deliberately NOT imported here. It is the module run as a
-# CLI (`python -m webwright.skill_lab.update`); importing it eagerly makes runpy print a
+# CLI (`python -m webwright.skill_factory.update`); importing it eagerly makes runpy print a
 # "found in sys.modules" RuntimeWarning on every CLI invocation. Import it directly:
-#     from webwright.skill_lab.update import evolve, Trace
+#     from webwright.skill_factory.update import evolve, Trace
 
 __all__ = [
     "Library", "Skill", "retrieve", "Candidate", "decide", "Decision",

@@ -3,7 +3,7 @@ multiple solves (n_solves >= 3) with real lifted parameters — not a single-sol
 import json
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2] / "src/webwright/skill_lab/examples/learned_library"
+ROOT = Path(__file__).resolve().parents[2] / "src/webwright/skill_factory/examples/learned_library"
 
 
 def run():

@@ -1,10 +1,10 @@
-# Webwright Skill Lab — a self-evolving factory for reusable, verified, code-native web-agent skills
+# Web Skill Factory — evolving reusable, verified, code-native skills for web agents
 
-Module: `webwright.skill_lab`
+Module: `webwright.skill_factory`
 
 **Most "agent skills" are notes the model reads. Ours are programs.**
 
-With Webwright Skill Lab, each solved task becomes runnable, parameterized code — you can verify
+With Webwright Skill Factory, each solved task becomes runnable, parameterized code — you can verify
 it, run it without the model, and import it into the next task instead of re-exploring.
 
 ![data flow & interfaces](pipeline_diagram.png)
@@ -87,13 +87,13 @@ Two touch points, **no change to the agent loop or default config**:
    ```
    It returns JSON `{verdict: use|adapt|skip, skill_id, source_path, how_to_reuse}`. The agent
    reads `source_path` and reuses the skill (use = as-is, adapt = reuse core + change last step,
-   skip = solve from scratch). `webwright.skill_lab.with_skill_hint(prompt, ...)` prepends a one-line
+   skip = solve from scratch). `webwright.skill_factory.with_skill_hint(prompt, ...)` prepends a one-line
    usage hint to the task prompt so the agent remembers to query the library first.
 
 2. **Growth after solving — the `update` CLI.** Distill a batch of gate-passed solves into a
    library skill (offline, not in the solve loop):
    ```bash
-   python -m webwright.skill_lab.update --manifest batch.json --library ./library
+   python -m webwright.skill_factory.update --manifest batch.json --library ./library
    ```
    Friendly path: see **Quickstart**. Manifest schema and full control: **Manual mode** below.
 
@@ -111,7 +111,7 @@ fiddly, so a learned skill has something real to carry.
 **Fastest path — one command, every parameter pre-filled:**
 
 ```bash
-cd src/webwright/skill_lab/examples
+cd src/webwright/skill_factory/examples
 ./quickstart.sh          # a learned skill drives the live site — no model, no API key needed
 ./quickstart.sh ask      # ask the library about a task it has never seen   (needs a key)
 ./quickstart.sh solve    # watch the agent REUSE the checked-in skill        (needs a key)
@@ -128,7 +128,7 @@ export OPENAI_ENDPOINT=https://your-gateway/...   OPENAI_MODEL=your-model
 #  2. the AGENT's model in the solve steps reads its yaml, NOT these env vars — copy
 #     model_openai.yaml, set openai_endpoint/model_name to your gateway, and use it
 #     below in place of `-c model_openai.yaml` (quickstart.sh: export MODEL_CFG=...).
-cd src/webwright/skill_lab    # commands below run from the module directory
+cd src/webwright/skill_factory    # commands below run from the module directory
 
 # 1. SOLVE a few instances of the same task type (library is empty — these run from scratch)
 while IFS='|' read -r FROM TO; do
@@ -142,7 +142,7 @@ Los Angeles (LAX)|Chicago (ORD)
 ROUTES
 
 # 2. LEARN: distill everything you've solved into skills — no manifest, no fields to fill
-python -m webwright.skill_lab learn outputs/ --library ./library
+python -m webwright.skill_factory learn outputs/ --library ./library
 # -> groups the 3 runs into ONE template and lifts FIVE parameters:
 #    origin city/code, destination city/code, date
 #    library/what_is_the_cheapest_flight_from_origin_.../{skill.py, meta.json}
@@ -297,7 +297,7 @@ Field by field:
 export OPENAI_API_KEY=...                        # backend key (never stored by the module)
 # optional — defaults to OPENAI_MODEL / OPENAI_ENDPOINT:
 export SKILL_MODEL_NAME=gpt-5.4 SKILL_MODEL_ENDPOINT=https://api.openai.com/v1/responses
-python -m webwright.skill_lab.update --manifest batch.json --library ./library
+python -m webwright.skill_factory.update --manifest batch.json --library ./library
 ```
 
 Prints a changelog: `{"added": [...], "adapt_refined": [...], "use": [...], "dropped_wrong": n}`.
@@ -308,7 +308,7 @@ left untouched. Batches may mix templates.
 ### 4. Reuse at solve time
 
 ```python
-from webwright.skill_lab import with_skill_hint
+from webwright.skill_factory import with_skill_hint
 prompt = with_skill_hint(prompt, task=task_text, library="/abs/path/to/library")
 ```
 
@@ -376,7 +376,7 @@ done
 # 2) gate each run + assemble the manifest
 python - <<'PY'
 import json, glob
-from webwright.skill_lab import gate
+from webwright.skill_factory import gate
 
 TEMPLATE = "How many commits did {{user}} make to {{repo}} on {{date}}?"
 SCHEMA = {"type": "number"}
@@ -392,13 +392,13 @@ print(sum(r["admit"] for r in runs), "of", len(runs), "admitted")
 PY
 
 # 3) evolve the library
-python -m webwright.skill_lab.update --manifest batch.json --library ./library
+python -m webwright.skill_factory.update --manifest batch.json --library ./library
 
 # 4) solve NEW instances of the template WITH the library: prepend the skill hint
 #    (the hint is what tells the agent to query; with_skill_hint resolves ./library
 #     to an absolute path against YOUR cwd, so the agent finds it from its workspace)
 TASK="How many commits did byte make to empathy-prompts on 4/2/2023?"
-PROMPT=$(python -c 'import sys; from webwright.skill_lab import with_skill_hint
+PROMPT=$(python -c 'import sys; from webwright.skill_factory import with_skill_hint
 print(with_skill_hint(sys.argv[1], task=sys.argv[1], library="./library"))' "$TASK")
 python -m webwright.run.cli main -t "$PROMPT" \
   --task-id t132_new --start-url "$START_URL" -o outputs -c base.yaml -c model_openai.yaml

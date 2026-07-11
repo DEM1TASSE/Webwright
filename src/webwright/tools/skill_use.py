@@ -18,9 +18,9 @@ import os
 import sys
 from pathlib import Path
 
-from webwright.skill_lab.library import Library
-from webwright.skill_lab.retrieve import retrieve
-from webwright.skill_lab.decide import decide
+from webwright.skill_factory.library import Library
+from webwright.skill_factory.retrieve import retrieve
+from webwright.skill_factory.decide import decide
 
 
 def recommend(task: str, library_root: str) -> dict:
