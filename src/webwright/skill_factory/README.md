@@ -1,15 +1,13 @@
 # Web Skill Factory — evolving reusable, verified, code-native skills for web agents
 
-Module: `webwright.skill_factory`
-
 **Most agent skills are context the model refers to. Ours are programs.**
 
 Each solved task becomes runnable, parameterized code — verify it, run it without the
 model, and import it into the next task instead of re-exploring.
 
-🎬 **[Watch the 2-minute demo](../../../assets/skill_factory_demo.mp4)**
+**Demo:**
 
-![data flow & interfaces](../../../assets/skill_factory_pipeline.png)
+https://github.com/user-attachments/assets/d15b1f83-2c8d-4f2d-bbc5-be365c0bcf4e
 
 **Highlights**
 
@@ -427,6 +425,8 @@ an agent; the flights quickstart's three-way consistency is the evidence for the
 grade.
 
 ## Backend
+
+![data flow & interfaces](../../../assets/skill_factory_pipeline.png)
 
 Backend-agnostic. Either `configure_llm(model_config_or_Model)` once in-process, or set
 `SKILL_MODEL_NAME` / `SKILL_MODEL_ENDPOINT` (falling back to `OPENAI_*`) so a bare tool invocation
