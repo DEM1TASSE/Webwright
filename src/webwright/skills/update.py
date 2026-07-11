@@ -52,6 +52,21 @@ def _extract_code(txt: str) -> str:
     return txt
 
 
+def _norm(v):
+    """Scalar-normalize for replay comparison: 5 == "5" (type jitter between a solve's
+    string answer and a skill's numeric one is not a logic error; WebArena's own
+    evaluator normalizes the same way)."""
+    if isinstance(v, list):
+        return [_norm(x) for x in v]
+    if isinstance(v, dict):
+        return {k: _norm(x) for k, x in sorted(v.items())}
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        return str(v)
+    return v
+
+
 def _replay(code: str, traces: list["Trace"], strict: bool = False) -> list[str]:
     """Run the candidate skill on each source trace's OWN taskspec (no model in the loop).
     PASS = exact answer match; in non-strict mode a non-empty, schema-shaped answer also
@@ -88,7 +103,7 @@ def _replay(code: str, traces: list["Trace"], strict: bool = False) -> list[str]
                     got = json.loads(arp.read_text(encoding="utf-8")).get("retrieved_data")
                 except Exception:
                     pass
-            if got == tr.answer:
+            if _norm(got) == _norm(tr.answer):
                 continue
             if not strict and gate(got, output_schema=tr.meta.get("output_schema"),
                                    method="self_verify").admit:
@@ -248,6 +263,7 @@ def traces_from_manifest(manifest: dict) -> list["Trace"]:
                          used_skill_id=r.get("used_skill_id"),
                          meta={"params": r.get("params", {}), "site": r.get("site", ""),
                                "start_url": r.get("start_url", ""),
+                               "credentials": r.get("credentials"),
                                "output_schema": r.get("output_schema")}))
     return out
 
