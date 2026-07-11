@@ -49,8 +49,8 @@ python skill.py taskspec.json    # ~30 s -> {"retrieved_data": ["Frontier", "$68
 ```
 
 Measured on that unseen route, minutes apart (full table and reading in the module README's
-Quickstart): from scratch 17 steps / ~378k tokens / 8.9 min; with the library 15 steps /
-~407k tokens / 5.2 min; standalone 0 tokens / ~30 s — all three answers identical.
+Quickstart): from scratch 17 steps / 8.9 min; with the library 15 steps / 5.2 min;
+standalone ~30 s with no model — all three answers identical.
 
 `tests/skills/test_learned_example.py` locks the aggregation properties for every skill in
 the directory (n_solves ≥ 3, parameters actually lifted, code compiles) in CI.

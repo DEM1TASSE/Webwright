@@ -135,16 +135,14 @@ minutes apart:
 |                | from scratch | with the library | the skill, standalone |
 |----------------|--------------|------------------|-----------------------|
 | steps          | 17           | 15 (verdict `use`) | — (no agent)         |
-| tokens         | ~378k        | ~407k            | **0**                 |
 | wall time      | 8.9 min      | **5.2 min**      | **32 s**              |
-| answer         | Frontier $68 | Frontier $68     | Frontier $68          |
 
 Read it honestly: on a site the model already knows, a single reuse saves **wall time**
 (exploration steps load pages and ship them to the model; reuse steps run known code), not
-steps or tokens — reading the skill source costs context. The economics live in the last
-column: **every repeat after the first runs with no model at all.** A fare watcher in cron
-pays ~9 minutes and ~380k tokens once, then ~30 s and $0 forever. (On unfamiliar sites the
-per-solve gap opens up too — see the WebArena numbers above: 33→10 steps, wrong→correct.)
+steps. The economics live in the last column: **every repeat after the first runs with no
+model at all.** A fare watcher in cron pays ~9 minutes of agent work once, then ~30 s and
+no model forever. (On unfamiliar sites the per-solve gap opens up too — see the WebArena
+numbers above: 33→10 steps, wrong→correct.)
 
 **Verification on live data, honestly:** flight prices have no fixed gold answer, so the
 gate here is `self_verify` (shape only — the run-time warning tells you so). What the table
