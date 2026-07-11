@@ -9,7 +9,8 @@
 # Custom / OpenAI-compatible gateway? Also export OPENAI_ENDPOINT and OPENAI_MODEL,
 # or reuse is silently off.
 set -euo pipefail
-cd "$(dirname "$0")"
+SELF="$(readlink -f "$0")"
+cd "$(dirname "$SELF")"
 DATE=$(date -d "+30 days" +%Y-%m-%d 2>/dev/null || date -v+30d +%Y-%m-%d)
 WORK="${QUICKSTART_WORKDIR:-$(mktemp -d /tmp/skills_quickstart.XXXX)}"
 LIB="$PWD/learned_library"
@@ -69,7 +70,7 @@ full)
   echo "library now at: $WORK/library"
   ;;
 *)
-  sed -n '2,10p' "$0"; exit 1
+  sed -n '2,10p' "$SELF"; exit 1
   ;;
 esac
 echo "(work dir: $WORK)"
