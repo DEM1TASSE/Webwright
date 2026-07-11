@@ -63,8 +63,9 @@ full)
     ./solve_with_library.sh "$(flight_task "$FROM" "$TO")" \
       https://www.google.com/flights "$WORK/library" -o "$WORK/outputs" "${CFG[@]}"
   done
-  echo "-- learning"
-  python -m webwright.skills learn "$WORK/outputs" --library "$WORK/library"
+  echo "-- learning (verify=shape: flight prices are live data — strict replay would
+     compare against a price that may have moved since the solve)"
+  python -m webwright.skills learn "$WORK/outputs" --library "$WORK/library" --verify shape
   echo "-- reusing on an unseen route"
   ./solve_with_library.sh "$(flight_task 'Seattle (SEA)' 'Denver (DEN)')" \
     https://www.google.com/flights "$WORK/library" -o "$WORK/outputs" --task-id qs_heldout "${CFG[@]}"

@@ -178,6 +178,9 @@ def _refine(traces: list[Trace], library: Library, verify: str = "off") -> list[
                 print(f"  ✗ {sid}: replay verification failed after one repair — NOT written:")
                 for f in fails:
                     print(f"      {f}")
+                if verify == "strict":
+                    print("      (answers that legitimately change between solve and replay — "
+                          "prices, live listings — need --verify shape)")
                 return []
     n_prev = (existing.meta.get("n_solves", 0) if existing else 0)
     meta = {

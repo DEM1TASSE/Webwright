@@ -99,7 +99,7 @@ def group_chunk(runs, existing_templates):
     return out.get("groups", [])
 
 
-def learn(runs_dir, library_root, golds=None, chunk=25, dry_run=False, verify="shape"):
+def learn(runs_dir, library_root, golds=None, chunk=25, dry_run=False, verify="strict"):
     lib = Library(library_root)
     ledger_path = Path(library_root) / ".learned.json"
     ledger = json.loads(ledger_path.read_text(encoding="utf-8")) if ledger_path.exists() else {"runs": {}}
@@ -183,10 +183,11 @@ def main(argv=None) -> int:
     p.add_argument("--golds", default="", help="JSON file {task_id: gold_answer} -> gold gate.")
     p.add_argument("--chunk", type=int, default=25, help="Runs per LLM grouping call.")
     p.add_argument("--dry-run", action="store_true", help="Show the grouping plan, change nothing.")
-    p.add_argument("--verify", default="shape", choices=["off", "shape", "strict"],
-                   help="Replay each new skill on its own training taskspecs before it enters the "
-                        "library (default shape: catches crashes/empty/misshapen output, tolerates "
-                        "live-data drift; strict: exact answers only; off: skip).")
+    p.add_argument("--verify", default="strict", choices=["off", "shape", "strict"],
+                   help="A skill must REPLAY its own training taskspecs standalone before it may "
+                        "enter the library. strict (default): it must reproduce the recorded "
+                        "answers; shape: any non-empty, schema-shaped answer passes — use this for "
+                        "task families whose answers are live data (prices, listings); off: skip.")
     a = p.parse_args(argv)
     golds = json.loads(Path(a.golds).read_text(encoding="utf-8")) if a.golds else {}
     learn(a.runs_dir, a.library, golds=golds, chunk=a.chunk, dry_run=a.dry_run, verify=a.verify)
