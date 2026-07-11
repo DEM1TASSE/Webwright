@@ -8,7 +8,7 @@ from webwright.skills.library import Library, Skill
 
 def run():
     # stub _refine: deterministically "build/widen" a skill for the group's template
-    def fake_refine(group, library, verify="off"):
+    def fake_refine(group, library, verify="off", rounds=2, on_fail="reject"):
         from webwright.skills.update import _slug
         sid = _slug(group[0].template)
         library.add(Skill(sid, f"# refined from {len(group)} solves\n",
@@ -109,6 +109,71 @@ def run():
         U.llm = lambda *a, **k: next(replies)
         log = U.evolve([mktrace()], lib, verify="shape")
         assert log["rejected"], f"crash must be caught: {log}"
+
+    with tempfile.TemporaryDirectory() as d:
+        lib = Library(d)
+        # rounds=3: two bad attempts, the third lands
+        replies = iter([BAD, BAD, GOOD])
+        U.llm = lambda *a, **k: next(replies)
+        log = U.evolve([mktrace()], lib, verify="strict", rounds=3)
+        assert log["added"], log
+        assert lib.list()[0].meta.get("grade") == "executable"
+
+    with tempfile.TemporaryDirectory() as d:
+        lib = Library(d)
+        # on_fail=reference: failed verification lands as a labeled reference skill
+        replies = iter([BAD, BAD])
+        U.llm = lambda *a, **k: next(replies)
+        log = U.evolve([mktrace()], lib, verify="strict", on_fail="reference")
+        assert log["reference"] and not log["rejected"], log
+        m = lib.list()[0].meta
+        assert m.get("verified") is False and m.get("grade") == "reference", m
+
+    with tempfile.TemporaryDirectory() as d:
+        lib = Library(d)
+        # guard: a failed refine must NEVER overwrite an existing skill, even with on_fail=reference
+        from webwright.skills.library import Skill as _Skill
+        sid = U._slug("verify template")
+        lib.add(_Skill(sid, "GOOD OLD CODE", {"template": "verify template", "verified": True,
+                                              "grade": "executable"}))
+        tr = mktrace(); tr.verdict = "adapt"
+        replies = iter([BAD, BAD])
+        U.llm = lambda *a, **k: next(replies)
+        log = U.evolve([tr], lib, verify="strict", on_fail="reference")
+        assert log["rejected"], log
+        assert lib.get(sid).code == "GOOD OLD CODE", "old verified skill must survive"
+
+    with tempfile.TemporaryDirectory() as d:
+        lib = Library(d)
+        # incremental refine must REGRESSION-replay old coverage:
+        # land v1 (answers [42]); then a refine whose code only satisfies the NEW instance
+        # ([43]) must be rejected because it breaks the stored old example
+        replies = iter([GOOD])                       # v1: writes [42]
+        U.llm = lambda *a, **k: next(replies)
+        assert U.evolve([mktrace()], lib, verify="strict")["added"]
+        assert (Path(d) / U._slug("verify template") / "replays.json").exists()
+        GOOD43 = 'import json\njson.dump({"retrieved_data": [43]}, open("agent_response.json", "w"))\n'
+        t43 = mktrace(); t43.answer = [43]; t43.verdict = "adapt"
+        replies = iter([GOOD43, GOOD43])
+        U.llm = lambda *a, **k: next(replies)
+        log = U.evolve([t43], lib, verify="strict")
+        assert log["rejected"], f"refine breaking old coverage must be rejected: {log}"
+        assert "[42]" in lib.list()[0].code, "v1 must survive"
+        # a refine that answers from the taskspec params passes BOTH old and new -> lands
+        PARAM = ('import json\nspec = json.load(open("taskspec.json"))\n'
+                 'json.dump({"retrieved_data": [int(spec["params"]["want"])]}, '
+                 'open("agent_response.json", "w"))\n')
+        t42 = mktrace(); t42.meta["params"] = {"want": "42"}
+        # rebuild v1's example with params the general code can use
+        import json as _j
+        rp = Path(d) / U._slug("verify template") / "replays.json"
+        rp.write_text(_j.dumps([{"params": {"want": "42"}, "start_url": "", "output_schema":
+                                 {"type": "array", "items": {"type": "number"}}, "answer": [42]}]))
+        t43b = mktrace(); t43b.answer = [43]; t43b.verdict = "adapt"; t43b.meta["params"] = {"want": "43"}
+        replies = iter([PARAM])
+        U.llm = lambda *a, **k: next(replies)
+        log = U.evolve([t43b], lib, verify="strict")
+        assert log["adapt_refined"], f"general refine passing old+new must land: {log}"
 
     # update CLI smoke: -m webwright.skills.update must not NameError on Path (regression)
     with tempfile.TemporaryDirectory() as d:
