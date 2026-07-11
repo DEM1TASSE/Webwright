@@ -74,10 +74,12 @@ Two touch points, **no change to the agent loop or default config**:
 > (runnable standalone, no LLM), measured step-saving numbers, and filled-in example inputs for
 > every file this guide asks you to write. See [`examples/README.md`](examples/README.md).
 
-## Quickstart — the complete loop on a real example
+## Quickstart — the complete loop on Webwright's own example task
 
 Three steps: solve a few instances of a task type, `learn` them into a skill, then watch
-the next solve reuse it. Copy-pasteable as is (public GitHub, read-only):
+the next solve reuse it. The task family is the one from Webwright's main README —
+Google Flights — where the answer is live (no model can recall it) and the UI is genuinely
+fiddly, so a learned skill has something real to carry:
 
 ```bash
 export OPENAI_API_KEY=...
@@ -86,39 +88,60 @@ export OPENAI_ENDPOINT=https://your-gateway/...   OPENAI_MODEL=your-model
 cd src/webwright/skills    # commands below run from the module directory
 
 # 1. SOLVE a few instances of the same task type (library is empty — these run from scratch)
-for repo in psf/requests pallets/flask tiangolo/fastapi; do
+while IFS='|' read -r FROM TO; do
   examples/solve_with_library.sh \
-    "What is the latest release version of $repo on GitHub?" \
-    "https://github.com/$repo" "$PWD/library" -o outputs -c base.yaml -c model_openai.yaml
-done
+    "What is the cheapest flight from $FROM to $TO on 2026-08-15 (one-way)? Return the answer as a list: [airline, price]." \
+    https://www.google.com/flights "$PWD/library" -o outputs -c base.yaml -c model_openai.yaml
+done <<'ROUTES'
+Seattle (SEA)|New York (JFK)
+San Francisco (SFO)|Boston (BOS)
+Los Angeles (LAX)|Chicago (ORD)
+ROUTES
 
 # 2. LEARN: distill everything you've solved into skills — no manifest, no fields to fill
 python -m webwright.skills learn outputs/ --library ./library
-# -> groups the 3 runs into ONE template, lifts owner/repo into parameters, writes
-#    library/what_is_the_latest_release_version_of_ow_.../{skill.py, meta.json}
+# -> groups the 3 runs into ONE template and lifts FIVE parameters:
+#    origin city/code, destination city/code, date
+#    library/what_is_the_cheapest_flight_from_origin_.../{skill.py, meta.json}
 
-# 3. USE the library: same wrapper, an UNSEEN instance — the agent finds and reuses the skill
+# 3. USE the library: same wrapper, an UNSEEN route — the agent finds and reuses the skill
 examples/solve_with_library.sh \
-  "What is the latest release version of numpy/numpy on GitHub?" \
-  https://github.com/numpy/numpy "$PWD/library" -o outputs -c base.yaml -c model_openai.yaml
-# outputs/<run>/skill_decision.json -> {"verdict": "use", "skill_id": "what_is_the_latest_..."}
+  "What is the cheapest flight from Seattle (SEA) to Denver (DEN) on 2026-08-15 (one-way)? Return the answer as a list: [airline, price]." \
+  https://www.google.com/flights "$PWD/library" -o outputs -c base.yaml -c model_openai.yaml
+# outputs/<run>/skill_decision.json -> {"verdict": "use", "skill_id": "what_is_the_cheapest_..."}
 ```
 
-The library is also usable **without the agent**:
+The library is also usable **without the agent** — this is the whole point of code skills:
 
 ```bash
 # ask it whether it can help a task (the same call the agent makes — one LLM round trip)
 python -m webwright.tools.skill_use \
-  --task "What is the latest release version of pandas-dev/pandas on GitHub?" \
+  --task "cheapest flight from Portland (PDX) to Austin (AUS) on 2026-09-01" \
   --library ./library
 
-# or run the learned skill directly — no model in the loop at all
-echo '{"params": {"owner": "pandas-dev", "repo": "pandas"}}' > taskspec.json
-python library/what_is_the_latest_release_version_of_ow_*/skill.py taskspec.json
+# or run the learned skill directly — no model in the loop, ~30 seconds
+cat > taskspec.json <<'EOF'
+{"params": {"origin_city": "Seattle", "origin_code": "SEA", "destination_city": "Denver",
+            "destination_code": "DEN", "date": "2026-08-15"},
+ "output_schema": {"type": "array", "items": {"type": "string"}}}
+EOF
+python library/what_is_the_cheapest_flight_*/skill.py taskspec.json
+# -> {"retrieved_data": ["Frontier", "$68"]}   (live price — yours will differ)
 ```
 
-Exactly this loop, already run and checked in: `examples/learned_library/` (with its
-run/learn transcript in `examples/README.md`).
+That last command is a fare watcher: put it in cron and the query that cost the agent
+13-26 exploration steps to figure out re-runs forever at zero tokens.
+
+**Verification on live data, honestly:** flight prices have no fixed gold answer, so the
+gate here is `self_verify` (shape only — the run-time warning tells you so). What we CAN
+verify: right after learning, the standalone skill and a fresh agent solve of an unseen
+route returned the **same answer** within minutes of each other — the skill deterministically
+reproduces what the agent finds. When your task family does have golds, pass `--golds` and
+admission becomes real verification.
+
+Exactly this loop, already run and checked in: `examples/learned_library/` holds both this
+flights skill and a GitHub release-version skill learned the same way (provenance and
+transcripts in `examples/README.md`).
 
 `learn` scans the run folders, gates each solve (gold if you pass `--golds golds.json`,
 else a shape check), auto-groups tasks into templates with one LLM call per ~25 runs,

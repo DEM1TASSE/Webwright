@@ -7,8 +7,11 @@ every input file the manual pipeline asks you to write.
 
 ```
 examples/
-├── learned_library/                  # produced by `skills learn` from 3 REAL solves (n_solves=3):
-│   └── what_is_the_latest_release…/  #   owner/repo lifted to parameters, two strategies as fallbacks;
+├── learned_library/                  # produced by `skills learn`, 3 real solves each (n_solves=3):
+│   ├── what_is_the_cheapest_flight…/ #   the Quickstart artifact — Google Flights, FIVE params
+│   │                                 #   (origin/destination city+code, date); unseen route
+│   │                                 #   SEA->DEN standalone in ~30 s, matched the agent's answer
+│   └── what_is_the_latest_release…/  #   GitHub release version — owner/repo lifted to parameters;
 │                                     #   tested on an unseen repo (numpy/numpy -> v2.5.1, no model)
 ├── example_library/                  # a library with one skill, exactly as evolve wrote it
 │   └── how_many_commits_did_user_make_period_in_the_cur/
@@ -21,30 +24,44 @@ examples/
 
 ## The learned library — the Quickstart loop, already run and checked in
 
-`learned_library/` is the exact artifact the README Quickstart produces. Provenance: three
-real solves of "What is the latest release version of X on GitHub?" (psf/requests,
-pallets/flask, tiangolo/fastapi) were fed to `python -m webwright.skills learn`, which
-grouped them into one template and lifted what varied into parameters:
+`learned_library/` holds two skills produced by `python -m webwright.skills learn`, each
+aggregated from three real solves.
+
+**The flights skill (the Quickstart's artifact).** Three from-scratch solves of "cheapest
+one-way flight" on Google Flights (SEA→JFK, SFO→BOS, LAX→ORD; 13, 26 and 18 agent steps —
+airport comboboxes and date pickers are genuinely fiddly) were grouped into one template
+with **five** lifted parameters:
 
 ```json
 {
-  "template": "What is the latest release version of {{owner}}/{{repo}} on GitHub?",
-  "signature": { "params": ["owner", "repo"], "call": "python skill.py taskspec.json" },
+  "template": "What is the cheapest flight from {{origin_city}} ({{origin_code}}) to {{destination_city}} ({{destination_code}}) on {{date}} (one-way)? ...",
+  "signature": { "params": ["origin_city", "origin_code", "destination_city", "destination_code", "date"],
+                 "call": "python skill.py taskspec.json" },
   "n_solves": 3
 }
 ```
 
-It generalizes to repos none of the three solves ever saw, with no model in the loop:
+On an unseen route it runs standalone — real playwright driving the live site, no model:
 
 ```bash
-cd learned_library/what_is_the_latest_release_version_of_ow_c29dab8
-echo '{"params": {"owner": "numpy", "repo": "numpy"}}' > taskspec.json
-python skill.py taskspec.json    # -> {"retrieved_data": ["v2.5.1"]}
-# pandas-dev/pandas -> ["v3.0.4"]  — any public repo works
+cd learned_library/what_is_the_cheapest_flight_from_origin__7725080
+cat > taskspec.json <<'EOF'
+{"params": {"origin_city": "Seattle", "origin_code": "SEA", "destination_city": "Denver",
+            "destination_code": "DEN", "date": "2026-08-15"},
+ "output_schema": {"type": "array", "items": {"type": "string"}}}
+EOF
+python skill.py taskspec.json    # ~30 s -> {"retrieved_data": ["Frontier", "$68"]} (live price)
 ```
 
-`tests/skills/test_learned_example.py` locks these properties (n_solves ≥ 3, parameters
-actually lifted, code compiles) in CI.
+Consistency check on record: minutes apart, this standalone run and a fresh agent solve of
+the same unseen route (verdict `use`, 15 steps) returned the identical answer.
+
+**The GitHub release skill** (same recipe, gold-checkable site): owner/repo lifted from
+three solves; generalizes with no model — `numpy/numpy -> ["v2.5.1"]`,
+`pandas-dev/pandas -> ["v3.0.4"]`.
+
+`tests/skills/test_learned_example.py` locks these properties for every skill in the
+directory (n_solves ≥ 3, parameters actually lifted, code compiles) in CI.
 
 ## What a skill looks like
 
