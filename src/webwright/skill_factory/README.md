@@ -7,7 +7,7 @@ Module: `webwright.skill_factory`
 With Webwright Skill Factory, each solved task becomes runnable, parameterized code — you can verify
 it, run it without the model, and import it into the next task instead of re-exploring.
 
-![data flow & interfaces](pipeline_diagram.png)
+![data flow & interfaces](../../../assets/skill_factory_pipeline.png)
 
 **Why webwright makes this natural.** Webwright is a terminal/code-native agent: its actions
 are code, and every solve already leaves behind a working script. The agent's exhaust is

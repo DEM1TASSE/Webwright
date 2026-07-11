@@ -16,6 +16,8 @@ def run():
         assert len(params) >= 2, f"{d.name}: parameters must be lifted, got {params}"
         assert "{{" in meta["template"], "template must have {{param}} placeholders"
         assert "Additionally, write" not in meta["template"], "pipeline text must not leak (F7)"
+        extras = {f.name for f in d.iterdir()} - {"skill.py", "meta.json", "replays.json"}
+        assert not extras, f"{d.name}: run artifacts must not be committed: {extras}"
         code = (d / "skill.py").read_text()
         compile(code, d.name, "exec")
         # artifacts must never be written next to __file__ (shared library dir)
