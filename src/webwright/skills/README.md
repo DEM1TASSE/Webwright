@@ -134,10 +134,10 @@ That last command is a fare watcher: put it in cron and the query that cost the 
 
 **Verification on live data, honestly:** flight prices have no fixed gold answer, so the
 gate here is `self_verify` (shape only — the run-time warning tells you so). What we CAN
-verify: right after learning, the standalone skill and a fresh agent solve of an unseen
-route returned the **same answer** within minutes of each other — the skill deterministically
-reproduces what the agent finds. When your task family does have golds, pass `--golds` and
-admission becomes real verification.
+verify: minutes apart, the same unseen route (SEA→DEN) was answered **three independent
+ways** — from scratch (17 steps), with the library (verdict `use`, 15 steps), and by the
+standalone skill (~30 s, no model) — and all three returned the identical answer. When your
+task family does have golds, pass `--golds` and admission becomes real verification.
 
 Exactly this loop, already run and checked in: `examples/learned_library/` holds both this
 flights skill and a GitHub release-version skill learned the same way (provenance and

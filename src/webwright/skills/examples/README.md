@@ -53,8 +53,9 @@ EOF
 python skill.py taskspec.json    # ~30 s -> {"retrieved_data": ["Frontier", "$68"]} (live price)
 ```
 
-Consistency check on record: minutes apart, this standalone run and a fresh agent solve of
-the same unseen route (verdict `use`, 15 steps) returned the identical answer.
+Consistency check on record: minutes apart, the same unseen route was answered three
+independent ways — from scratch (17 steps), with the library (verdict `use`, 15 steps),
+and standalone (~30 s, no model) — all three identical.
 
 **The GitHub release skill** (same recipe, gold-checkable site): owner/repo lifted from
 three solves; generalizes with no model — `numpy/numpy -> ["v2.5.1"]`,
