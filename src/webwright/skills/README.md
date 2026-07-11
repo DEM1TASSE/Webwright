@@ -137,12 +137,16 @@ minutes apart:
 | steps          | 17           | 15 (verdict `use`) | — (no agent)         |
 | wall time      | 8.9 min      | **5.2 min**      | **32 s**              |
 
-Read it honestly: on a site the model already knows, a single reuse saves **wall time**
-(exploration steps load pages and ship them to the model; reuse steps run known code), not
-steps. The economics live in the last column: **every repeat after the first runs with no
-model at all.** A fare watcher in cron pays ~9 minutes of agent work once, then ~30 s and
-no model forever. (On unfamiliar sites the per-solve gap opens up too — see the WebArena
-numbers above: 33→10 steps, wrong→correct.)
+How to read it: step savings scale with **how much the agent doesn't already know**. On a
+site the model can drive from memory, the gap is small (17→15 here) — but from-scratch cost
+is high-variance (our three training routes took 13, 18 and 26 steps for the *same* task
+type), and the skill pins down the strategy, cutting that spread. Where the agent genuinely
+doesn't know what to do, reuse is the difference between exploring and executing — on
+WebArena's unfamiliar self-hosted sites it's 33→10 steps and wrong→correct (numbers above).
+Wall time drops even here (exploration steps load pages and ship them to the model; reuse
+steps run known code). And the last column is the structural win: **every repeat after the
+first runs with no model at all** — a fare watcher in cron pays ~9 minutes of agent work
+once, then ~30 s forever.
 
 **Verification on live data, honestly:** flight prices have no fixed gold answer, so the
 gate here is `self_verify` (shape only — the run-time warning tells you so). What the table
