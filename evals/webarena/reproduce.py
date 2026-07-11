@@ -26,7 +26,7 @@ Usage (one task at a time; each solve takes minutes — parallelize per template
   python reproduce.py heldout 1 with|base           # one held-out solve
   python reproduce.py table [--results DIR]         # aggregate -> the README table
 
-`table --results results/` prints the table from the checked-in snapshot of the
+`table --results results.json` prints the table from the checked-in snapshot of the
 run behind the README numbers (no network needed).
 """
 from __future__ import annotations
@@ -248,10 +248,14 @@ def do_update(args, bench, tmpl):
 
 
 # ---------------------------------------------------------------- aggregate table
-def table(results_dir: Path):
-    recs = {p.stem: json.loads(p.read_text()) for p in sorted(Path(results_dir).glob("*.json"))}
+def table(results_path: Path):
+    results_path = Path(results_path)
+    if results_path.is_file():
+        recs = json.loads(results_path.read_text())
+    else:
+        recs = {p.stem: json.loads(p.read_text()) for p in sorted(results_path.glob("*.json"))}
     if not recs:
-        raise SystemExit(f"no per-task result files in {results_dir}")
+        raise SystemExit(f"no per-task results at {results_path}")
 
     def agg(sel):
         rs = [v for k, v in recs.items() if sel(k)]
@@ -293,7 +297,7 @@ def main(argv=None):
     ap.add_argument("--model-config", default="model_openai.yaml",
                     help="model modifier yaml for the agent (stacked on base.yaml)")
     ap.add_argument("--out", default="runs_eval", help="working dir for runs/results/library")
-    ap.add_argument("--results", default="", help="table only: aggregate this dir instead of --out")
+    ap.add_argument("--results", default="", help="table only: aggregate this dir or merged .json instead of --out")
     ap.add_argument("--timeout", type=int, default=900)
     args = ap.parse_args(argv)
 

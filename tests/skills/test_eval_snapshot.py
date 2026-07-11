@@ -10,7 +10,7 @@ EVAL = Path(__file__).resolve().parents[2] / "evals" / "webarena"
 
 
 def run():
-    recs = {p.stem: json.loads(p.read_text()) for p in (EVAL / "results").glob("*.json")}
+    recs = json.loads((EVAL / "results.json").read_text())
     assert len(recs) == 100, f"expected 100 per-task records, found {len(recs)}"
 
     def agg(sel):
@@ -27,11 +27,10 @@ def run():
     assert (n, ok, round(steps, 1)) == (30, 23, 15.9), (n, ok, steps)   # 76.7%
 
     # sanitization lock: no local paths, no internal hosts, no keys in the snapshot
-    for p in (EVAL / "results").glob("*.json"):
-        txt = p.read_text()
-        for bad in ("/home/", "ec2-", "amazonaws", "api_key", "Bearer "):
-            assert bad not in txt, (p.name, bad)
-        assert "dir" not in json.loads(txt), f"{p.name}: local run dir must stay out"
+    txt = (EVAL / "results.json").read_text()
+    for bad in ("/home/", "ec2-", "amazonaws", "api_key", "Bearer "):
+        assert bad not in txt, bad
+    assert all("dir" not in r for r in recs.values()), "local run dirs must stay out"
 
     # the driver that regenerates all of this must at least compile
     compile((EVAL / "reproduce.py").read_text(), "reproduce.py", "exec")

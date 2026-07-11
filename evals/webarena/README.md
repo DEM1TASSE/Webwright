@@ -14,12 +14,12 @@ This directory contains everything needed to check those numbers — at two dept
 
 ## Depth 1: audit the recorded run (no setup, no cost)
 
-`results/` is the per-task record of the exact run behind the table: one JSON per solve
-with the task id, the answer the agent produced, the gold score, the step count, and the
-agent's skill verdict. Aggregate it yourself:
+`results.json` is the per-task record of the exact run behind the table: one entry per
+solve with the task id, the answer the agent produced, the gold score, the step count, and
+the agent's skill verdict. Aggregate it yourself:
 
 ```bash
-python reproduce.py table --results results
+python reproduce.py table --results results.json
 ```
 
 That command computes the table above from the raw records — the module README rounds
@@ -73,7 +73,7 @@ skipped, so you can stop and restart, or run templates in parallel shells.
 | `reproduce.py` | self-contained driver: solve / update / heldout / table |
 | `run_all.sh` | runs the whole plan sequentially |
 | `model.eval.yaml` | eval overrides for the agent model (+ where to point a gateway) |
-| `results/` | sanitized per-task records of the recorded run (the numbers' provenance) |
+| `results.json` | sanitized per-task records of the recorded run (the numbers' provenance) |
 
 `tests/skills/test_eval_snapshot.py` locks the snapshot to the published numbers in CI —
 if the records and the README table ever disagree, the build fails.
