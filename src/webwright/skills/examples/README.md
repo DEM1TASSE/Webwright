@@ -39,13 +39,14 @@ by `python -m webwright.skills learn` into one template with **five** lifted par
 On an unseen route it runs standalone — real playwright driving the live site, no model:
 
 ```bash
-cd learned_library/what_is_the_cheapest_flight_from_origin__7725080
+SKILL="$PWD/learned_library/what_is_the_cheapest_flight_from_origin__7725080/skill.py"
+cd "$(mktemp -d)"    # scratch dir: artifacts land here, not in the library
 cat > taskspec.json <<'EOF'
 {"params": {"origin_city": "Seattle", "origin_code": "SEA", "destination_city": "Denver",
             "destination_code": "DEN", "date": "2026-08-15"},
  "output_schema": {"type": "array", "items": {"type": "string"}}}
 EOF
-python skill.py taskspec.json    # ~30 s -> {"retrieved_data": ["Frontier", "$68"]} (live price)
+python "$SKILL" taskspec.json    # ~30 s -> {"retrieved_data": ["Frontier", "$68"]} (live price)
 ```
 
 Measured on that unseen route, minutes apart (full table and reading in the module README's
@@ -115,14 +116,15 @@ steps, querying the library costs more than it saves — reuse pays on expensive
 **1. Run the skill directly — no LLM, no agent needed:**
 
 ```bash
-cd src/webwright/skills/examples
+EXAMPLES="$PWD/src/webwright/skills/examples"
+cd "$(mktemp -d)"    # run in a scratch dir — skills write their artifacts to the cwd
 cat > taskspec.json <<'EOF'
 {"params": {"user": "Jane Doe", "period": "on January 5th 2023"},
  "start_url": "https://gitlab.com/<group>/<repo>",
  "credentials": null,
  "output_schema": {"type": "array", "items": {"type": "number"}}}
 EOF
-python example_library/how_many_commits_did_user_make_period_in_the_cur/skill.py taskspec.json
+python "$EXAMPLES/example_library/how_many_commits_did_user_make_period_in_the_cur/skill.py" taskspec.json
 cat agent_response.json    # {"task_type": "RETRIEVE", "status": "SUCCESS", "retrieved_data": [N], ...}
 ```
 

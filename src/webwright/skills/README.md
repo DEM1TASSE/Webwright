@@ -136,12 +136,14 @@ python -m webwright.tools.skill_use \
   --library ./library
 
 # or run the learned skill directly — no model in the loop, ~30 seconds
+SKILL=$(ls "$PWD"/library/what_is_the_cheapest_flight_*/skill.py)
+cd "$(mktemp -d)"    # scratch dir: the skill writes its artifacts to the cwd
 cat > taskspec.json <<'EOF'
 {"params": {"origin_city": "Seattle", "origin_code": "SEA", "destination_city": "Denver",
             "destination_code": "DEN", "date": "2026-08-15"},
  "output_schema": {"type": "array", "items": {"type": "string"}}}
 EOF
-python library/what_is_the_cheapest_flight_*/skill.py taskspec.json
+python "$SKILL" taskspec.json
 # -> {"retrieved_data": ["Frontier", "$68"]}   (live price — yours will differ)
 ```
 
