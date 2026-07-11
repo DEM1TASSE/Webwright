@@ -99,7 +99,7 @@ def group_chunk(runs, existing_templates):
     return out.get("groups", [])
 
 
-def learn(runs_dir, library_root, golds=None, chunk=25, dry_run=False):
+def learn(runs_dir, library_root, golds=None, chunk=25, dry_run=False, verify="shape"):
     lib = Library(library_root)
     ledger_path = Path(library_root) / ".learned.json"
     ledger = json.loads(ledger_path.read_text(encoding="utf-8")) if ledger_path.exists() else {"runs": {}}
@@ -158,7 +158,7 @@ def learn(runs_dir, library_root, golds=None, chunk=25, dry_run=False):
                           "output_schema": infer_schema(r["answer"])}))
             if not traces:
                 continue
-            log = evolve(traces, lib)
+            log = evolve(traces, lib, verify=verify)
             print(f"  evolve: {json.dumps(log)}")
             for m in g.get("members", []):
                 if 0 <= m.get("i", -1) < len(batch):
@@ -178,9 +178,13 @@ def main(argv=None) -> int:
     p.add_argument("--golds", default="", help="JSON file {task_id: gold_answer} -> gold gate.")
     p.add_argument("--chunk", type=int, default=25, help="Runs per LLM grouping call.")
     p.add_argument("--dry-run", action="store_true", help="Show the grouping plan, change nothing.")
+    p.add_argument("--verify", default="shape", choices=["off", "shape", "strict"],
+                   help="Replay each new skill on its own training taskspecs before it enters the "
+                        "library (default shape: catches crashes/empty/misshapen output, tolerates "
+                        "live-data drift; strict: exact answers only; off: skip).")
     a = p.parse_args(argv)
     golds = json.loads(Path(a.golds).read_text(encoding="utf-8")) if a.golds else {}
-    learn(a.runs_dir, a.library, golds=golds, chunk=a.chunk, dry_run=a.dry_run)
+    learn(a.runs_dir, a.library, golds=golds, chunk=a.chunk, dry_run=a.dry_run, verify=a.verify)
     return 0
 
 

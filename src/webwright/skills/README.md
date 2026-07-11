@@ -21,6 +21,10 @@ default `self_verify` gate checks shape, non-emptiness, and the agent's **own fi
 (a run that reported `NOT_FOUND_ERROR` is rejected — the agent itself didn't believe it) —
 it filters garbage and self-admitted failures, **not wrong-but-plausible answers the agent
 believed**. Pass `--golds` to `learn`, or bring your own judge, when correctness matters.
+The gate also has an **output side**: before a freshly distilled skill may enter the library,
+`learn` replays it on its own training taskspecs (no model in the loop) — a distillation that
+crashes, times out, or returns empty/misshapen output gets one repair attempt and is otherwise
+rejected (`--verify strict` for exact-answer matching on stable data, `--verify off` to skip).
 
 **One solve isn't a skill yet.** A single task's script is correct but narrow — it solves
 *that* instance. So the update step aggregates multiple verified solves of the same task
@@ -179,7 +183,8 @@ Exactly this loop, already run and checked in: `examples/learned_library/` (prov
 else a shape check), auto-groups tasks into templates with one LLM call per ~25 runs,
 extracts the parameters, and grows the library. It is **idempotent** — re-run it whenever;
 already-learned runs are skipped (`library/.learned.json`), and big folders are chunked
-automatically. `--dry-run` shows the grouping plan without changing anything.
+automatically. `--dry-run` shows the grouping plan without changing anything. Every new skill
+is **replay-verified** on its own training taskspecs before it lands (see the gate section).
 Everything below is **manual mode** — explicit manifests, benchmark-grade gold gates, fine
 control over every field. You don't need it to get started.
 

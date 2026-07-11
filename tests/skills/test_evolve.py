@@ -8,7 +8,7 @@ from webwright.skills.library import Library, Skill
 
 def run():
     # stub _refine: deterministically "build/widen" a skill for the group's template
-    def fake_refine(group, library):
+    def fake_refine(group, library, verify="off"):
         from webwright.skills.update import _slug
         sid = _slug(group[0].template)
         library.add(Skill(sid, f"# refined from {len(group)} solves\n",
@@ -62,6 +62,59 @@ def run():
     assert U._slug(long_a) == U._slug(long_a), "slug must stay deterministic"
     assert U._slug("Get the top-n best-selling entity") == "get_the_top_n_best_selling_entity", \
         "short templates keep the plain readable slug"
+
+    # ---- replay verification (real _refine + _replay, only the LLM is faked) ----
+    import importlib
+    importlib.reload(U)   # drop the fake_refine stub
+    import json as _json
+
+    BAD = 'import json\njson.dump({"retrieved_data": [7]}, open("agent_response.json", "w"))\n'
+    GOOD = 'import json\njson.dump({"retrieved_data": [42]}, open("agent_response.json", "w"))\n'
+    CRASH = 'raise RuntimeError("distillation bug")\n'
+
+    def mktrace():
+        return U.Trace("verify template", "solver code", answer=[42], verdict="skip", correct=True,
+                       meta={"params": {"k": "v"}, "output_schema": {"type": "array", "items": {"type": "number"}}})
+
+    with tempfile.TemporaryDirectory() as d:
+        lib = Library(d)
+        # strict: first attempt wrong -> repair returns good -> ADDED with the repaired code
+        replies = iter([BAD, GOOD])
+        U.llm = lambda *a, **k: next(replies)
+        log = U.evolve([mktrace()], lib, verify="strict")
+        assert log["added"] and not log["rejected"], log
+        assert "[42]" in lib.list()[0].code, "repaired code must be what landed"
+
+    with tempfile.TemporaryDirectory() as d:
+        lib = Library(d)
+        # strict: wrong twice -> REJECTED, library stays empty
+        replies = iter([BAD, BAD])
+        U.llm = lambda *a, **k: next(replies)
+        log = U.evolve([mktrace()], lib, verify="strict")
+        assert log["rejected"] and not log["added"], log
+        assert lib.list() == [], "rejected skill must not land"
+
+    with tempfile.TemporaryDirectory() as d:
+        lib = Library(d)
+        # shape: a non-empty, schema-shaped answer passes even if values drifted (live data)
+        replies = iter([BAD])
+        U.llm = lambda *a, **k: next(replies)
+        log = U.evolve([mktrace()], lib, verify="shape")
+        assert log["added"], f"shape mode must tolerate value drift: {log}"
+
+    with tempfile.TemporaryDirectory() as d:
+        lib = Library(d)
+        # shape: a CRASHING skill is caught even in the tolerant mode
+        replies = iter([CRASH, CRASH])
+        U.llm = lambda *a, **k: next(replies)
+        log = U.evolve([mktrace()], lib, verify="shape")
+        assert log["rejected"], f"crash must be caught: {log}"
+
+    # update CLI smoke: -m webwright.skills.update must not NameError on Path (regression)
+    with tempfile.TemporaryDirectory() as d:
+        mf = Path(d) / "m.json"
+        mf.write_text(_json.dumps({"template": "T", "runs": []}))
+        assert U.main(["--manifest", str(mf), "--library", str(Path(d) / "lib")]) == 0
 
     print("test_evolve OK")
 

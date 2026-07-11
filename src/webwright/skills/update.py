@@ -14,6 +14,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from .library import Library, Skill
 from .llm import llm
@@ -51,6 +52,53 @@ def _extract_code(txt: str) -> str:
     return txt
 
 
+def _replay(code: str, traces: list["Trace"], strict: bool = False) -> list[str]:
+    """Run the candidate skill on each source trace's OWN taskspec (no model in the loop).
+    PASS = exact answer match; in non-strict mode a non-empty, schema-shaped answer also
+    passes (live sites drift between solve time and replay time — prices, listings).
+    Catches what distillation can break: crashes, timeouts, empty/misshapen output."""
+    import os
+    import subprocess
+    import sys
+    import tempfile
+    from .gate import gate
+    fails = []
+    for i, tr in enumerate(traces):
+        if tr.answer is None:
+            continue
+        with tempfile.TemporaryDirectory() as td:
+            tdp = Path(td)
+            (tdp / "skill.py").write_text(code, encoding="utf-8")
+            (tdp / "taskspec.json").write_text(json.dumps(
+                {"params": tr.meta.get("params", {}), "start_url": tr.meta.get("start_url", ""),
+                 "credentials": tr.meta.get("credentials"),
+                 "output_schema": tr.meta.get("output_schema")}, ensure_ascii=False),
+                encoding="utf-8")
+            try:
+                subprocess.run([sys.executable, "skill.py", "taskspec.json"], cwd=td,
+                               env={**os.environ, "WORKSPACE_DIR": td},
+                               capture_output=True, text=True, timeout=240)
+            except subprocess.TimeoutExpired:
+                fails.append(f"instance {i} (params={json.dumps(tr.meta.get('params'), ensure_ascii=False)}): TIMEOUT")
+                continue
+            got = None
+            arp = tdp / "agent_response.json"
+            if arp.exists():
+                try:
+                    got = json.loads(arp.read_text(encoding="utf-8")).get("retrieved_data")
+                except Exception:
+                    pass
+            if got == tr.answer:
+                continue
+            if not strict and gate(got, output_schema=tr.meta.get("output_schema"),
+                                   method="self_verify").admit:
+                continue   # tolerated: live-data drift (right shape, non-empty)
+            fails.append(f"instance {i} (params={json.dumps(tr.meta.get('params'), ensure_ascii=False)}): "
+                         f"replay returned {json.dumps(got, ensure_ascii=False)[:120]}, "
+                         f"the solve's answer was {json.dumps(tr.answer, ensure_ascii=False)[:120]}")
+    return fails
+
+
 _REFINE_SYS = (
     "You are given N working Python solutions that EACH solve one concrete instance of the SAME web-task "
     "template (they already passed a correctness gate). Distill them into ONE better library skill.\n"
@@ -80,7 +128,7 @@ _REFINE_INCREMENTAL = (
 )
 
 
-def _refine(traces: list[Trace], library: Library) -> list[str]:
+def _refine(traces: list[Trace], library: Library, verify: str = "off") -> list[str]:
     """Batch distillation: align N gate-passed solves -> parameterize + primitives.
     Incremental: if a skill for the same template already exists, improve/widen it on top of the
     existing skill (rather than rewriting from the raw solves)."""
@@ -101,7 +149,21 @@ def _refine(traces: list[Trace], library: Library) -> list[str]:
             f"answer={json.dumps(tr.answer, ensure_ascii=False)[:120]})\n```python\n{tr.code}\n```"
         )
     sys_prompt = _REFINE_SYS + (_REFINE_INCREMENTAL if existing else "")
-    code = _extract_code(llm(sys_prompt, "\n\n".join(blocks), max_tokens=16000))
+    user_msg = "\n\n".join(blocks)
+    code = _extract_code(llm(sys_prompt, user_msg, max_tokens=16000))
+    if verify != "off":   # replay the candidate on its own training taskspecs before it may land
+        fails = _replay(code, traces, strict=(verify == "strict"))
+        if fails:
+            feedback = ("\n\n## Replay failures of your previous attempt (fix the GENERAL logic, "
+                        "do NOT hardcode answers)\n" + "\n".join(fails) +
+                        "\n\n## Your previous attempt\n```python\n" + code + "\n```")
+            code = _extract_code(llm(sys_prompt, user_msg + feedback, max_tokens=16000))
+            fails = _replay(code, traces, strict=(verify == "strict"))
+            if fails:
+                print(f"  ✗ {sid}: replay verification failed after one repair — NOT written:")
+                for f in fails:
+                    print(f"      {f}")
+                return []
     n_prev = (existing.meta.get("n_solves", 0) if existing else 0)
     meta = {
         "template": template,
@@ -118,7 +180,7 @@ def _refine(traces: list[Trace], library: Library) -> list[str]:
     return [sid]
 
 
-def evolve(traces: list[Trace], library: Library) -> dict:
+def evolve(traces: list[Trace], library: Library, verify: str = "off") -> dict:
     """Unified update: evolve the EXISTING library, deciding per trace's usage (use/adapt/skip) how
     to change it. This is the core of a continuously-growing library — not rebuilt from scratch each
     time, but grown from v_{n-1} into v_n.
@@ -132,7 +194,8 @@ def evolve(traces: list[Trace], library: Library) -> dict:
     Only consumes gate-passed (correct=True) traces (pollution protection). Returns a changelog.
     """
     good = [t for t in traces if t.correct]
-    changelog = {"use": [], "adapt_refined": [], "added": [], "dropped_wrong": len(traces) - len(good)}
+    changelog = {"use": [], "adapt_refined": [], "added": [], "rejected": [],
+                 "dropped_wrong": len(traces) - len(good)}
     existing_templates = {s.meta.get("template"): s.skill_id for s in library.list()}
 
     # group by template (same-family solves are distilled/sedimented together)
@@ -144,12 +207,12 @@ def evolve(traces: list[Trace], library: Library) -> dict:
         verdicts = {t.verdict for t in group}
         if tmpl not in existing_templates:
             # not covered -> add (distill a skill from this batch)
-            sid = _refine(group, library)[0]
-            changelog["added"].append(sid)
+            added = _refine(group, library, verify=verify)
+            changelog["added" if added else "rejected"].append(added[0] if added else _slug(tmpl))
         elif "adapt" in verdicts:
             # a fix happened -> refine the fixed solves back into the skill (widen/harden)
-            sid = _refine(group, library)[0]   # _refine uses the same slug, overwrites + widens
-            changelog["adapt_refined"].append(sid)
+            added = _refine(group, library, verify=verify)   # same slug: overwrites + widens
+            changelog["adapt_refined" if added else "rejected"].append(added[0] if added else _slug(tmpl))
         else:
             # all use-success -> skill is good enough, leave it
             changelog["use"].append(existing_templates[tmpl])
@@ -161,7 +224,6 @@ def traces_from_manifest(manifest: dict) -> list["Trace"]:
     """manifest = {"template": str, "runs": [{"dir","admit","params","answer"?,"verdict"?}, ...]}.
     Reads each run's final_script.py; builds a Trace. correct = the run's gate verdict (admit).
     "admit" is REQUIRED per run — a missing gate verdict must fail loudly, not silently enter."""
-    from pathlib import Path
     template = manifest.get("template", "")
     out = []
     for r in manifest.get("runs", []):
@@ -197,10 +259,14 @@ def main(argv=None) -> int:
         description="Batch-update the skill library from a manifest of gate-judged solves.")
     p.add_argument("--manifest", required=True, help="JSON: {template, runs:[{dir,admit,params,...}]}")
     p.add_argument("--library", required=True, help="Path to the skill library directory.")
+    p.add_argument("--verify", default="off", choices=["off", "shape", "strict"],
+                   help="Replay each new skill on its own training taskspecs before it enters "
+                        "the library. shape: exact match OR well-formed non-empty (live data); "
+                        "strict: exact match only. Needs the sites reachable from here.")
     a = p.parse_args(argv)
     manifest = json.loads(Path(a.manifest).read_text(encoding="utf-8"))
     traces = traces_from_manifest(manifest)
-    changelog = evolve(traces, Library(a.library))
+    changelog = evolve(traces, Library(a.library), verify=a.verify)
     print(json.dumps(changelog, ensure_ascii=False, indent=2))
     return 0
 
