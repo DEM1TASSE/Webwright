@@ -129,19 +129,30 @@ python library/what_is_the_cheapest_flight_*/skill.py taskspec.json
 # -> {"retrieved_data": ["Frontier", "$68"]}   (live price — yours will differ)
 ```
 
-That last command is a fare watcher: put it in cron and the query that cost the agent
-13-26 exploration steps to figure out re-runs forever at zero tokens.
+**What each way of running it actually costs** — the same unseen route (SEA→DEN), measured
+minutes apart:
+
+|                | from scratch | with the library | the skill, standalone |
+|----------------|--------------|------------------|-----------------------|
+| steps          | 17           | 15 (verdict `use`) | — (no agent)         |
+| tokens         | ~378k        | ~407k            | **0**                 |
+| wall time      | 8.9 min      | **5.2 min**      | **32 s**              |
+| answer         | Frontier $68 | Frontier $68     | Frontier $68          |
+
+Read it honestly: on a site the model already knows, a single reuse saves **wall time**
+(exploration steps load pages and ship them to the model; reuse steps run known code), not
+steps or tokens — reading the skill source costs context. The economics live in the last
+column: **every repeat after the first runs with no model at all.** A fare watcher in cron
+pays ~9 minutes and ~380k tokens once, then ~30 s and $0 forever. (On unfamiliar sites the
+per-solve gap opens up too — see the WebArena numbers above: 33→10 steps, wrong→correct.)
 
 **Verification on live data, honestly:** flight prices have no fixed gold answer, so the
-gate here is `self_verify` (shape only — the run-time warning tells you so). What we CAN
-verify: minutes apart, the same unseen route (SEA→DEN) was answered **three independent
-ways** — from scratch (17 steps), with the library (verdict `use`, 15 steps), and by the
-standalone skill (~30 s, no model) — and all three returned the identical answer. When your
-task family does have golds, pass `--golds` and admission becomes real verification.
+gate here is `self_verify` (shape only — the run-time warning tells you so). What the table
+DOES verify: three independent paths to the same answer, minutes apart. When your task
+family has golds, pass `--golds` and admission becomes real verification.
 
-Exactly this loop, already run and checked in: `examples/learned_library/` holds both this
-flights skill and a GitHub release-version skill learned the same way (provenance and
-transcripts in `examples/README.md`).
+Exactly this loop, already run and checked in: `examples/learned_library/` (provenance in
+`examples/README.md`).
 
 `learn` scans the run folders, gates each solve (gold if you pass `--golds golds.json`,
 else a shape check), auto-groups tasks into templates with one LLM call per ~25 runs,

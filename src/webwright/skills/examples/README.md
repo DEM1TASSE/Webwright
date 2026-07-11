@@ -7,12 +7,10 @@ every input file the manual pipeline asks you to write.
 
 ```
 examples/
-├── learned_library/                  # produced by `skills learn`, 3 real solves each (n_solves=3):
-│   ├── what_is_the_cheapest_flight…/ #   the Quickstart artifact — Google Flights, FIVE params
-│   │                                 #   (origin/destination city+code, date); unseen route
-│   │                                 #   SEA->DEN standalone in ~30 s, matched the agent's answer
-│   └── what_is_the_latest_release…/  #   GitHub release version — owner/repo lifted to parameters;
-│                                     #   tested on an unseen repo (numpy/numpy -> v2.5.1, no model)
+├── learned_library/                  # produced by `skills learn` from 3 real solves (n_solves=3):
+│   └── what_is_the_cheapest_flight…/ #   the Quickstart artifact — Google Flights, FIVE params
+│                                     #   (origin/destination city+code, date); unseen route
+│                                     #   SEA->DEN standalone in ~30 s, matched the agent's answer
 ├── example_library/                  # a library with one skill, exactly as evolve wrote it
 │   └── how_many_commits_did_user_make_period_in_the_cur/
 │       ├── skill.py                  #   the executable skill (126 lines)
@@ -24,13 +22,10 @@ examples/
 
 ## The learned library — the Quickstart loop, already run and checked in
 
-`learned_library/` holds two skills produced by `python -m webwright.skills learn`, each
-aggregated from three real solves.
-
-**The flights skill (the Quickstart's artifact).** Three from-scratch solves of "cheapest
-one-way flight" on Google Flights (SEA→JFK, SFO→BOS, LAX→ORD; 13, 26 and 18 agent steps —
-airport comboboxes and date pickers are genuinely fiddly) were grouped into one template
-with **five** lifted parameters:
+`learned_library/` is the exact artifact the README Quickstart produces. Three from-scratch
+solves of "cheapest one-way flight" on Google Flights (SEA→JFK, SFO→BOS, LAX→ORD; 13, 26
+and 18 agent steps — airport comboboxes and date pickers are genuinely fiddly) were grouped
+by `python -m webwright.skills learn` into one template with **five** lifted parameters:
 
 ```json
 {
@@ -53,16 +48,12 @@ EOF
 python skill.py taskspec.json    # ~30 s -> {"retrieved_data": ["Frontier", "$68"]} (live price)
 ```
 
-Consistency check on record: minutes apart, the same unseen route was answered three
-independent ways — from scratch (17 steps), with the library (verdict `use`, 15 steps),
-and standalone (~30 s, no model) — all three identical.
+Measured on that unseen route, minutes apart (full table and reading in the module README's
+Quickstart): from scratch 17 steps / ~378k tokens / 8.9 min; with the library 15 steps /
+~407k tokens / 5.2 min; standalone 0 tokens / ~30 s — all three answers identical.
 
-**The GitHub release skill** (same recipe, gold-checkable site): owner/repo lifted from
-three solves; generalizes with no model — `numpy/numpy -> ["v2.5.1"]`,
-`pandas-dev/pandas -> ["v3.0.4"]`.
-
-`tests/skills/test_learned_example.py` locks these properties for every skill in the
-directory (n_solves ≥ 3, parameters actually lifted, code compiles) in CI.
+`tests/skills/test_learned_example.py` locks the aggregation properties for every skill in
+the directory (n_solves ≥ 3, parameters actually lifted, code compiles) in CI.
 
 ## What a skill looks like
 
