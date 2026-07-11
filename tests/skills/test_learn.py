@@ -33,6 +33,31 @@ def run():
     print("test_learn OK")
 
 
+def run_status_gate():
+    """END-TO-END: a run whose own agent reported failure must be rejected by learn's
+    gate (status read from agent_response.json), even when the answer is well-formed.
+    All runs rejected -> learn returns before any LLM call, so this stays offline."""
+    import contextlib, io, json, tempfile
+    from webwright.skills.learn import learn
+    with tempfile.TemporaryDirectory() as td:
+        run = Path(td) / "runs" / "r1_20260711_000000"
+        run.mkdir(parents=True)
+        (run / "task.json").write_text(json.dumps(
+            {"task": "find the thing", "task_id": "r1", "start_url": "https://example.com"}))
+        (run / "agent_response.json").write_text(json.dumps(
+            {"task_type": "RETRIEVE", "status": "NOT_FOUND_ERROR",
+             "retrieved_data": ["well-formed but self-admitted failure"]}))
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            learn(str(run.parent), str(Path(td) / "lib"))
+        out = buf.getvalue()
+        assert "agent itself reported NOT_FOUND_ERROR" in out, out
+        assert "0/1 runs admitted" in out, out
+        assert not (Path(td) / "lib" / ".learned.json").exists() or \
+            "r1" not in (Path(td) / "lib" / ".learned.json").read_text()
+    print("test_learn status-gate OK")
+
+
 def run_regressions():
     """F3: grouping-LLM failure must exit with an actionable one-liner, not a traceback."""
     import webwright.skills.learn as L
@@ -54,8 +79,10 @@ def run_regressions():
 def test_all():
     run()
     run_regressions()
+    run_status_gate()
 
 
 if __name__ == "__main__":
     run()
     run_regressions()
+    run_status_gate()
