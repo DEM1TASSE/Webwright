@@ -80,7 +80,19 @@ Two touch points, **no change to the agent loop or default config**:
 Three steps: solve a few instances of a task type, `learn` them into a skill, then watch
 the next solve reuse it. The task family is the one from Webwright's main README —
 Google Flights — where the answer is live (no model can recall it) and the UI is genuinely
-fiddly, so a learned skill has something real to carry:
+fiddly, so a learned skill has something real to carry.
+
+**Fastest path — one command, every parameter pre-filled:**
+
+```bash
+cd src/webwright/skills/examples
+./quickstart.sh          # a learned skill drives the live site — no model, no API key needed
+./quickstart.sh ask      # ask the library about a task it has never seen   (needs a key)
+./quickstart.sh solve    # watch the agent REUSE the checked-in skill        (needs a key)
+./quickstart.sh full     # rebuild the library yourself: 3 solves -> learn -> reuse (~30 min)
+```
+
+What `full` does, spelled out:
 
 ```bash
 export OPENAI_API_KEY=...
