@@ -59,17 +59,6 @@ On a custom OpenAI-compatible gateway, also `export OPENAI_ENDPOINT=... OPENAI_M
 Full tutorial — the loop spelled out, gateway setup, running skills without the agent:
 **[docs/quickstart.md](docs/quickstart.md)**
 
-## 💰 What it costs (measured)
-
-Same unseen route, minutes apart:
-
-|           | from scratch | with the library | the skill, standalone |
-|-----------|--------------|------------------|-----------------------|
-| steps     | 17           | 15               | — (no agent)          |
-| wall time | 8.9 min      | **5.2 min**      | **32 s, no model**    |
-
-Exploration is paid once — standalone repeats need no model at all.
-
 ## 📊 Results
 
 **Setting** — WebArena, 10 retrieve-type task templates across 3 self-hosted sites
@@ -101,6 +90,19 @@ vary; the factory parameterizes across solves from the differences *actually obs
 verified solves of the same template turns observed differences into parameters and
 recurring patterns into primitives — different runs' strategies become fallbacks, and
 what lands is the best algorithm the solves discovered.
+
+**Parameters are evidence, primitives are the product.** Parameters aren't guessed up
+front — they are the differences actually observed between solves. The expensive core is
+factored into named primitives (`login()`, `open_grid()`, `extract_rows()`) with a thin
+task layer on top, so future tasks can reuse and compose the pieces even when the final
+step differs.
+
+**Nothing lands unproven.** The admission gate checks the *inputs*, but distillation
+itself can introduce bugs — and an agent reading a broken skill as source will quietly
+work around them, so agent-in-loop numbers alone can't certify a library. The proof is
+model-free execution: a skill must replay its own training taskspecs standalone and
+reproduce the answers before it lands, and every skill carries its grade —
+`executable` (proved) or `reference` (a prior the agent may still read).
 
 **Growth never breaks what works.** New templates add skills, new solves refine existing
 ones in place (regression-replayed against their stored training examples), untouched
