@@ -72,10 +72,39 @@ Exploration is paid once — standalone repeats need no model at all.
 
 ## 📊 Results
 
-WebArena, 10 templates × 3 sites, held-out instances:
+**Setting** — WebArena, 10 retrieve-type task templates across 3 self-hosted sites
+(shopping-admin, gitlab, map). Per template: 3 train solves build the library
+(gold-gated), 2 held-out instances measure reuse; every held-out task is solved both
+WITH the library and from scratch. Same model, same budget, 100 solves total.
 
-- accuracy **70% vs 55%**, 4 tasks rescued (wrong → correct)
-- biggest win **33 → 10 steps**, net reuse-wins vs regressions **7 : 1**
+|                         | WITH library | from scratch |    Δ    |
+|-------------------------|--------------|--------------|---------|
+| held-out accuracy (20)  | **70%**      | 55%          | **+15 pp** |
+| held-out avg steps      | **14.7**     | 17.1         | −2.4    |
+| train accuracy (30)     | **86.7%**    | 76.7%        | +10 pp  |
+| train avg steps         | **13.7**     | 15.9         | −2.2    |
+
+- **4 held-out tasks rescued** (wrong → correct); net reuse-wins vs regressions **7 : 1**;
+  biggest win **33 → 10 steps**
+- retrieval stayed reliable as the library grew: all 20 held-out solves picked the right
+  skill, including two near-duplicate templates
+- mixed-template batches evolve safely: adds, refines and keeps with zero cross-contamination
+
+## 🧠 Design
+
+**Actions are already code.** Webwright solves by writing code — every solve leaves a
+working script behind, so skills are a byproduct, not an instrumentation layer. It
+complements `crafted_cli`: craft parameterizes one script by *anticipating* what might
+vary; the factory parameterizes across solves from the differences *actually observed*.
+
+**One solve isn't a skill yet.** A single script is correct but narrow. Aggregating
+verified solves of the same template turns observed differences into parameters and
+recurring patterns into primitives — different runs' strategies become fallbacks, and
+what lands is the best algorithm the solves discovered.
+
+**Growth never breaks what works.** New templates add skills, new solves refine existing
+ones in place (regression-replayed against their stored training examples), untouched
+skills stay byte-identical.
 
 ## 🔌 Plugs into Webwright
 
@@ -92,7 +121,5 @@ python -m webwright.skill_factory learn outputs/ --library ./library     # grow 
 |---|---|
 | [docs/quickstart.md](docs/quickstart.md) | the complete tutorial: the flights loop, gateway knobs, standalone usage, measured costs |
 | [docs/manual.md](docs/manual.md) | manual mode: manifests field by field, gold gates, the batch pipeline |
-| [docs/verification.md](docs/verification.md) | the gate, replay verification, executable vs reference grades |
-| [docs/architecture.md](docs/architecture.md) | design rationale, component map, backend abstraction |
-| [docs/evaluation.md](docs/evaluation.md) | WebArena results in detail, retrieval reliability, honest caveats |
+| [docs/reference.md](docs/reference.md) | verification & grades, every flag and env var, component map, backend |
 | [examples/README.md](examples/README.md) | the checked-in skill and the example inputs |
