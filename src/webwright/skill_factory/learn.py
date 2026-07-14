@@ -95,7 +95,9 @@ def group_chunk(runs, existing_templates):
         raise SystemExit(
             f"learn: the grouping LLM call failed: {exc}\n"
             f"Check OPENAI_API_KEY — and on a custom gateway also set "
-            f"OPENAI_ENDPOINT (and OPENAI_MODEL), or SKILL_MODEL_ENDPOINT/SKILL_MODEL_NAME.")
+            f"OPENAI_ENDPOINT (and OPENAI_MODEL), or SKILL_MODEL_ENDPOINT/SKILL_MODEL_NAME. "
+            f"The endpoint is the FULL request URL (e.g. https://gateway.example/api/responses), "
+            f"not a base path.")
     return out.get("groups", [])
 
 

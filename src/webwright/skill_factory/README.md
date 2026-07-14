@@ -52,7 +52,9 @@ export OPENAI_API_KEY=...
 ```
 
 On a custom OpenAI-compatible gateway, also `export OPENAI_ENDPOINT=... OPENAI_MODEL=...`
-(for learn / skill_use) and `export MODEL_CFG=/path/to/your_model.yaml` (for the agent).
+(for learn / skill_use; the endpoint is the FULL `.../responses` URL, not a base path) and
+`export MODEL_CFG=...` pointing at a copy of `examples/model_gateway.example.yaml` (for the
+agent — it reads a yaml, not these env vars).
 
 </details>
 

@@ -3,7 +3,8 @@
 [← back to the module README](../README.md)
 
 Three steps: solve a few instances of a task type, `learn` them into a skill, then watch
-the next solve reuse it. The task family is the one from Webwright's main README —
+the next solve reuse it. Solves are long tasks (5-30 min each) — if your shell or tooling
+enforces command timeouts, run them in the background. The task family is the one from Webwright's main README —
 Google Flights — where the answer is live (no model can recall it) and the UI is genuinely
 fiddly, so a learned skill has something real to carry.
 
@@ -22,10 +23,11 @@ What `full` does, spelled out:
 ```bash
 export OPENAI_API_KEY=...
 # custom / OpenAI-compatible gateway? TWO knobs, both needed:
-#  1. env vars for learn / skill_use (or reuse is silently off):
-export OPENAI_ENDPOINT=https://your-gateway/...   OPENAI_MODEL=your-model
+#  1. env vars for learn / skill_use (or reuse is silently off). The endpoint is the
+#     FULL request URL — ".../api" alone fails, ".../api/responses" works:
+export OPENAI_ENDPOINT=https://your-gateway/api/responses   OPENAI_MODEL=your-model
 #  2. the AGENT's model in the solve steps reads its yaml, NOT these env vars — copy
-#     model_openai.yaml, set openai_endpoint/model_name to your gateway, and use it
+#     examples/model_gateway.example.yaml, fill in your endpoint/model, and use it
 #     below in place of `-c model_openai.yaml` (quickstart.sh: export MODEL_CFG=...).
 cd src/webwright/skill_factory    # commands below run from the module directory
 

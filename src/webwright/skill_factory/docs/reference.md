@@ -90,7 +90,7 @@ uses the same backend as the running agent. No gateway or key is hardcoded.
 | var | used by | meaning |
 |---|---|---|
 | `OPENAI_API_KEY` | all LLM calls | API key |
-| `OPENAI_ENDPOINT` / `OPENAI_MODEL` | learn, skill_use | custom OpenAI-compatible gateway |
+| `OPENAI_ENDPOINT` / `OPENAI_MODEL` | learn, skill_use | custom gateway; the endpoint is the FULL request URL (e.g. `https://gateway.example/api/responses`), not a base path |
 | `SKILL_MODEL_NAME` / `SKILL_MODEL_ENDPOINT` / `SKILL_MODEL_CLASS` / `SKILL_MODEL_TIMEOUT` | module LLM | overrides for the module's model (fall back to `OPENAI_*`) |
 | `SKILL_LIBRARY_ROOT` | skill_use | default library path |
 | `WORKSPACE_DIR` | generated skills | where a skill writes its artifacts (default: cwd) |

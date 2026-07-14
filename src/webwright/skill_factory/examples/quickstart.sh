@@ -20,6 +20,15 @@ CFG=(-c base.yaml -c "${MODEL_CFG:-model_openai.yaml}")
 
 need_key() { : "${OPENAI_API_KEY:?export OPENAI_API_KEY first (on a gateway also OPENAI_ENDPOINT / OPENAI_MODEL)}"; }
 
+warn_gateway_agent() {  # solve/full: the AGENT reads its yaml, not the env vars
+  if [ -n "${OPENAI_ENDPOINT:-}" ] && [ -z "${MODEL_CFG:-}" ]; then
+    echo "!! OPENAI_ENDPOINT is set but MODEL_CFG is not." >&2
+    echo "!! learn/ask will use your gateway, but the AGENT in this mode reads a yaml" >&2
+    echo "!! and will hit api.openai.com. Copy model_gateway.example.yaml, fill in your" >&2
+    echo "!! endpoint (the FULL .../responses URL), then: export MODEL_CFG=/abs/path.yaml" >&2
+  fi
+}
+
 flight_task() { # $1 "City (CODE)"  $2 "City (CODE)"
   echo "What is the cheapest flight from $1 to $2 on $DATE (one-way)? Return the answer as a list: [airline, price]."
 }
@@ -48,6 +57,7 @@ ask)
   ;;
 solve)
   need_key
+  warn_gateway_agent
   echo "== one agent solve on an UNSEEN route, reusing the checked-in skill =="
   ./solve_with_library.sh "$(flight_task 'Portland (PDX)' 'Austin (AUS)')" \
     https://www.google.com/flights "$LIB" -o "$WORK/outputs" --task-id qs_solve "${CFG[@]}"
@@ -56,6 +66,7 @@ solve)
   ;;
 full)
   need_key
+  warn_gateway_agent
   echo "== full loop: 3 from-scratch solves -> learn -> reuse on an unseen route (~30 min) =="
   for r in "Seattle (SEA)|New York (JFK)" "San Francisco (SFO)|Boston (BOS)" "Los Angeles (LAX)|Chicago (ORD)"; do
     FROM="${r%|*}"; TO="${r#*|}"
