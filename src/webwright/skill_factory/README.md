@@ -89,7 +89,9 @@ build:
 ```bash
 python -m webwright.skill_factory init "the cheapest <product> on Amazon, for any product"
 $EDITOR skill.yaml     # fill the ____ values; check the guessed start_url
+
 python -m webwright.skill_factory build skill.yaml --library ./library --jobs 3
+#                                                       where it lands ↑    ↑ solve 3 at a time
 ```
 
 `init` proposes the structure — a task template with `{holes}`, the site, and the verify mode
@@ -98,6 +100,13 @@ model's guess. `build` fills the template with each instance, solves them, and h
 `learn`. Nothing runs until you say so: it prints the tasks it's about to solve and asks
 (`--dry-run` just shows the plan), and a solve that already produced an answer is never
 re-solved.
+
+**`--jobs N` — how many instances to solve at once.** Solving is the slow half (10-30 min each)
+and the instances are independent, so N of them run in parallel; N is yours to pick — any number,
+default 1 (one after another). More than you have instances just means "all of them". What caps
+it in practice isn't the flag, it's the site: too many browsers from one IP and you start getting
+throttled, which looks like your skill failing when it's the site pushing back. 3-5 is a safe
+place to start.
 
 **3b. You already have a folder of webwright runs** — skip the solving, distil what's there:
 
