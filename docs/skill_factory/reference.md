@@ -1,6 +1,6 @@
 # Reference — verification, parameters, components, backend
 
-[← back to the module README](../README.md)
+[← back to the module README](../../src/webwright/skill_factory/README.md)
 
 ## Verification and grades
 

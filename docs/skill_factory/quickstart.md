@@ -1,6 +1,6 @@
 # Quickstart — the complete tutorial
 
-[← back to the module README](../README.md)
+[← back to the module README](../../src/webwright/skill_factory/README.md)
 
 Three ways in, in the order you'd meet them:
 

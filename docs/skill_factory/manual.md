@@ -1,6 +1,6 @@
 # Manual mode — manifests, gold gates, full control
 
-[← back to the module README](../README.md)
+[← back to the module README](../../src/webwright/skill_factory/README.md)
 
 The library grows **offline** from batches of solved tasks, and is consumed **at solve time** by
 the agent. Tasks are provided **manually** today — you pick which tasks to solve and batch. The
