@@ -90,9 +90,9 @@ def _replay(code: str, traces: list["Trace"], strict: bool = False) -> list[str]
                  "output_schema": tr.meta.get("output_schema")}, ensure_ascii=False),
                 encoding="utf-8")
             try:
-                subprocess.run([sys.executable, "skill.py", "taskspec.json"], cwd=td,
-                               env={**os.environ, "WORKSPACE_DIR": td},
-                               capture_output=True, text=True, timeout=240)
+                proc = subprocess.run([sys.executable, "skill.py", "taskspec.json"], cwd=td,
+                                      env={**os.environ, "WORKSPACE_DIR": td},
+                                      capture_output=True, text=True, timeout=240)
             except subprocess.TimeoutExpired:
                 fails.append(f"instance {i} (params={json.dumps(tr.meta.get('params'), ensure_ascii=False)}): TIMEOUT")
                 continue
@@ -108,9 +108,15 @@ def _replay(code: str, traces: list["Trace"], strict: bool = False) -> list[str]
             if not strict and gate(got, output_schema=tr.meta.get("output_schema"),
                                    method="self_verify").admit:
                 continue   # tolerated: live-data drift (right shape, non-empty)
+            # a null answer means the skill crashed or never wrote output — without the
+            # subprocess's own words neither the human log nor the repair round can act
+            crash = ""
+            if got is None:
+                err = " ".join((proc.stderr or proc.stdout or "").split())
+                crash = f"; stderr tail: {err[-400:] or '(empty)'}"
             fails.append(f"instance {i} (params={json.dumps(tr.meta.get('params'), ensure_ascii=False)}): "
                          f"replay returned {json.dumps(got, ensure_ascii=False)[:120]}, "
-                         f"the solve's answer was {json.dumps(tr.answer, ensure_ascii=False)[:120]}")
+                         f"the solve's answer was {json.dumps(tr.answer, ensure_ascii=False)[:120]}{crash}")
     return fails
 
 
@@ -228,6 +234,9 @@ def _refine(traces: list[Trace], library: Library, verify: str = "off",
                 if verify == "strict":
                     print("      (answers that legitimately change between solve and replay — "
                           "prices, live listings — need --verify shape)")
+                post_mortem = library.root / f".rejected_{sid}.py"
+                post_mortem.write_text(code, encoding="utf-8")
+                print(f"      (last candidate kept for post-mortem: {post_mortem})")
                 return []
     n_prev = (existing.meta.get("n_solves", 0) if existing else 0)
     meta = {
