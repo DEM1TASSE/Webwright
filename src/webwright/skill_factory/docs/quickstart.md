@@ -2,24 +2,45 @@
 
 [← back to the module README](../README.md)
 
-Three steps: solve a few instances of a task type, `learn` them into a skill, then watch
-the next solve reuse it. Solves are long tasks (10-30 min each) — if your shell or tooling
-enforces command timeouts, run them in the background. The task family is Google Flights
-(the site from Webwright's own README): *what is the earliest nonstop flight on this route
-and date?* A flight schedule is a stable, client-independent fact the page states plainly —
-so the answer is the same today, tomorrow, and on your machine, which is exactly what lets a
-learned skill be replay-verified (`--verify strict`) and reused standalone with a straight
-face. The UI is still genuinely fiddly (trip type, airport autocomplete, date picker, the
-nonstop filter), so the skill has something real to carry.
+Three ways in, in the order you'd meet them:
 
-**Fastest path — one command, every parameter pre-filled:**
+1. **[Run the checked-in skill](#1-run-the-checked-in-skill)** — no model, no key, ~40 s.
+2. **[Watch the loop build it](#2-watch-the-loop-build-that-skill)** — the Google Flights
+   example, end to end, ~40 min.
+3. **[Do it for your own task](#3-do-it-for-your-own-task)** — `init` → fill → `build`, or
+   `learn` if you already have runs. **This is the part that's yours.**
+
+Solves are long (10-30 min each) — if your shell enforces command timeouts, run them in the
+background or pass `--jobs`.
+
+---
+
+## 1. Run the checked-in skill
 
 ```bash
 cd src/webwright/skill_factory/examples
-./quickstart.sh          # a learned skill drives the live site — no model, no API key needed
-./quickstart.sh ask      # ask the library about a task it has never seen   (needs a key)
-./quickstart.sh solve    # watch the agent REUSE the checked-in skill        (needs a key)
-./quickstart.sh full     # rebuild the library yourself: 3 solves -> learn -> reuse (~40 min)
+./quickstart.sh                            # SEA->DEN, ~40 s, no model, no API key
+./quickstart.sh demo LAX ORD 2026-09-01    # your own route (codes + YYYY-MM-DD)
+```
+
+It prints the ten fixed steps it took — no model chose them, they're the skill's code — and
+where it saved its screenshots, so "this is a program, not a model improvising" is something
+you can check rather than take on faith.
+
+The example is *earliest nonstop flight* on Google Flights (the site from Webwright's own
+README). That task was chosen carefully, and the reason matters more than the example:
+a flight **schedule** is a fact the page states plainly, it doesn't move on its own, and it
+reads the same on your machine as on ours. That's what lets the skill be replay-verified
+(`--verify strict`) and reused standalone with a straight face. The **fare** on the same page
+would fail all three. See [choosing a task](#choosing-a-task-that-can-be-verified).
+
+## 2. Watch the loop build that skill
+
+```bash
+export OPENAI_API_KEY=...
+./quickstart.sh full     # 3 solves -> learn -> reuse on an unseen route (~40 min)
+./quickstart.sh ask      # or: ask the library about a task it has never seen
+./quickstart.sh solve    # or: watch the agent reuse the checked-in skill
 ```
 
 What `full` does, spelled out:
@@ -111,20 +132,110 @@ live prices, inventory — use `--verify shape` instead, and pass `--golds` when
 Exactly this loop, already run and checked in: `examples/learned_library/` (provenance in
 `examples/README.md`).
 
-`learn` scans the run folders, gates each solve (gold if you pass `--golds golds.json`,
-else a shape check), auto-groups tasks into templates with one LLM call per ~25 runs,
-extracts the parameters, and grows the library. It is **idempotent** — re-run it whenever;
-already-learned runs are skipped (`library/.learned.json`), and big folders are chunked
-automatically. `--dry-run` shows the grouping plan without changing anything. Every new skill
-must **replay standalone and reproduce its own training answers** before it lands (see the gate
-section; use `--verify strict` for stable-fact families like this one, `--verify shape` for
-live-data families whose answer legitimately drifts).
-Everything below is **manual mode** — explicit manifests, benchmark-grade gold gates, fine
-control over every field. You don't need it to get started.
+---
+
+## 3. Do it for your own task
+
+The example above is ours. This is the part that's yours.
+
+```bash
+# a task you keep repeating -> draft a spec
+python -m webwright.skill_factory init "the cheapest <product> on Amazon, for any product"
+```
+
+`init` makes one model call and writes `skill.yaml`:
+
+```yaml
+task: Find the cheapest {product} on Amazon and return its brand and price.
+start_url: https://www.amazon.com/    # guessed — check it opens the right page
+
+instances:            # give a few real instances (3+ makes a verifiable skill)
+  - {product: "____"}
+  - {product: "____"}
+  - {product: "____"}
+
+build:
+  # this answer drifts (prices/stock/rankings change on their own), so replay only
+  # checks the shape — strict would reject a working skill when the value moved
+  verify: shape
+  verify_rounds: 2
+  on_fail: reject
+  chunk: 25
+```
+
+**It proposes the structure and leaves the values blank on purpose.** The template, the site and
+the verify mode are guesses you can overrule; the values are your ground truth, and a value the
+model invented would quietly train the skill on an answer nobody checked. Fill the `____`s, look
+at the guessed `start_url`, then:
+
+```bash
+python -m webwright.skill_factory build skill.yaml --library ./library --jobs 3
+```
+
+`build` = **solve × N + learn**. It fills the template with each instance, prints the tasks it's
+about to solve and asks before spending agent time (`--dry-run` shows the plan and stops,
+`--yes` skips the prompt), solves them (`--jobs N` in parallel, progress every 30 s), and hands
+the batch to `learn`. **An instance that already produced an answer is never re-solved** — if a
+run dies halfway, re-running `build` only pays for what's missing.
+
+Already have webwright runs lying around? Skip straight to the second half:
+
+```bash
+python -m webwright.skill_factory learn outputs/ --library ./library
+```
+
+### Vary the parameters, not just the count
+
+Distillation lifts a parameter from the **differences it observes**. A value that's identical in
+every instance has no evidence behind it and may get baked in. So two instances that vary
+everything you care about beat five that share a date:
+
+```yaml
+instances:   # origin, destination AND date all move
+  - {origin: "SEA", destination: "JFK", date: "2026-08-15"}
+  - {origin: "LAX", destination: "ORD", date: "2026-09-03"}
+```
+
+### Choosing a task that can be verified
+
+Four questions, learned the hard way. The example passes all four; "the cheapest X" fails three:
+
+1. **Does the page state the answer?** — or must you infer and compare it yourself? A skill can
+   anchor on what the site declares (a Cheapest tab's own label, a sort control); it can't
+   anchor on your judgement.
+2. **Does the answer hold still?** — if it drifts on its own (prices, stock, rankings), `strict`
+   will reject a working skill for reporting today's truth. Use `shape`. `init` now guesses this
+   for you and writes the reason in the spec.
+3. **Can each field be extracted reliably?** — truth being well-defined isn't enough. A flight
+   number is stated plainly and *still* sits glued to the aircraft type (`Airbus A321neo` `UA 729`)
+   next to look-alike tokens, so it's the field distillation gets wrong; the airline and the
+   departure time never were.
+4. **Is the value the site declares the value you actually want?** — the subtle one. Sorting
+   Amazon by price ascending is the *right method* and faithfully returns `$0.00` placeholder
+   listings. The skill is correct and the answer is useless. A declarative anchor tells you
+   *where to read*; it can't tell you you're reading the right thing.
+
+### When a skill gets rejected
+
+Rejection is the gate working — nothing unproven lands, and the runs stay retryable (they're
+kept out of `library/.learned.json`, so re-running `learn` retries without re-solving). Two kinds:
+
+| what you see | what it means | what to do |
+|---|---|---|
+| the diff is only in a value that moves (`$0.01` → `$5.99`), other instances reproduced exactly | the **verify mode** is wrong for this task, the skill is fine | `--verify shape` |
+| a crash (`Could not choose ...`), or an answer off in the wrong place | the distilled skill really is broken | **re-run `learn`** — distillation is stochastic, a fresh draw often lands; the failure prints the crash, and the last candidate is kept at `library/.rejected_<id>.py` for a post-mortem |
+
+Distillation is one LLM call — a re-draw costs a rounding error next to the solves you already
+paid for. `--verify-rounds N` bounds how many repair rounds one draw gets before it gives up.
+
+---
 
 **Where this fits:**
 - *recurring personal queries* — releases, commit counts, price checks: pay the exploration
   once, every repeat is cheap (or free — run the skill standalone from cron, no model);
 - *same-template batch jobs* — QA flows, report pulls: solve 3, learn, run the rest on skills;
 - *a team library* — commit `./library` to your repo; everyone's agent reuses it.
+
+**Need every field under your control** — explicit manifests, benchmark-grade gold gates?
+That's [manual mode](manual.md); you don't need it to get started.
 
