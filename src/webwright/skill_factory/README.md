@@ -49,14 +49,12 @@ python -m webwright.skill_factory learn outputs/ --library ./library     # grow 
 
 ## 🚀 Quick Start
 
-**The task, throughout:** *what is the earliest nonstop flight from A to B on this date?* — on
-the live Google Flights. Picked on purpose: a **schedule** is a fact the page states plainly, it
-doesn't move on its own, and it reads the same on your machine as ours — which is what lets a
-skill be replay-verified and reused standalone with a straight face. (The **fare** on the same
-page would fail all three.) The checked-in library and its provenance:
-[examples/](examples/).
+### 1. Run a learned skill
 
-**1. Run a learned skill** — no model, no API key, ~40 s. This is the whole pitch in one command:
+Task: *what is the earliest nonstop flight from A to B on this date?*, on the
+live Google Flights.
+
+No model, no API key, about 30 seconds. The whole pitch in one command:
 
 ```bash
 cd src/webwright/skill_factory/examples
@@ -64,10 +62,14 @@ cd src/webwright/skill_factory/examples
 ./quickstart.sh demo LAX ORD 2026-09-01    # ...on your own route
 ```
 
-It prints the ten fixed steps it took and where it saved its screenshots — no model chose those
-steps, they're the skill's code.
+It prints the ten fixed steps it took and where it saved its screenshots. No model chose those
+steps; they're the skill's code.
 
-**2. Bring the agent in** — needs a key:
+---
+
+### 2. Bring the agent in
+
+Run same task in 1, needs an API key:
 
 ```bash
 export OPENAI_API_KEY=...
@@ -76,64 +78,60 @@ export OPENAI_API_KEY=...
 ./quickstart.sh full    # the whole loop from nothing: 3 solves -> learn -> reuse (~40 min)
 ```
 
-`demo` runs the skill; `ask` only *retrieves* — one round trip that shows what the agent is told
-about the library, without solving anything; `solve` is the agent actually doing a task with it;
-`full` rebuilds the library from scratch so you can watch it being made.
+- `demo` runs the skill directly
+- `ask` only *retrieves*: one round trip that shows what the agent is told about the library, without solving anything
+- `solve` is the agent actually doing a task with it
+- `full` rebuilds the library from scratch, so you can watch it being made
 
-**3. Do it for *your* task** — this is the part that's yours, not the example's. Two ways in,
-depending on whether you've solved the task yet:
+---
 
-**3a. You have a task you keep repeating, but no runs yet** — describe it, fill in your values,
+### 3. Do it for your task
+
+Two ways in, depending on whether you've solved the task yet.
+
+**3a. You have a task you keep repeating, but no runs yet.** Describe it, fill in your values,
 build:
 
 ```bash
-python -m webwright.skill_factory init "the cheapest <product> on Amazon, for any product"
+python -m webwright.skill_factory init "your task"
 $EDITOR skill.yaml     # fill the ____ values; check the guessed start_url
-
-python -m webwright.skill_factory build skill.yaml --library ./library --jobs 3
-#                                                       where it lands ↑    ↑ solve 3 at a time
+python -m webwright.skill_factory build skill.yaml --library ./library --jobs N # how many tasks you want to solve in parallel
 ```
 
-`init` proposes the structure — a task template with `{holes}`, the site, and the verify mode
-that fits your task — and leaves the values blank, because those are your ground truth, not the
-model's guess. `build` fills the template with each instance, solves them, and hands the batch to
-`learn`. Nothing runs until you say so: it prints the tasks it's about to solve and asks
-(`--dry-run` just shows the plan), and a solve that already produced an answer is never
-re-solved.
+`init` proposes the structure: a task template with `{holes}`, the site, and the verify mode that
+fits your task. It leaves the values blank, because those are your ground truth, not the model's
+guess. `build` fills the template with each instance, solves them, and hands the batch to `learn`.
 
-**`--jobs N` — how many instances to solve at once.** Solving is the slow half (10-30 min each)
-and the instances are independent, so N of them run in parallel; N is yours to pick — any number,
-default 1 (one after another). More than you have instances just means "all of them". What caps
-it in practice isn't the flag, it's the site: too many browsers from one IP and you start getting
-throttled, which looks like your skill failing when it's the site pushing back. 3-5 is a safe
-place to start.
+Nothing runs until you say so. `build` prints the tasks it's about to solve and asks first
+(`--dry-run` just shows the plan), and a task that already has an answer is never re-solved.
 
-**3b. You already have a folder of webwright runs** — skip the solving, distil what's there:
+> If your answer moves on its own (a price, a ranking), the shape check can't tell right from
+> wrong. Supply `--golds`, or plan to gate it with a judge (see Limitations).
+
+**3b. You already have a folder of webwright runs.** Skip the solving and distil what's there:
 
 ```bash
 python -m webwright.skill_factory learn outputs/ --library ./library
 ```
 
-That's the day-to-day path once you're using Webwright anyway: the trajectories you produced
-solving real work become the library, no spec to write.
+This is the day-to-day path once you're using Webwright anyway: the trajectories you produced
+solving real work become the library, with no spec to write.
 
 <details>
-<summary><b>On a custom OpenAI-compatible gateway</b> — two knobs, both needed</summary>
-
+<summary><b>On a custom OpenAI-compatible gateway</b></summary>
 <br>
 
 ```bash
 export OPENAI_ENDPOINT=... OPENAI_MODEL=...   # for learn / init / skill_use
-export MODEL_CFG=/abs/path/to/model.yaml      # for the AGENT in solve/build
+export MODEL_CFG=/abs/path/to/model.yaml      # for the AGENT in solve / build
 ```
 
-The endpoint is the FULL `.../responses` URL, not a base path. The agent reads its model from a
-yaml, not from these env vars — copy `examples/model_gateway.example.yaml` and point `MODEL_CFG`
-at it (or pass `-c` to `build`).
-
+The endpoint is the full `.../responses` URL, not a base path. The agent reads its model from a
+yaml, not from these env vars: copy `examples/model_gateway.example.yaml` and point `MODEL_CFG` at
+it (or pass `-c` to `build`).
 </details>
 
-Full tutorial — the loop spelled out, gateway setup, running skills without the agent:
+Full tutorial, with the loop spelled out, gateway setup, and running skills without the agent:
 **[docs/skill_factory/quickstart.md](../../../docs/skill_factory/quickstart.md)**
 
 ## 📊 Results
