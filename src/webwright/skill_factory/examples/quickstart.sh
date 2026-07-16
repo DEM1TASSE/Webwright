@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One-command Quickstart — every parameter pre-filled, nothing to write.
 #
-#   ./quickstart.sh          # instant: run the checked-in flights skill, NO model, no API key
+#   ./quickstart.sh          # instant: run the checked-in flight skill, NO model, no API key
 #   ./quickstart.sh ask      # ask the library about a new task    (needs OPENAI_API_KEY)
 #   ./quickstart.sh solve    # one agent solve that REUSES the checked-in skill (needs key)
 #   ./quickstart.sh full     # the whole loop: 3 solves -> learn -> reuse (needs key, ~30 min)
@@ -30,7 +30,7 @@ warn_gateway_agent() {  # solve/full: the AGENT reads its yaml, not the env vars
 }
 
 flight_task() { # $1 "City (CODE)"  $2 "City (CODE)"
-  echo "What is the cheapest flight from $1 to $2 on $DATE (one-way)? Return the answer as a list: [airline, price]."
+  echo "What is the earliest nonstop flight from $1 to $2 on $DATE (one-way)? Return the answer as a list: [flight_number, airline, departure_time], e.g. [\"AS 336\", \"Alaska\", \"6:00 AM\"]."
 }
 
 spec() { # $1 city $2 code $3 city $4 code -> taskspec.json in $WORK
@@ -43,9 +43,9 @@ EOF
 
 case "${1:-demo}" in
 demo)
-  echo "== the checked-in flights skill, standalone: cheapest SEA->DEN on $DATE (no model, ~30 s) =="
+  echo "== the checked-in flight skill, standalone: earliest nonstop SEA->DEN on $DATE (no model, ~40 s) =="
   spec Seattle SEA Denver DEN
-  (cd "$WORK" && WORKSPACE_DIR="$WORK" python "$(ls -d "$LIB"/what_is_the_cheapest_flight_*)/skill.py" taskspec.json > run.log 2>&1) || { tail -5 "$WORK/run.log"; exit 1; }
+  (cd "$WORK" && WORKSPACE_DIR="$WORK" python "$(ls -d "$LIB"/what_is_the_earliest_nonstop_flight_*)/skill.py" taskspec.json > run.log 2>&1) || { tail -5 "$WORK/run.log"; exit 1; }
   echo "answer: $(cat "$WORK/agent_response.json")"
   echo "-> a learned skill just drove the live site with ZERO tokens. Next: $0 ask | solve | full"
   ;;
@@ -74,9 +74,9 @@ full)
     ./solve_with_library.sh "$(flight_task "$FROM" "$TO")" \
       https://www.google.com/flights "$WORK/library" -o "$WORK/outputs" "${CFG[@]}"
   done
-  echo "-- learning (verify=shape: flight prices are live data — strict replay would
-     compare against a price that may have moved since the solve)"
-  python -m webwright.skill_factory learn "$WORK/outputs" --library "$WORK/library" --verify shape
+  echo "-- learning (verify=strict: a schedule is stable, so each skill must reproduce
+     its own training answers standalone before it may land)"
+  python -m webwright.skill_factory learn "$WORK/outputs" --library "$WORK/library" --verify strict --verify-rounds 3
   echo "-- reusing on an unseen route"
   ./solve_with_library.sh "$(flight_task 'Seattle (SEA)' 'Denver (DEN)')" \
     https://www.google.com/flights "$WORK/library" -o "$WORK/outputs" --task-id qs_heldout "${CFG[@]}"
