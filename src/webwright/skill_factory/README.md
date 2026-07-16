@@ -27,7 +27,7 @@ https://github.com/user-attachments/assets/d15b1f83-2c8d-4f2d-bbc5-be365c0bcf4e
 | **produced by** | a person writes and publishes it; you install it | edits to one document, driven by past runs | a person or agent writes one per site | **distilling several solves of the same task template** |
 | **parameters come from** | whoever wrote it | none | the author declares them | **the differences actually observed between your solves** |
 | **verified?** | no | one gate: scores higher on a held-out split | one gate: checked when it's first written, plus live tests | **two gates: a wrong answer never feeds a skill, *and* the skill must reproduce its own answers standalone, no model** |
-| agent can **adapt** it | read-only | read-only | not at runtime; the source is only opened to fix the catalogue | **yes, per task: reuse its core, change only the last step, without touching the library** |
+| agent can **adapt** it | read-only | read-only | it edits the source only to repair the shared adapter when it breaks — never to fit the task in front of it | **yes, per task: reuse its core, change only the last step, without touching the library** |
 | **grows from your runs** | no, it's whatever its author last wrote | yes, but what grows is a document for a frozen agent, not a program | no; a broken adapter is patched back to what it did, and nothing accumulates from your runs | **yes: each new solve widens it in place, regression-replayed so old coverage can't break** |
 
 ## 🗺️ How it works
