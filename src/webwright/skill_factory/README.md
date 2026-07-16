@@ -39,42 +39,79 @@ solve → gate → group by template → distill → replay-verify → library �
 ```
 
 At solve time the agent asks the library once and gets `use` / `adapt` / `skip` — reuse never
-blocks solving. Two touch points, no agent-loop changes:
+blocks solving. Two touch points into Webwright, no agent-loop changes:
 
 ```bash
 python -m webwright.tools.skill_use --task "<task>" --library ./library   # reuse at solve time
 python -m webwright.skill_factory learn outputs/ --library ./library     # grow it afterwards
 ```
 
+The commands, by what you already have:
+
+| you have | command | what it does |
+|---|---|---|
+| a one-line need | `init "<need>"` | drafts `skill.yaml`: a task template, the site, the verify mode — values left for you |
+| a filled `skill.yaml` | `build skill.yaml` | solves each instance, then hands the batch to `learn` |
+| finished webwright runs | `learn outputs/` | gates them, distills, replay-verifies, grows the library |
+| a benchmark, explicit golds | `update batch.json` | manual mode: every field yours — see [docs/manual.md](docs/manual.md) |
+
 ## 🚀 Quick Start
+
+**1. Run a learned skill** — no model, no API key, ~40 s. This is the whole pitch in one command:
 
 ```bash
 cd src/webwright/skill_factory/examples
-./quickstart.sh        # a learned skill drives a live site — no model, no API key needed
+./quickstart.sh                       # the checked-in skill drives a live site
+./quickstart.sh demo LAX ORD 2026-09-01   # ...on your own route
 ```
 
+It prints the ten fixed steps it took and where it saved its screenshots. The example is
+*earliest nonstop flight* on Google Flights — a schedule is a stable, client-independent fact
+the page states plainly, which is what makes `--verify strict` and standalone reuse mean
+something.
+
+**2. Watch the whole loop build that skill** — 3 solves → learn → reuse, ~40 min, needs a key:
+
+```bash
+export OPENAI_API_KEY=...
+./quickstart.sh full
+./quickstart.sh ask     # or just: ask the library about a task it has never seen
+./quickstart.sh solve   # or: watch the agent reuse the checked-in skill on a new route
+```
+
+**3. Do it for *your* task** — this is the part that's yours, not the example's:
+
+```bash
+# you have a task you keep repeating -> draft a spec, fill in your values, build
+python -m webwright.skill_factory init "the cheapest <product> on Amazon, for any product"
+$EDITOR skill.yaml     # fill the ____ values; check the guessed start_url
+python -m webwright.skill_factory build skill.yaml --library ./library --jobs 3
+
+# you already have webwright runs lying around -> skip straight to distilling them
+python -m webwright.skill_factory learn outputs/ --library ./library
+```
+
+`init` proposes the structure — a task template with `{holes}`, the site, and the verify mode
+that fits your task — and leaves the values blank, because those are your ground truth, not the
+model's guess. `build` fills the template with each instance, solves them, and hands the batch to
+`learn`. Nothing runs until you say so: `build` prints the tasks it's about to solve and asks,
+and `--dry-run` just shows the plan. A solve that already produced an answer is never re-solved.
+
 <details>
-<summary><b>More modes</b> — reuse with the agent, or rebuild the library yourself</summary>
+<summary><b>On a custom OpenAI-compatible gateway</b> — two knobs, both needed</summary>
 
 <br>
 
 ```bash
-export OPENAI_API_KEY=...
-./quickstart.sh ask      # ask the library about a task it has never seen
-./quickstart.sh solve    # the agent REUSES the checked-in skill on a new route
-./quickstart.sh full     # the whole loop: 3 solves -> learn -> reuse (~40 min)
+export OPENAI_ENDPOINT=... OPENAI_MODEL=...   # for learn / init / skill_use
+export MODEL_CFG=/abs/path/to/model.yaml      # for the AGENT in solve/build
 ```
 
-On a custom OpenAI-compatible gateway, also `export OPENAI_ENDPOINT=... OPENAI_MODEL=...`
-(for learn / skill_use; the endpoint is the FULL `.../responses` URL, not a base path) and
-`export MODEL_CFG=...` pointing at a copy of `examples/model_gateway.example.yaml` (for the
-agent — it reads a yaml, not these env vars).
+The endpoint is the FULL `.../responses` URL, not a base path. The agent reads its model from a
+yaml, not from these env vars — copy `examples/model_gateway.example.yaml` and point `MODEL_CFG`
+at it (or pass `-c` to `build`).
 
 </details>
-
-The checked-in example is *earliest nonstop flight* on Google Flights — a schedule is a stable,
-client-independent fact the page states plainly, so the answer is the same tomorrow and on your
-machine, which is exactly what makes `--verify strict` and standalone reuse mean something.
 
 Full tutorial — the loop spelled out, gateway setup, running skills without the agent:
 **[docs/quickstart.md](docs/quickstart.md)**
