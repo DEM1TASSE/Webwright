@@ -128,6 +128,11 @@ Skip the solving and distill what's there:
 python -m webwright.skill_factory learn outputs/ --library ./library
 ```
 
+Never run Webwright, so you have no runs to try this on? Three real solves ship with the repo —
+`learn examples/trajectories --library ./library` distils them without solving anything first.
+They're pinned to a date and [expire](examples/trajectories/README.md); the README there says
+exactly how.
+
 This is the day-to-day path once you're using Webwright anyway: the trajectories you produced
 solving real work become the library, with no spec to write. `build` leaves its solves in
 `build_outputs/` too, so `learn ./build_outputs` re-distils them without re-solving — which is
