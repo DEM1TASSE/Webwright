@@ -44,10 +44,10 @@ At solve time the agent asks the library once and gets `use` / `adapt` / `skip` 
 intent for the skill, after which it has the source and reuses it as the task needs. Reuse never
 blocks solving. Two touch points into Webwright, no agent-loop changes:
 
-```bash
-python -m webwright.tools.skill_use --task "<task>" --library ./library   # reuse at solve time
-python -m webwright.skill_factory learn outputs/ --library ./library     # grow it afterwards
-```
+- **reuse**, at solve time: the `skill_use` tool — the agent invokes it from bash like any other
+- **growth**, afterwards: the `skill_factory` CLI — `init` / `build` / `learn` / `update`
+
+Both are additive; the Quick Start below runs them.
 
 ## 🚀 Quick Start
 
@@ -85,76 +85,89 @@ export OPENAI_API_KEY=...
   costs a tenth of a solve to look at
 - `solve` is the agent actually doing a task with it
 
-Want to watch the library get built from nothing? That's the spec below, not a mode of this
-script — same 3 solves → learn, but parallel, resumable, and it shows you the plan first:
-
-```bash
-python -m webwright.skill_factory build flights.skill.yaml --library ./library --jobs 3
-```
-
 ---
 
-### 3. Do it for your task
+### 3. Build your own skill
 
-Everything from here needs an API key, takes 5-40 minutes, and can fail — see
-[what to expect](#what-to-expect) before you start. Two ways in, depending on whether you've
-solved the task yet.
+Everything from here needs an API key and can fail — see [what to expect](#what-to-expect)
+first. Two ways in, depending on what you already have.
 
-**3a. You have a task you keep repeating, but no runs yet.**
-
-Describe it, fill in your values, build:
-
-```bash
-python -m webwright.skill_factory init "your task"
-$EDITOR skill.yaml     # fill the ____ values; check the guessed start_url
-python -m webwright.skill_factory build skill.yaml --library ./library --jobs N # how many tasks you want to solve in parallel
-```
-
-`init` proposes the structure: a task template with `{holes}`, the site, and the verify mode that
-fits your task. It leaves the values blank, because those are your ground truth, not the model's
-guess. `build` fills the template with each instance, solves them, and hands the batch to `learn`.
-
-Nothing runs until you say so. `build` prints the tasks it's about to solve and asks first
-(`--dry-run` just shows the plan), and a task that already has an answer is never re-solved.
-
-> If your answer moves on its own (a price, a ranking), the shape check can't tell right from
-> wrong. Supply `--golds`, or plan to gate it with a judge (see Limitations).
-
-**3b. You already have a folder of webwright runs.**
-
-Skip the solving and distill what's there:
+**3.1 — You have trajectories.** Once you're using Webwright anyway, the runs are already on
+disk: hand them over, no spec to write. This is the day-to-day path.
 
 ```bash
 python -m webwright.skill_factory learn outputs/ --library ./library
 ```
 
-Never run Webwright, so you have no runs to try this on? Three real solves ship with the repo:
+Never run Webwright, so you have nothing to try it on? Three real solves ship with the repo:
 
 ```bash
-python -m webwright.skill_factory learn examples/trajectories --library ./library --verify off
+cd src/webwright/skill_factory/examples
+python -m webwright.skill_factory learn trajectories --library ./library --verify off
 ```
 
-~100 s, and it distils them without solving anything first. `--verify off` skips the replay, so
-it never opens a browser — nothing to go stale, nothing to reject, and the skill lands honestly
-unmarked (no `verified`/`grade`, because nothing was proved). Drop the flag to see the gate too,
-but [read the note first](examples/trajectories/README.md): the replay drives the live site, and
-these runs are pinned to a date.
+~100 s: three runs → one template → five lifted parameters → one skill. **`--verify off` is what
+keeps this from expiring** — it skips the replay, so nothing opens a browser, nothing goes stale,
+nothing can be rejected. The trade is honest: with no replay there's no claim, so the skill lands
+with no `verified`/`grade` at all. You're seeing distillation, not the proof it runs.
 
-This is the day-to-day path once you're using Webwright anyway: the trajectories you produced
-solving real work become the library, with no spec to write. `build` leaves its solves in
-`build_outputs/` too, so `learn ./build_outputs` re-distils them without re-solving — which is
-also how you retry a rejected skill.
+Drop the flag and the gate comes back, for as long as the fixture is live — those runs are pinned
+to a date, and [their README](examples/trajectories/README.md) says exactly when and how they go
+stale. For a skill that *has* been through the gate, the one in
+[`examples/learned_library/`](examples/learned_library/) carries `verified: true, grade:
+executable` — it's what step 1 runs. Everything here was produced with **gpt-5.4**, which is what
+we'd recommend.
+
+**3.2 — You have a task, but no runs yet.** Describe it; `init` drafts the spec and leaves the
+values for you.
+
+```bash
+python -m webwright.skill_factory init "the cheapest <product> on Amazon, for any product"
+```
+
+```yaml
+# skill.yaml — the {holes} are the parameters; each is a column below
+task: Find the cheapest {product} on Amazon and return its brand and price.
+start_url: https://www.amazon.com/    # guessed — check it opens the right page
+
+instances:            # ____ is yours to fill: your values are the ground truth
+  - {product: "____"}
+  - {product: "____"}
+  - {product: "____"}
+
+build:
+  # this answer drifts (prices move on their own), so replay only checks the shape —
+  # strict would reject a working skill for reporting today's truth
+  verify: shape
+  draws: 2
+  on_fail: reject     # reject = executable or nothing | reference = keep it as a prior
+```
+
+`init` proposes the structure — the template, the site, and the verify mode that fits your task —
+and never the values: a value it invented would quietly train the skill on an answer nobody
+checked. Fill the `____`s, then:
+
+```bash
+python -m webwright.skill_factory build skill.yaml --library ./library --jobs 3
+#                                                       where it lands ↑    ↑ solve 3 at a time
+```
+
+`build` = solve × N + learn. It prints the tasks it's about to solve and asks first (`--dry-run`
+shows the plan and stops), and an instance that already has an answer is never re-solved. `N` is
+any number, default 1; the ceiling isn't the flag but the site — too many browsers from one IP
+gets you throttled. 3-5 is a safe start.
+
+> If your answer moves on its own (a price, a ranking), the shape check can tell a broken skill
+> from a working one, but not a right answer from a wrong one. Supply `--golds`, or plan to gate
+> it with a judge (see Limitations).
 
 #### What to expect
 
 Distillation is stochastic, so **a first attempt is not a guarantee**. Measured on the same set
 of runs: **~40% of draws verify on the first try**. That's why `--draws` defaults to 2 (an
 independent fresh attempt, not a repair of the brittle one) — and why a rejection is cheap to
-recover from:
-
-```bash
-python -m webwright.skill_factory learn ./build_outputs --library ./library   # just run it again
-```
+recover from: `build` leaves its solves in `build_outputs/`, so pointing `learn` at that folder
+(3.1) re-distils them without re-solving. Just run it again.
 
 A rejected skill costs you the distillation, never the solves: the runs are kept out of
 `library/.learned.json` and stay retryable. If it rejects, that's the gate doing its job —

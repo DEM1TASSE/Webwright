@@ -6,8 +6,8 @@ verbatim `learn` output.
 ```
 examples/
 ├── quickstart.sh          # one command, every parameter pre-filled (demo, ask, solve)
-├── flights.skill.yaml     # the example spec: build it to rebuild the library below
-├── trajectories/          # 3 real solves — try `learn` without solving first (they expire)
+├── flights.skill.yaml     # the spec the checked-in library came from — build it to remake it
+├── trajectories/          # those solves' runs — try `learn` without solving first
 ├── solve_with_library.sh  # the solve wrapper: skill hint + answer-output instruction
 ├── learned_library/       # the Quickstart's artifact, checked in (skill.py + meta.json + replays.json)
 │   └── what_is_the_earliest_nonstop_flight…/
@@ -47,3 +47,16 @@ answer `["UA 2601", "United", "5:00 AM"]` — identical to an independent model-
 
 Manual mode (explicit manifests, gold gates): see the module README; the two
 `*.example.json` files here are filled-in versions of the inputs it asks you to write.
+
+## Remaking it
+
+`flights.skill.yaml` is the spec those three solves came from — it's how `learned_library/` was
+produced, and running it reproduces the whole loop:
+
+```bash
+python -m webwright.skill_factory build flights.skill.yaml --library ./library --jobs 3
+```
+
+Its `date` is pinned so the run is reproducible, which also means it goes stale — move the date
+forward and it works again. (Measured: Google Flights still lists nonstops ~11 months out, so a
+far date buys most of a year.)
