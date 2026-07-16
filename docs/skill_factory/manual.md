@@ -2,6 +2,19 @@
 
 [← back to the module README](../../src/webwright/skill_factory/README.md)
 
+> **You probably want [`build` or `learn`](quickstart.md#4-do-it-for-your-own-task) instead.**
+> This is the layer underneath them: you write the manifest yourself, declare each run's
+> admission by hand, and call `update` directly. It is still supported and still the way in when
+> you need per-field control or a benchmark-grade gold gate — it is simply lower-level, and
+> nothing here is done for you.
+>
+> Two differences from the Quick Start worth knowing before you read on. The examples below use a
+> **gitlab commit-counting** template rather than the flights one the rest of the docs use —
+> older, but the mechanics are identical. And `update` defaults to **`--verify off`**, so a skill
+> lands with `grade: unverified` unless you ask for a replay: pass `--verify strict` (or `shape`)
+> to get the gate that `learn` gives you by default. See
+> [verification and grades](reference.md#verification-and-grades).
+
 The library grows **offline** from batches of solved tasks, and is consumed **at solve time** by
 the agent. Tasks are provided **manually** today — you pick which tasks to solve and batch. The
 current focus is **same-template generalization**, so feed several instances of the SAME template

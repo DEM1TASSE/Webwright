@@ -60,6 +60,34 @@ uses the same backend as the running agent. No gateway or key is hardcoded.
 
 ## All parameters
 
+The commands, by what you already have: `init` a need → `build` a spec → or `learn` runs you
+already have. `update` is the manual, manifest-driven path.
+
+### `python -m webwright.skill_factory init "<need>"`
+
+| flag | default | meaning |
+|---|---|---|
+| `-o`, `--out` | `skill.yaml` | where to write the drafted spec |
+| `--rows` | 3 | how many blank instance rows to leave for you |
+
+One LLM call. Drafts the template, the `start_url` (a guess — check it), and the verify mode it
+judges the task needs; never the values.
+
+### `python -m webwright.skill_factory build <spec.yaml>`
+
+Solves the spec's instances, then hands them to `learn`. Everything in the spec's `build:` block
+can be overridden here; machine-specific things are flags only, so the spec stays committable.
+
+| flag | default | meaning |
+|---|---|---|
+| `--library` | `library` | library directory to grow |
+| `-c`, `--config` | — | webwright model config for the AGENT (repeatable). It reads a yaml, **not** the env vars |
+| `--jobs` | 1 | solve N instances at once — [see below](#--jobs-n--solving-in-parallel) |
+| `--outputs` | `<spec dir>/build_outputs` | where solves are written; also what you point `learn` at to retry |
+| `--dry-run` | off | print the plan (substituted tasks, policy, what would be solved) and stop |
+| `--yes` | off | skip the confirmation before spending agent time |
+| `--verify`, `--verify-rounds`, `--draws`, `--on-fail`, `--chunk`, `--golds` | from the spec's `build:` block, else `learn`'s defaults | override the spec |
+
 ### `python -m webwright.skill_factory learn <runs_dir>`
 
 | flag | default | meaning |
@@ -69,7 +97,8 @@ uses the same backend as the running agent. No gateway or key is hardcoded.
 | `--chunk` | 25 | runs per LLM grouping call |
 | `--dry-run` | off | print the grouping plan, change nothing |
 | `--verify` | `strict` | replay bar: `strict` = reproduce recorded answers, `shape` = non-empty + schema-shaped (live data), `off` = skip |
-| `--verify-rounds` | 2 | total build attempts (first + repairs) before giving up |
+| `--verify-rounds` | 2 | repair rounds **within one candidate** — its failures are fed back and it is re-distilled |
+| `--draws` | 2 | **independent** candidates before giving up — a draw can simply come out brittle, and a fresh one often lands where repairing the bad one won't. Stops at the first that verifies |
 | `--on-fail` | `reject` | failed verification: `reject` (runs stay retryable) or `reference` (lands as a labeled prior; never overwrites an existing skill) |
 
 ### `python -m webwright.skill_factory.update`
