@@ -155,9 +155,13 @@ def build(spec_path: str, library: str, cfg: list[str], *, verify=None, verify_r
             futures = [pool.submit(_one, p) for p in pending]
             for done in as_completed(futures):
                 i, ct, rc, log = done.result()
-                if rc == 0 and _already_solved(outputs, ct):
+                # the answer file is the contract, not the exit code: a solve that wrote its
+                # answer and then exited non-zero (killed, late crash) is still usable — learn
+                # reads the artifact, so build must not disagree with it
+                if _already_solved(outputs, ct):
                     solved += 1
-                    print(f"  [{i}] done ({solved}/{len(pending)}): {ct[:70]}", flush=True)
+                    note = "" if rc == 0 else f" (exited {rc}, but the answer was written)"
+                    print(f"  [{i}] done ({solved}/{len(pending)}){note}: {ct[:70]}", flush=True)
                 else:
                     failed.append((i, ct))
                     print(f"  ! [{i}] no answer (exit {rc}) — see {log}", flush=True)
@@ -165,7 +169,7 @@ def build(spec_path: str, library: str, cfg: list[str], *, verify=None, verify_r
         for i, ct in pending:
             print(f"\n-- solving [{i}] {ct[:90]}")
             _, _, rc, _ = _one((i, ct))
-            if rc == 0 and _already_solved(outputs, ct):
+            if _already_solved(outputs, ct):
                 solved += 1
             else:
                 failed.append((i, ct))
