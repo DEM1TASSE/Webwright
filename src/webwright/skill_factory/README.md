@@ -27,7 +27,7 @@ https://github.com/user-attachments/assets/d15b1f83-2c8d-4f2d-bbc5-be365c0bcf4e
 | **produced by** | a person writes and publishes it; you install it | edits to one document, driven by past runs | a person or agent writes one per site | **distilling several solves of the same task template** |
 | **parameters come from** | whoever wrote it | none | the author declares them | **the differences actually observed between your solves** |
 | **verified?** | no | one gate: scores higher on a held-out split | one gate: checked when it's first written, plus live tests | **two gates: a wrong answer never feeds a skill, *and* the skill must reproduce its own answers standalone, no model** |
-| agent can **adapt** it | read-only | read-only | it edits the source only to repair the shared adapter when it breaks — never to fit the task in front of it | **yes, per task: reuse its core, change only the last step, without touching the library** |
+| agent can **adapt** it | read-only | read-only | it edits the source only to repair the shared adapter when it breaks — never to fit the task in front of it | **yes, per task: the source is in hand, to copy or to rework as the task needs — the library is left alone** |
 | **grows from your runs** | no, it's whatever its author last wrote | yes, but what grows is a document for a frozen agent, not a program | no; a broken adapter is patched back to what it did, and nothing accumulates from your runs | **yes: each new solve widens it in place, regression-replayed so old coverage can't break** |
 
 ## 🗺️ How it works
@@ -38,7 +38,8 @@ https://github.com/user-attachments/assets/d15b1f83-2c8d-4f2d-bbc5-be365c0bcf4e
 solve → gate → group by template → distill → replay-verify → library → next solve reuses
 ```
 
-At solve time the agent asks the library once and gets `use` / `adapt` / `skip` — reuse never
+At solve time the agent asks the library once and gets `use` / `adapt` / `skip` — its stated
+intent for the skill, after which it has the source and reuses it as the task needs. Reuse never
 blocks solving. Two touch points into Webwright, no agent-loop changes:
 
 ```bash
@@ -153,19 +154,35 @@ in the loop, in a fixed handful of steps, so every repeat after the first is ess
 
 ## ⚠️ Limitations & Roadmap
 
+- **A skill can't outrun the agent that made it.** Everything in the library was distilled from
+  solves; if the agent never found a good strategy for a task, no amount of aggregating its
+  attempts will invent one. The factory makes reuse cheap and reliable — it doesn't raise the
+  ceiling on what can be solved in the first place.
+- **`decide` reaches for the library too eagerly.** It judges whether a skill is *relevant*, not
+  whether reusing it is *worth it*, so on the WebArena run it answered `use` 49 times and `skip`
+  zero — including tasks that would have been cheaper from scratch. It should weigh the cost of
+  solving fresh against the cost of reading and fitting a skill.
 - **Verification is only as strong as the task's ground truth.** Stable, page-stated facts
-  (schedules) earn real `--verify strict`. Families whose answer legitimately drifts — live
-  prices, inventory — fall back to a shape check or need `--golds`. Choosing a verifiable task,
-  or supplying a golds source, is on the user.
-- **Strict replay runs against the live site, not a recorded page** — so it's a fair bar only
-  when `learn` closely follows the solves. Deterministic offline replay from recorded traces is
-  planned.
-- **Cross-client robustness.** A skill learned on one machine can meet different initial page
-  state elsewhere (locale, prefilled fields). The framework favors loud failure over silent
-  fallback, but hardening form interaction across clients is ongoing.
-- **Scope.** Results are 10 WebArena retrieve templates plus one live-site family; broader task
-  types, larger libraries, and an independent judge (WebJudge / cross-source checks) for a truly
-  model-free gate are future work.
+  (schedules) earn real `--verify strict`; answers that drift on their own — prices, stock,
+  rankings — fall back to a shape check, which catches a broken skill but not a wrong one. Real
+  correctness needs `--golds`, and today choosing a verifiable task or supplying golds is on you.
+  Wiring in an independent judge (WebJudge-style, or cross-source agreement) would lift that.
+- **Not every batch yields an `executable` skill.** Distillation is stochastic: a draw can come
+  out brittle and fail its replay. That's the gate working — nothing unproven lands, and the
+  solves stay retryable — and `--on-fail reference` keeps the attempt as a readable prior rather
+  than nothing. But the `reference` grade has not been evaluated on its own: we know an
+  `executable` skill is worth 70% vs 55%; we don't yet have a number for what a `reference`
+  skill is worth to an agent.
+- **Aggregation stops at the literal template.** Solves group into one skill only when they share
+  a template string, so the same underlying task asked two ways — "the cheapest flight" and
+  "which flight costs least" — becomes two skills, each thinner than one merged skill would be.
+  Semantic grouping (an LLM deciding when different wordings mean the same task) is the obvious
+  next step, and it needs a stronger admission bar with it: merging tasks that only *look* alike
+  would quietly poison a skill.
+- **Strict replay runs against the live site, not a recorded page**, so it's a fair bar only when
+  `learn` closely follows the solves; deterministic offline replay from recorded traces is
+  planned. And nothing watches a skill after it lands — a site can drift under a verified skill
+  and no one finds out until it's used.
 
 ## 📚 Documentation
 
