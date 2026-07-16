@@ -19,8 +19,9 @@ The spec is a single human-editable file (draft one with `init`):
       chunk: 25
 
 Machine-specific settings stay OUT of the spec (so it stays committable): the agent's model
-config is a CLI flag (-c model.yaml, repeatable), as is --library. CLI flags override the spec's
-`build:` block; the block overrides the built-in defaults.
+config is a CLI flag (-c model.yaml, repeatable), as are --library and --jobs (how many solves
+to run in parallel — a property of your box and gateway, not of the skill). CLI flags override
+the spec's `build:` block; the block overrides the built-in defaults.
 """
 from __future__ import annotations
 
@@ -29,6 +30,7 @@ import json
 import re
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import yaml
@@ -62,14 +64,18 @@ def _already_solved(outputs: Path, core_task: str) -> Path | None:
 
 
 def _solve(core_task: str, start_url: str, library: Path, outputs: Path,
-           task_id: str, cfg: list[str]) -> int:
+           task_id: str, cfg: list[str], log_path: Path | None = None) -> int:
+    """Run one agent solve. log_path captures its output (parallel mode); None streams it."""
     from .prompt import with_skill_hint
     prompt = with_skill_hint(core_task + " " + _ANSWER_INSTR, task=core_task, library=str(library))
     cmd = [sys.executable, "-m", "webwright.run.cli", "main", "-t", prompt,
            "--start-url", start_url, "-o", str(outputs), "--task-id", task_id]
     for c in cfg:
         cmd += ["-c", c]
-    return subprocess.run(cmd).returncode
+    if log_path is None:
+        return subprocess.run(cmd).returncode
+    with log_path.open("w", encoding="utf-8") as f:
+        return subprocess.run(cmd, stdout=f, stderr=subprocess.STDOUT).returncode
 
 
 def _pick(cli, spec_val, default):
@@ -82,7 +88,7 @@ def _pick(cli, spec_val, default):
 
 def build(spec_path: str, library: str, cfg: list[str], *, verify=None, verify_rounds=None,
           on_fail=None, chunk=None, golds=None, outputs_dir=None, dry_run=False,
-          assume_yes=False) -> int:
+          assume_yes=False, jobs=1) -> int:
     spec = yaml.safe_load(Path(spec_path).read_text(encoding="utf-8")) or {}
     task = spec.get("task", "").strip()
     start_url = spec.get("start_url", "").strip()
@@ -106,6 +112,7 @@ def build(spec_path: str, library: str, cfg: list[str], *, verify=None, verify_r
     print(f"build plan: {len(concrete)} instance(s) of\n  {task}\n"
           f"start_url: {start_url}\noutputs:   {outputs}\n"
           f"policy:    verify={verify} rounds={verify_rounds} on_fail={on_fail} chunk={chunk}\n"
+          f"jobs:      {jobs} solve(s) in parallel\n"
           f"library:   {lib}\n")
     for i, (ct, _) in enumerate(concrete):
         state = "already solved (will reuse)" if _already_solved(outputs, ct) else "will solve"
@@ -129,18 +136,36 @@ def build(spec_path: str, library: str, cfg: list[str], *, verify=None, verify_r
               "!! not env vars, and will hit api.openai.com. Pass -c your_model.yaml (FULL "
               ".../responses endpoint).", file=sys.stderr)
 
-    solved, failed = 0, []
-    for i, (ct, _p) in enumerate(concrete):
-        if _already_solved(outputs, ct):
-            solved += 1
-            continue
-        print(f"\n-- solving [{i}] {ct[:90]}")
-        rc = _solve(ct, start_url, lib, outputs, f"build_{i:02d}", cfg)
-        if rc == 0 and _already_solved(outputs, ct):
-            solved += 1
-        else:
-            failed.append((i, ct))
-            print(f"  ! instance [{i}] did not produce an answer (exit {rc}); continuing")
+    solved = len(concrete) - len(to_solve)   # the resumed ones
+    failed = []
+
+    def _one(i_ct):
+        i, ct = i_ct
+        log = outputs / f"solve_{i:02d}.log" if jobs > 1 else None
+        rc = _solve(ct, start_url, lib, outputs, f"build_{i:02d}", cfg, log)
+        return i, ct, rc, log
+
+    pending = [(i, ct) for i, (ct, _p) in enumerate(concrete) if not _already_solved(outputs, ct)]
+    if jobs > 1 and len(pending) > 1:
+        print(f"\n-- solving {len(pending)} instance(s), {jobs} at a time "
+              f"(output -> {outputs}/solve_NN.log) --")
+        with ThreadPoolExecutor(max_workers=jobs) as pool:
+            for i, ct, rc, log in pool.map(_one, pending):
+                if rc == 0 and _already_solved(outputs, ct):
+                    solved += 1
+                    print(f"  [{i}] done: {ct[:70]}")
+                else:
+                    failed.append((i, ct))
+                    print(f"  ! [{i}] no answer (exit {rc}) — see {log}")
+    else:
+        for i, ct in pending:
+            print(f"\n-- solving [{i}] {ct[:90]}")
+            _, _, rc, _ = _one((i, ct))
+            if rc == 0 and _already_solved(outputs, ct):
+                solved += 1
+            else:
+                failed.append((i, ct))
+                print(f"  ! instance [{i}] did not produce an answer (exit {rc}); continuing")
 
     print(f"\nsolved {solved}/{len(concrete)} instance(s)" +
           (f"; {len(failed)} failed" if failed else ""))
@@ -168,13 +193,17 @@ def main(argv=None) -> int:
     p.add_argument("--chunk", type=int, help="Override build.chunk (runs per grouping call).")
     p.add_argument("--golds", default="", help="JSON file {task_id: gold_answer} for a gold gate.")
     p.add_argument("--outputs", help="Where to write solves (default: <spec dir>/build_outputs).")
+    p.add_argument("--jobs", type=int, default=1, metavar="N",
+                   help="Solve up to N instances in parallel (default 1). Machine-specific — "
+                        "how much concurrency your box and gateway tolerate — so it is a flag, "
+                        "not spec policy.")
     p.add_argument("--dry-run", action="store_true", help="Print the plan; solve/learn nothing.")
     p.add_argument("--yes", action="store_true", help="Skip the confirmation before solving.")
     a = p.parse_args(argv)
     golds = json.loads(Path(a.golds).read_text(encoding="utf-8")) if a.golds else None
     return build(a.spec, a.library, a.cfg, verify=a.verify, verify_rounds=a.verify_rounds,
                  on_fail=a.on_fail, chunk=a.chunk, golds=golds, outputs_dir=a.outputs,
-                 dry_run=a.dry_run, assume_yes=a.yes)
+                 dry_run=a.dry_run, assume_yes=a.yes, jobs=a.jobs)
 
 
 if __name__ == "__main__":
