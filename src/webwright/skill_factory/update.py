@@ -276,9 +276,14 @@ def _refine(traces: list[Trace], library: Library, verify: str = "off",
         "n_solves": n_prev + len(traces),
         "revisions": (existing.meta.get("revisions", 1) + 1) if existing else 1,
     }
-    if verified is not None:
-        meta["verified"] = verified
-        meta["grade"] = "executable" if verified else "reference"
+    # Every skill carries a grade — a missing field would read as an oversight and would break
+    # the first caller that indexes it. Three states, and they are not the same claim:
+    #   executable  the replay ran and reproduced the training answers
+    #   reference   the replay ran and it FAILED — known not to reproduce them; read, don't trust
+    #   unverified  no replay ran (--verify off) — nobody looked, which is not the same as failing
+    meta["verified"] = verified is True
+    meta["grade"] = ("unverified" if verified is None else
+                     "executable" if verified else "reference")
     library.add(Skill(skill_id=sid, code=code, meta=meta))
     if verify != "off":
         _save_examples(library, sid, traces, _load_examples(library, sid))

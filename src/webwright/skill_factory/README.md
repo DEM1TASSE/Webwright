@@ -108,8 +108,8 @@ python -m webwright.skill_factory learn trajectories --library ./library --verif
 
 ~100 s: three runs → one template → five lifted parameters → one skill. **`--verify off` is what
 keeps this from expiring** — it skips the replay, so nothing opens a browser, nothing goes stale,
-nothing can be rejected. The trade is honest: with no replay there's no claim, so the skill lands
-with no `verified`/`grade` at all. You're seeing distillation, not the proof it runs.
+nothing can be rejected. The trade is on the label: the skill lands `grade: unverified`, because
+nobody looked. You're seeing distillation, not the proof it runs.
 
 Drop the flag and the gate comes back, for as long as the fixture is live — those runs are pinned
 to a date, and [their README](examples/trajectories/README.md) says exactly when and how they go

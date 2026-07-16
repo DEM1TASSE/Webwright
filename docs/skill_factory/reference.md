@@ -17,14 +17,17 @@ loop; up to `--verify-rounds` build attempts, then rejected). For task families 
 are live data (prices, listings), `--verify shape` relaxes the comparison to non-empty +
 schema-shaped; `--verify off` skips replay entirely.
 
-**Verification decides a skill's grade, not just its existence** (`--on-fail reference`):
+**Verification decides a skill's grade, not just its existence.** Every skill carries one of
+three, and they are three different claims — `reference` is *tested and failed*, which is not
+what `unverified` says:
 
-|                 | `executable` (verified)                          | `reference`                          |
-|-----------------|--------------------------------------------------|--------------------------------------|
-| the bar         | replays its training taskspecs standalone, reproduces the answers | failed that bar |
-| cost to build   | higher & slower: N replays + up to `--verify-rounds` distillation calls | one distillation call |
-| what it buys    | **run it directly** — plain python/playwright, no webwright, no model, cron-able | a **prior for the agent**: exact selectors, URLs, param shapes, fallbacks it reads and reuses |
-| refining        | incremental refines must pass **regression replay** of the stored training examples (`replays.json`); a verified skill is never overwritten by an unverified refine | refined freely — no execution promise to protect |
+|               | `executable` | `reference` (`--on-fail reference`) | `unverified` (`--verify off`) |
+|---------------|--------------|--------------------------------------|-------------------------------|
+| what happened | the replay ran and reproduced the recorded answers | the replay ran and it **failed** | **no replay ran** — nobody looked |
+| cost to build | higher & slower: N replays × up to `--draws` × `--verify-rounds` distillation calls | the draws it spent failing | one distillation call |
+| what it buys  | **run it directly** — plain python/playwright, no webwright, no model, cron-able | a **prior for the agent**: exact selectors, URLs, param shapes, fallbacks it reads and reuses | the same prior, with less known about it |
+| trust         | proved | **known** not to reproduce its own answers | unknown — might be fine, might not |
+| refining      | incremental refines must pass **regression replay** of the stored training examples (`replays.json`); a verified skill is never overwritten by an unverified refine | refined freely — no execution promise to protect | refined freely |
 
 Why code even at reference grade (vs. natural-language notes): the selectors, URLs and param
 shapes are **verbatim-copyable** into the agent's next script, individual primitives often

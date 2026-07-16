@@ -226,3 +226,34 @@ def test_a_fresh_draw_lands_where_repairing_the_bad_one_would_not():
         U._refine(tr, lib, verify="strict", rounds=2, draws=2)
         assert lib.list(), "a second, fresh draw should land"
         assert lib.list()[0].meta["grade"] == "executable"
+
+
+def test_every_skill_carries_a_grade_and_the_three_states_are_distinct():
+    """`reference` means the replay ran and failed. `unverified` means none ran. Collapsing them
+    would claim we tested something we never looked at — and a missing field breaks the first
+    caller that indexes it."""
+    import tempfile
+    import webwright.skill_factory.update as U
+    from webwright.skill_factory.library import Library
+
+    GOOD = "import json\njson.dump({'retrieved_data': ['right']}, open('agent_response.json','w'))\n"
+    BAD = "import sys\nsys.exit(1)\n"
+
+    def refine(verify, on_fail, code):
+        U.llm = lambda s, u, **k: f"```python\n{code}```"
+        d = tempfile.mkdtemp()
+        lib = Library(d)
+        tr = [U.Trace("T", "c", answer=["right"], correct=True,
+                      meta={"params": {}, "output_schema": {"type": "array"}})]
+        U._refine(tr, lib, verify=verify, rounds=1, draws=1, on_fail=on_fail)
+        return lib.list()[0].meta if lib.list() else None
+
+    passed = refine("strict", "reject", GOOD)
+    assert passed["grade"] == "executable" and passed["verified"] is True
+
+    failed = refine("strict", "reference", BAD)          # replay ran, skill crashed
+    assert failed["grade"] == "reference" and failed["verified"] is False
+
+    untested = refine("off", "reject", GOOD)             # no replay at all
+    assert untested["grade"] == "unverified", "never tested is not the same as tested and failed"
+    assert untested["verified"] is False

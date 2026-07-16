@@ -14,9 +14,10 @@ Three runs → one template → five lifted parameters → one skill. ~100 s and
 grouping and distillation are model calls). Nothing else is needed: **`--verify off` never opens
 a browser**, so this works today and in a year, and it can't be rejected.
 
-What lands is honestly unmarked — with no replay there is no claim to make, so its `meta.json`
-simply has no `verified` / `grade` field. That's the trade: you're seeing the distillation half
-(gate → group → lift parameters → skill), not the gate that proves it runs.
+What lands says so on the label: `grade: unverified`. That is its own state, distinct from
+`reference` — `reference` means the replay ran and the skill *failed* it, which is a claim we
+haven't earned here because nothing ran. You're seeing the distillation half (gate → group →
+lift parameters → skill), not the gate that proves it runs.
 
 **To see verification too**, drop the flag — but read the expiry note first, because the replay
 drives the live site:
