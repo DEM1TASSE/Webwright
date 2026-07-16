@@ -72,15 +72,15 @@ demo)
   ;;
 ask)
   need_key
-  echo "== asking the library about a route it has never seen (one LLM round trip) =="
+  echo "== asking the library about SEA->DEN, a route it has never seen (one LLM round trip) =="
   python -m webwright.tools.skill_use \
-    --task "$(flight_task 'Portland (PDX)' 'Austin (AUS)')" --library "$LIB"
+    --task "$(flight_task 'Seattle (SEA)' 'Denver (DEN)')" --library "$LIB"
   ;;
 solve)
   need_key
   warn_gateway_agent
-  echo "== one agent solve on an UNSEEN route, reusing the checked-in skill =="
-  ./solve_with_library.sh "$(flight_task 'Portland (PDX)' 'Austin (AUS)')" \
+  echo "== one agent solve on SEA->DEN, an UNSEEN route, reusing the checked-in skill =="
+  ./solve_with_library.sh "$(flight_task 'Seattle (SEA)' 'Denver (DEN)')" \
     https://www.google.com/flights "$LIB" -o "$WORK/outputs" --task-id qs_solve "${CFG[@]}"
   echo "skill decision: $(cat "$WORK"/outputs/qs_solve_*/skill_decision.json 2>/dev/null || echo '(missing)')"
   echo "answer:         $(cat "$WORK"/outputs/qs_solve_*/agent_response.json 2>/dev/null || echo '(missing)')"

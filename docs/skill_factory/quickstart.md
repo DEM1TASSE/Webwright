@@ -99,7 +99,7 @@ The library is also usable **without the agent** — this is the whole point of 
 ```bash
 # ask it whether it can help a task (the same call the agent makes — one LLM round trip)
 python -m webwright.tools.skill_use \
-  --task "earliest nonstop flight from Portland (PDX) to Austin (AUS) on 2026-09-01" \
+  --task "earliest nonstop flight from Seattle (SEA) to Denver (DEN) on 2026-08-15" \
   --library ./library
 
 # or run the learned skill directly — no model in the loop, ~40 seconds
