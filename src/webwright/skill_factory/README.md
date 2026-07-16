@@ -51,17 +51,49 @@ pitch, and it buys three things a text playbook can't:
 
 ### How it compares
 
-|                                   | NL skill notes | recorded macros | learned NL skill libs | **Web Skill Factory** |
-|-----------------------------------|:--------------:|:---------------:|:---------------------:|:---------------------:|
-| a skill *is*…                     | text the model reads | a fixed click trace | text the model reads | **executable code** |
-| runs without the model            | ✗              | ~ (brittle)     | ✗                     | **✓** |
-| generalizes across inputs         | model re-reasons | ✗ (hard-coded) | model re-reasons      | **✓ (lifted params)** |
-| composable primitives             | ✗              | ✗               | ~                     | **✓** |
-| verified before it's reused       | ✗              | ✗               | rarely                | **✓ replay-verified** |
-| self-evolving library             | ✗              | ✗               | ✓                     | **✓** |
+|  | published `SKILL.md`<br>(e.g. anthropics/skills) | SkillOpt | OpenCLI | **Web Skill Factory** |
+|---|---|---|---|---|
+| a skill **is** | prose the model reads | prose the model reads (`best_skill.md`) | a JS adapter — one CLI command per site capability | **a parameterized Python program** |
+| built **for** | anything (but nothing runs) | general agent tasks; its benchmarks are ALFWorld, DocVQA, spreadsheets, math — none of them web | 170+ sites' common capabilities, curated upstream | **the web task *you* keep repeating** |
+| **produced by** | written by people and published — you install it | trajectory-driven edits to one document | an agent authors it per site (recon → strategy → code → verify) | **distilling N solves of the same task template** |
+| parameters come from | whoever wrote it | — | the agent that authored the adapter declares `args` | **the differences actually observed between your solves** |
+| **verify gate** | none | candidate must score higher on a held-out split | `opencli browser verify` at authoring time, plus live adapter tests | **replay: the skill must reproduce its own training answers standalone, no model** |
+| **input gate** | — | — | — | **only gate-passed solves become material; a wrong answer never feeds a skill** |
+| runs with **no model** | ✗ | ✗ (the agent still does the acting) | ✓ | **✓** |
+| agent can read and **adapt** it | ✓ read-only | ✓ read-only | 🔶 source is editable in the authoring/repair flows, but everyday reuse is a command with a fixed arg schema | **✓ source in hand, per task: `use` / `adapt` / `skip`** |
+| **repairs when the site breaks** | ✗ | — | ✓ `opencli-autofix` patches the broken adapter and retries | ✓ a refine pass fixes it too, and regression-replay guarantees the fix can't break old cases |
+| **grows new capability from your runs** | ✗ | ✓, but what grows is prose for a frozen agent, not a runnable program | ✗ AutoFix only restores what the adapter already did; nothing accumulates from your runs | **✓ each new solve widens params, strategies and fallbacks in place, regression-replayed so old coverage can't break** |
 
-*(Columns are categories, not specific products — swap in the exact repos you're comparing
-against; the axes are what matter.)*
+**What's different is not "we verify and they don't."** SkillOpt gates on a held-out score;
+OpenCLI ships a `verify` step and live adapter tests. These are:
+
+**Your task, not the site's menu.** OpenCLI curates what each site can do — the command set is
+decided upstream, and if your workflow isn't in the catalogue you drop back to driving the
+browser from scratch. We start from the task *you* keep doing: write a template with your own
+instances, or hand `learn` the trajectories your agent already produced. The parameters are the
+dimensions you actually varied, not an author's guess about what might vary.
+
+**Two gates, and the second one runs without us.** Wrong answers never become material — each
+solve is gated before it can feed a skill. Then the skill itself has to earn its way in: replay
+its own training taskspecs standalone, with no model, and reproduce the recorded answers. It
+carries the grade it earned (`executable`, or `reference` if it couldn't).
+
+**Skills are white-box, so there's a middle path.** The agent gets source, not a command: `use`
+it as-is, or `adapt` its navigation and extraction core and change only the last step, without
+touching the library. An OpenCLI agent can edit an adapter too — but in the authoring or repair
+flow, to fix the catalogue; the everyday path is a command with a fixed arg schema, so a task
+that doesn't fit means authoring a new one or starting over. And a skill that *failed*
+verification still carries what it learned about the site, which is exactly why `reference` is
+worth keeping.
+
+**Repair isn't growth.** AutoFix patches an OpenCLI adapter when a site changes under it — real
+maintenance, and a refine pass does the same for us. But it puts the adapter back to doing what
+it already did; it doesn't come out knowing one more thing because you used it more. That's the
+gap between those last two rows: staying alive, versus getting better.
+
+**SkillOpt doesn't overlap with us.** It optimizes natural-language skills for general agent
+tasks — its benchmarks aren't web at all. Different domain, different artifact: text a model
+reads, versus programs that run without one.
 
 ## 🗺️ How it works
 
