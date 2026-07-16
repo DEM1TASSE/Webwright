@@ -67,6 +67,21 @@ cd src/webwright/skill_factory/examples
 It prints the ten fixed steps it took and where it saved its screenshots. No model chose those
 steps; they're the skill's code.
 
+**What that just saved.** The same answer, on this machine — the library's way, and the way it
+would go without one:
+
+|            | from scratch, per route<br><sub>the 3 solves that built the skill</sub> | the skill, standalone<br><sub>what you just ran</sub> |
+|------------|---------------------------|----------------------|
+| steps      | 25 / 40 / 59              | **10**, fixed        |
+| wall clock | 11 / 26 / 32 min          | **~40 s**            |
+| LLM calls  | 29 / 45 / 65              | **0**                |
+
+Two things to read off it. From-scratch cost is **high-variance** — the *same* task took 25, 40
+and 59 steps on three routes, because the agent re-derives the strategy every time; the skill
+pins it to a fixed 10. And the last column is the structural one: **every run after the library
+exists uses no model at all.** A watcher in cron pays for the exploration once, then ~40 s
+forever.
+
 ---
 
 ### 2. Bring the agent in
