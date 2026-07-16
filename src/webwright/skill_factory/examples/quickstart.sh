@@ -49,7 +49,12 @@ case "${1:-demo}" in
 demo)
   FROM="${2:-SEA}"; TO="${3:-DEN}"; ON="${4:-$DATE}"
   echo "== the checked-in flight skill, standalone: earliest nonstop $FROM->$TO on $ON (no model, ~40 s) =="
-  echo "   (your route: $0 demo LAX ORD 2026-09-01)"
+  # only pitch the custom-route form when the user hasn't already given one
+  [ $# -ge 3 ] || echo "   (try your own route: $0 demo LAX ORD 2026-09-01)"
+  case "$ON" in
+    [0-9][0-9][0-9][0-9]-[0-9]*-[0-9]*) ;;
+    *) echo "!! date must be YYYY-MM-DD (e.g. 2026-09-01), got: $ON" >&2; exit 1 ;;
+  esac
   spec "$FROM" "$TO" "$ON"
   (cd "$WORK" && WORKSPACE_DIR="$WORK" python "$(ls -d "$LIB"/what_is_the_earliest_nonstop_flight_*)/skill.py" taskspec.json > run.log 2>&1) || { tail -5 "$WORK/run.log"; exit 1; }
   echo
