@@ -119,24 +119,47 @@ can be overridden here; machine-specific things are flags only, so the spec stay
 
 ### Environment variables
 
-**There are two models here, and they're configured differently.** This trips everyone up once,
-including us, so it's worth the sentence:
+#### Two models, two doors to the same settings
 
-| | who runs it | what it does | how you point it somewhere |
-|---|---|---|---|
-| **the module's model** | `init`, `learn`, `build`'s learn half, `skill_use` | groups runs, distils skills, answers "can this skill help?" | **env vars** — `OPENAI_*` below |
-| **the agent's model** | the solves inside `build`, and any Webwright run | drives the browser | **a yaml** — `-c model.yaml`. It does **not** read these env vars |
+There are two separate LLMs in play, and they're configured differently:
 
-So on a custom gateway you set it in **both** places, or the solves quietly go to
-`api.openai.com` while everything else uses your gateway. `build` warns when you've done one and
-not the other.
+* **the agent's model** drives the browser — the solves inside `build`, and any Webwright run.
+  You point it somewhere with **a yaml**: `-c model.yaml`.
+* **the module's model** does the thinking around the browser — `init` drafts your spec, `learn`
+  groups runs and distils skills, `skill_use` answers "can this skill help?". You point it
+  somewhere with **env vars**.
+
+Both are the same class underneath (`webwright/models/openai_model.py`), so both really only need
+two settings — *which model* and *what URL*:
+
+| the setting | agent's model | module's model |
+|---|---|---|
+| which model | `model_name:` in the yaml | `SKILL_MODEL_NAME`, else `OPENAI_MODEL`, else `gpt-4o` |
+| what URL | `openai_endpoint:` in the yaml | `SKILL_MODEL_ENDPOINT`, else `OPENAI_ENDPOINT`, else `https://api.openai.com/v1/responses` |
+
+That's the whole story: `llm.py` reads the env vars and builds the *same config* the yaml spells
+out by hand. `SKILL_MODEL_NAME` and `OPENAI_MODEL` are not two things — they set one field, and
+`SKILL_MODEL_*` wins. Two names exist so you can send distillation to a different place than
+whatever else on your machine already reads `OPENAI_*`; if you don't care, set only `OPENAI_*`.
+
+**The agent's model does not read any of these env vars** — nothing outside `llm.py` reads them.
+So on a custom gateway, set it in **both** doors, or your solves go to `api.openai.com` while
+everything else uses your gateway. `build` warns when only one is set.
+
+#### Every variable
 
 | var | read by | meaning |
 |---|---|---|
-| `OPENAI_API_KEY` | every LLM call, both models | the key |
-| `OPENAI_ENDPOINT` | the module's model (`llm.py`) | custom gateway. **The FULL request URL** — `https://gateway.example/api/responses`, not `.../api`. A base path fails |
-| `OPENAI_MODEL` | the module's model | model name for the module's calls |
-| `SKILL_MODEL_ENDPOINT` / `SKILL_MODEL_NAME` / `SKILL_MODEL_CLASS` / `SKILL_MODEL_TIMEOUT` | the module's model | same four settings, but only for this module — use them to send distillation somewhere other than the agent. Fall back to `OPENAI_*`; class defaults to `openai`, timeout to 600 s (a 16k-token distillation is slow) |
+| `OPENAI_API_KEY` | **both models** | the key — this is the one genuinely shared var |
+| `OPENAI_ENDPOINT` | the module's model | custom gateway. **The FULL request URL** — `https://gateway.example/api/responses`, not `.../api`. A base path fails |
+| `OPENAI_MODEL` | the module's model | which model the module's calls use |
+| `SKILL_MODEL_ENDPOINT`<br>`SKILL_MODEL_NAME` | the module's model | the same two settings, higher priority (see above) |
+| `SKILL_MODEL_CLASS` | the module's model | a non-OpenAI backend. Defaults to `openai` |
+| `SKILL_MODEL_TIMEOUT` | the module's model | seconds per call. Defaults to 600 — distilling a skill emits ~16k tokens, and the model's own 120 s default cuts it off mid-file |
 | `SKILL_LIBRARY_ROOT` | `skill_use` | default for `--library`, so the agent doesn't need the path in its prompt |
 | `WORKSPACE_DIR` | every generated skill | where a skill writes `agent_response.json`, its log and screenshots. Defaults to the cwd, which is why the docs `cd` to a scratch dir before running one |
 | `MODEL_CFG` | `examples/quickstart.sh` only | which yaml that script passes as the agent's model. `build` takes `-c` instead |
+
+Using the module as a library rather than a CLI? `configure_llm(model)` hands it a model object
+directly and every var above is ignored — that's how a running agent gives the module its own
+backend.
