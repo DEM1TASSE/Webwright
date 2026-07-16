@@ -119,11 +119,24 @@ can be overridden here; machine-specific things are flags only, so the spec stay
 
 ### Environment variables
 
-| var | used by | meaning |
+**There are two models here, and they're configured differently.** This trips everyone up once,
+including us, so it's worth the sentence:
+
+| | who runs it | what it does | how you point it somewhere |
+|---|---|---|---|
+| **the module's model** | `init`, `learn`, `build`'s learn half, `skill_use` | groups runs, distils skills, answers "can this skill help?" | **env vars** — `OPENAI_*` below |
+| **the agent's model** | the solves inside `build`, and any Webwright run | drives the browser | **a yaml** — `-c model.yaml`. It does **not** read these env vars |
+
+So on a custom gateway you set it in **both** places, or the solves quietly go to
+`api.openai.com` while everything else uses your gateway. `build` warns when you've done one and
+not the other.
+
+| var | read by | meaning |
 |---|---|---|
-| `OPENAI_API_KEY` | all LLM calls | API key |
-| `OPENAI_ENDPOINT` / `OPENAI_MODEL` | learn, skill_use | custom gateway; the endpoint is the FULL request URL (e.g. `https://gateway.example/api/responses`), not a base path |
-| `SKILL_MODEL_NAME` / `SKILL_MODEL_ENDPOINT` / `SKILL_MODEL_CLASS` / `SKILL_MODEL_TIMEOUT` | module LLM | overrides for the module's model (fall back to `OPENAI_*`) |
-| `SKILL_LIBRARY_ROOT` | skill_use | default library path |
-| `WORKSPACE_DIR` | generated skills | where a skill writes its artifacts (default: cwd) |
-| `MODEL_CFG` | examples/quickstart.sh | model yaml for the agent in solve/full modes |
+| `OPENAI_API_KEY` | every LLM call, both models | the key |
+| `OPENAI_ENDPOINT` | the module's model (`llm.py`) | custom gateway. **The FULL request URL** — `https://gateway.example/api/responses`, not `.../api`. A base path fails |
+| `OPENAI_MODEL` | the module's model | model name for the module's calls |
+| `SKILL_MODEL_ENDPOINT` / `SKILL_MODEL_NAME` / `SKILL_MODEL_CLASS` / `SKILL_MODEL_TIMEOUT` | the module's model | same four settings, but only for this module — use them to send distillation somewhere other than the agent. Fall back to `OPENAI_*`; class defaults to `openai`, timeout to 600 s (a 16k-token distillation is slow) |
+| `SKILL_LIBRARY_ROOT` | `skill_use` | default for `--library`, so the agent doesn't need the path in its prompt |
+| `WORKSPACE_DIR` | every generated skill | where a skill writes `agent_response.json`, its log and screenshots. Defaults to the cwd, which is why the docs `cd` to a scratch dir before running one |
+| `MODEL_CFG` | `examples/quickstart.sh` only | which yaml that script passes as the agent's model. `build` takes `-c` instead |
