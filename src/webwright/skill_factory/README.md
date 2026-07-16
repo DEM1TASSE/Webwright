@@ -47,56 +47,66 @@ python -m webwright.tools.skill_use --task "<task>" --library ./library   # reus
 python -m webwright.skill_factory learn outputs/ --library ./library     # grow it afterwards
 ```
 
-The commands, by what you already have:
-
-| you have | command | what it does |
-|---|---|---|
-| a one-line need | `init "<need>"` | drafts `skill.yaml`: a task template, the site, the verify mode — values left for you |
-| a filled `skill.yaml` | `build skill.yaml` | solves each instance, then hands the batch to `learn` |
-| finished webwright runs | `learn outputs/` | gates them, distills, replay-verifies, grows the library |
-| a benchmark, explicit golds | `update batch.json` | manual mode: every field yours — see [docs/manual.md](docs/manual.md) |
-
 ## 🚀 Quick Start
+
+**The task, throughout:** *what is the earliest nonstop flight from A to B on this date?* — on
+the live Google Flights. Picked on purpose: a **schedule** is a fact the page states plainly, it
+doesn't move on its own, and it reads the same on your machine as ours — which is what lets a
+skill be replay-verified and reused standalone with a straight face. (The **fare** on the same
+page would fail all three.) The checked-in library and its provenance:
+[examples/](examples/).
 
 **1. Run a learned skill** — no model, no API key, ~40 s. This is the whole pitch in one command:
 
 ```bash
 cd src/webwright/skill_factory/examples
-./quickstart.sh                       # the checked-in skill drives a live site
-./quickstart.sh demo LAX ORD 2026-09-01   # ...on your own route
+./quickstart.sh                            # the checked-in skill drives the live site
+./quickstart.sh demo LAX ORD 2026-09-01    # ...on your own route
 ```
 
-It prints the ten fixed steps it took and where it saved its screenshots. The example is
-*earliest nonstop flight* on Google Flights — a schedule is a stable, client-independent fact
-the page states plainly, which is what makes `--verify strict` and standalone reuse mean
-something.
+It prints the ten fixed steps it took and where it saved its screenshots — no model chose those
+steps, they're the skill's code.
 
-**2. Watch the whole loop build that skill** — 3 solves → learn → reuse, ~40 min, needs a key:
+**2. Bring the agent in** — needs a key:
 
 ```bash
 export OPENAI_API_KEY=...
-./quickstart.sh full
-./quickstart.sh ask     # or just: ask the library about a task it has never seen
-./quickstart.sh solve   # or: watch the agent reuse the checked-in skill on a new route
+./quickstart.sh ask     # one LLM call: "can the library help here?" -> use / adapt / skip
+./quickstart.sh solve   # a full agent solve of an unseen route, reusing the checked-in skill
+./quickstart.sh full    # the whole loop from nothing: 3 solves -> learn -> reuse (~40 min)
 ```
 
-**3. Do it for *your* task** — this is the part that's yours, not the example's:
+`demo` runs the skill; `ask` only *retrieves* — one round trip that shows what the agent is told
+about the library, without solving anything; `solve` is the agent actually doing a task with it;
+`full` rebuilds the library from scratch so you can watch it being made.
+
+**3. Do it for *your* task** — this is the part that's yours, not the example's. Two ways in,
+depending on whether you've solved the task yet:
+
+**3a. You have a task you keep repeating, but no runs yet** — describe it, fill in your values,
+build:
 
 ```bash
-# you have a task you keep repeating -> draft a spec, fill in your values, build
 python -m webwright.skill_factory init "the cheapest <product> on Amazon, for any product"
 $EDITOR skill.yaml     # fill the ____ values; check the guessed start_url
 python -m webwright.skill_factory build skill.yaml --library ./library --jobs 3
-
-# you already have webwright runs lying around -> skip straight to distilling them
-python -m webwright.skill_factory learn outputs/ --library ./library
 ```
 
 `init` proposes the structure — a task template with `{holes}`, the site, and the verify mode
 that fits your task — and leaves the values blank, because those are your ground truth, not the
 model's guess. `build` fills the template with each instance, solves them, and hands the batch to
-`learn`. Nothing runs until you say so: `build` prints the tasks it's about to solve and asks,
-and `--dry-run` just shows the plan. A solve that already produced an answer is never re-solved.
+`learn`. Nothing runs until you say so: it prints the tasks it's about to solve and asks
+(`--dry-run` just shows the plan), and a solve that already produced an answer is never
+re-solved.
+
+**3b. You already have a folder of webwright runs** — skip the solving, distil what's there:
+
+```bash
+python -m webwright.skill_factory learn outputs/ --library ./library
+```
+
+That's the day-to-day path once you're using Webwright anyway: the trajectories you produced
+solving real work become the library, no spec to write.
 
 <details>
 <summary><b>On a custom OpenAI-compatible gateway</b> — two knobs, both needed</summary>
