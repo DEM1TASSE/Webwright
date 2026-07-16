@@ -48,12 +48,9 @@ URLs and param shapes are **verbatim-copyable** into the agent's next script, in
 primitives often still run even when the end-to-end skill doesn't, and a reference skill is one
 repair away from executable. A natural-language note is none of these.
 
-> **Where to see each grade pay off.** For the `reference` grade, the published WebArena numbers
-> are reference-grade and predate this replay gate; see the honest footnote in **Results** (in the
-> README) for what they show about reference-grade priors helping an agent. For the `executable`
-> grade, a skill running standalone with no model, see the flights example in the
-> [Quickstart](quickstart.md), where the same skill reruns an unseen route in a fixed handful of
-> steps.
+> **Each grade, in the wild.** `executable`: the flights skill in the [Quickstart](quickstart.md)
+> reruns an unseen route standalone. `reference`: the WebArena numbers in
+> [Results](../../src/webwright/skill_factory/README.md#-results).
 
 ## All parameters
 
@@ -116,36 +113,32 @@ hand rather than from a spec.
 
 The call the agent makes to query the library at solve time.
 
-| flag | meaning |
-|---|---|
+| flag | default | meaning |
+|---|---|---|
+| `--task` | required | the task text to match against the library |
+| `--library` | `$SKILL_LIBRARY_ROOT`, else `library` | library directory to query |
+| `--output` | — | also write the JSON verdict here; it goes to stdout either way |
 
 ### Environment variables
 
-#### Two models, two doors to the same settings
+#### Two models, two doors
 
-There are two separate LLMs in play, and they're configured differently:
+`build` is `solve × N`, then `learn`. Each half runs a different model:
 
-* **the agent's model** drives the browser: the solves inside `build`, and any Webwright run.
-  You point it somewhere with **a yaml**, `-c model.yaml`.
-* **the module's model** does the thinking around the browser: `init` drafts your spec, `learn`
-  groups runs and distils skills, `skill_use` answers "can this skill help?". You point it
-  somewhere with **env vars**.
-
-Both are the same class underneath (`webwright/models/openai_model.py`), so both really only need
-two settings, *which model* and *what URL*:
-
-| the setting | agent's model | module's model |
+| | the agent's model | the module's model |
 |---|---|---|
-| which model | `model_name:` in the yaml | `SKILL_MODEL_NAME`, else `OPENAI_MODEL`, else `gpt-4o` |
-| what URL | `openai_endpoint:` in the yaml | `SKILL_MODEL_ENDPOINT`, else `OPENAI_ENDPOINT`, else `https://api.openai.com/v1/responses` |
+| what it does | **opens the browser**: looks at the page, picks the next click, and again, ~50 times per solve | **never opens a browser**: reads the finished transcripts and writes the skill's python |
+| who calls it | the solves in `build`; any Webwright run | `learn`, plus `init` (drafts your spec) and `skill_use` ("can this skill help?") |
+| which model | `model_name:` in a yaml you pass as `-c model.yaml` | `SKILL_MODEL_NAME`, else `OPENAI_MODEL`, else `gpt-4o` |
+| what URL | `openai_endpoint:` in that yaml | `SKILL_MODEL_ENDPOINT`, else `OPENAI_ENDPOINT`, else `https://api.openai.com/v1/responses` |
 
-`llm.py` reads the env vars and builds the *same config* the yaml spells out by hand.
-`SKILL_MODEL_NAME` and `OPENAI_MODEL` are not two things: they set one field, and `SKILL_MODEL_*`
-wins. Two names exist so you can send distillation somewhere other than whatever else on your
-machine already reads `OPENAI_*`; if you don't care, set only `OPENAI_*`.
+Same class underneath (`models/openai_model.py`); `llm.py` just builds from env the config the
+yaml spells out by hand. So `SKILL_MODEL_NAME` and `OPENAI_MODEL` aren't two settings — one field,
+`SKILL_MODEL_*` wins. Two names exist so you can send distillation somewhere other than whatever
+else already reads `OPENAI_*`; if you don't care, set only `OPENAI_*`.
 
-**The agent's model reads none of these** — nothing outside `llm.py` does. So on a custom gateway,
-set it in **both** doors, or your solves go to `api.openai.com` while everything else uses your
+**The agent's model reads none of these vars** — nothing outside `llm.py` does. On a custom
+gateway set both doors, or your solves go to `api.openai.com` while everything else uses your
 gateway. `build` warns when only one is set.
 
 | var | read by | meaning |

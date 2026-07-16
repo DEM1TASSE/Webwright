@@ -73,7 +73,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--task", required=True, help="The current task description / intent.")
     p.add_argument("--library", default=os.environ.get("SKILL_LIBRARY_ROOT", "library"),
                    help="Path to the skill library dir (default: $SKILL_LIBRARY_ROOT or ./library).")
-    p.add_argument("--output", default="", help="Write JSON to this path instead of stdout.")
+    p.add_argument("--output", default="", help="Also write the JSON to this path (stdout "
+                                                "always gets it too).")
     return p
 
 
