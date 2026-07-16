@@ -30,10 +30,14 @@
 > - **You don't want an LLM guessing your template or parameters.** Grouping can split one
 >   template in two, or lift the wrong parameters. Here you state them.
 >
-> Two notes before you read on. The examples below use a **gitlab commit-counting** template
-> rather than the flights one the rest of the docs use — older, but the mechanics are identical.
-> And `update` defaults to **`--verify off`** while `learn` defaults to `strict`, so a skill lands
-> with `grade: unverified` unless you ask for a replay: pass `--verify strict` (or `shape`). See
+> The examples below use a **WebArena gitlab** task rather than the flights one the rest of the
+> docs use, and that's deliberate: gitlab is self-hosted (so it needs a login) and comes with a
+> gold evaluator — it hits two of the four cases above at once. Flights hits none of them, which
+> is exactly why the Quick Start builds it with `learn` instead.
+>
+> One default to know: `update` defaults to **`--verify off`** while `learn` defaults to
+> `strict`, so a skill lands with `grade: unverified` unless you ask for a replay — pass
+> `--verify strict` (or `shape`). See
 > [verification and grades](reference.md#verification-and-grades).
 
 The library grows **offline** from batches of solved tasks, and is consumed **at solve time** by
@@ -155,12 +159,18 @@ writes `agent_response.json`:
 ```bash
 cat > taskspec.json <<'EOF'
 {"params": {"user": "byte", "repo": "empathy-prompts", "date": "4/2/2023"},
- "start_url": "http://gitlab.example.com", "credentials": null,
+ "start_url": "http://gitlab.example.com",
+ "credentials": {"username": "byte", "password": "hunter2"},
  "output_schema": {"type": "number"}}
 EOF
 python library/how_many_commits_did_user_make_to_repo_on_date/skill.py taskspec.json
 cat agent_response.json
 ```
+
+`credentials` is the field `learn` has no way to fill, and it's why a logged-in site needs this
+path: the skill logs in with what the taskspec hands it, so replay-verification can actually run.
+Put them in the manifest per run (`"credentials": {...}`) and the replay gets them too — they are
+never written into the skill or into `replays.json`, so the library stays shareable.
 
 ### 6. The whole pipeline in one go (a batch of tasks)
 
