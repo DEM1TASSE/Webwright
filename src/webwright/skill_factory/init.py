@@ -26,13 +26,33 @@ _SYS = (
     "contain holes, not their specifics.\n"
     "Keep genuinely site-fixed things literal (the site itself, the phrasing). Every {hole} in "
     "task MUST appear in params and vice-versa. Ask for the answer in a stable, unambiguous form. "
-    "Only if the need truly has nothing that could vary, return params: []."
+    "Only if the need truly has nothing that could vary, return params: [].\n"
+    "Also judge whether this task's ANSWER DRIFTS. The test is narrow: **run the same task again "
+    "tomorrow, changing nothing — is the correct answer still the same string?** Being fetched "
+    "live from a busy website does NOT make an answer drift; only the answer moving does.\n"
+    "Same site, both cases: 'the earliest nonstop flight from SEA to JFK on 2026-08-15' does NOT "
+    "drift — a schedule is published weeks ahead and reads the same tomorrow. 'the cheapest "
+    "flight on that route' DOES drift — the fare moves hourly. So: prices, fares, stock, "
+    "'today's top seller', anything ranked by a live number → drifts. Schedules, specs, IDs, "
+    "counts of past things, published text → does not.\n"
+    "Return \"drifts\": true|false, and \"drift_reason\": \"<one clause: what would move, or why "
+    "nothing would>\"."
 )
 
 
-def _yaml_skeleton(task: str, params: list[str], start_url: str, rows: int) -> str:
+def _yaml_skeleton(task: str, params: list[str], start_url: str, rows: int,
+                   drifts: bool = False) -> str:
     cols = ", ".join(f"{p}: \"____\"" for p in params)
     instance_lines = "\n".join(f"  - {{{cols}}}" for _ in range(rows))
+    # strict compares the replay against the recorded answer, so it is only fair when the
+    # answer holds still. On a drifting answer (a price, stock, a ranking) strict rejects a
+    # working skill for doing its job — pick shape up front rather than let the user find out
+    # after paying for the solves.
+    verify = "shape " if drifts else "strict"
+    why = ("# this answer drifts (prices/stock/rankings change on their own), so replay only\n"
+           "  # checks the shape — strict would reject a working skill when the value moved\n  "
+           if drifts else
+           "# this answer should hold still, so replay demands the recorded answer back\n  ")
     return (
         f"# Draft skill spec — fill the ____ values (your ground truth), then: build skill.yaml\n"
         f"# The {{holes}} in `task` are the parameters; each is a column below.\n\n"
@@ -40,8 +60,9 @@ def _yaml_skeleton(task: str, params: list[str], start_url: str, rows: int) -> s
         f"start_url: {start_url}    # guessed — check it opens the right page\n\n"
         f"instances:            # give a few real instances (3+ makes a verifiable skill)\n"
         f"{instance_lines}\n\n"
-        f"build:                # optional policy (defaults shown) — CLI flags override these\n"
-        f"  verify: strict      # strict (reproduce answers) | shape (live data) | off\n"
+        f"build:                # optional policy — CLI flags override these\n"
+        f"  {why}"
+        f"verify: {verify}     # strict (reproduce answers) | shape (drifting data) | off\n"
         f"  verify_rounds: 2\n"
         f"  on_fail: reject     # reject | reference\n"
         f"  chunk: 25\n"
@@ -70,8 +91,9 @@ def init(need: str, out_path: str, rows: int = 3) -> int:
             f"directly (webwright), or use /webwright:craft to get a re-runnable CLI for it.")
     # trust the holes actually in the template over a possibly-mismatched params list
     params = [p for p in params if p in holes] or sorted(holes)
-    out.write_text(_yaml_skeleton(task, params, start_url, rows), encoding="utf-8")
-    print(f"wrote {out}\n\n  task:      {task}\n  params:    {params}\n  start_url: {start_url}\n\n"
+    drifts = bool(data.get("drifts"))
+    out.write_text(_yaml_skeleton(task, params, start_url, rows, drifts), encoding="utf-8")
+    print(f"wrote {out}\n\n  task:      {task}\n  params:    {params}\n  start_url: {start_url}\n  verify:    {'shape (this answer drifts)' if drifts else 'strict (this answer should hold still)'}\n\n"
           f"Next: fill the ____ values in {out}, then\n"
           f"  python -m webwright.skill_factory build {out} --library ./library -c your_model.yaml")
     return 0
