@@ -28,9 +28,18 @@ def recommend(task: str, library_root: str) -> dict:
     # A missing/empty library is almost always a wrong path (relative paths resolve inside the
     # agent's workspace). Say so LOUDLY instead of a silent skip — checked before Library(),
     # whose constructor would mkdir the bogus path and hide the mistake.
-    if not root.is_dir() or not any((p / "meta.json").exists() for p in root.iterdir() if p.is_dir()):
+    if not root.is_dir():
         return {"verdict": "skip", "skill_id": None,
-                "reason": f"skill library MISSING or EMPTY at {root} — check the --library path",
+                "reason": f"no skill library at {root} — check the --library path (relative paths "
+                          f"resolve inside the agent's workspace)",
+                "warning": f"library missing or empty at {root}"}
+    if not any((p / "meta.json").exists() for p in root.iterdir() if p.is_dir()):
+        # the directory is there and simply has nothing in it — sending the user to check the
+        # path would be a wild goose chase; the usual cause is that learn rejected the candidate
+        return {"verdict": "skip", "skill_id": None,
+                "reason": f"skill library at {root} is empty — nothing has landed yet. If learn "
+                          f"just rejected a skill, re-run it: distillation is stochastic and the "
+                          f"runs stay retryable.",
                 "warning": f"library empty at {root}"}
     lib = Library(root)
     cands = retrieve(task, lib)

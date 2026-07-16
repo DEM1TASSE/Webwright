@@ -174,7 +174,7 @@ _REFINE_INCREMENTAL = (
 
 
 def _refine(traces: list[Trace], library: Library, verify: str = "off",
-            rounds: int = 2, on_fail: str = "reject") -> list[str]:
+            rounds: int = 2, on_fail: str = "reject", draws: int = 1) -> list[str]:
     """Batch distillation: align N gate-passed solves -> parameterize + primitives.
     Incremental: if a skill for the same template already exists, improve/widen it on top of the
     existing skill (rather than rewriting from the raw solves)."""
@@ -196,10 +196,11 @@ def _refine(traces: list[Trace], library: Library, verify: str = "off",
         )
     sys_prompt = _REFINE_SYS + (_REFINE_INCREMENTAL if existing else "")
     user_msg = "\n\n".join(blocks)
-    print(f"    distilling {len(traces)} solve(s) into {sid} …", flush=True)
-    code = _extract_code(llm(sys_prompt, user_msg, max_tokens=16000))
     verified = None
-    if verify != "off":   # replay the candidate on its own training taskspecs before it may land
+    if verify == "off":
+        print(f"    distilling {len(traces)} solve(s) into {sid} …", flush=True)
+        code = _extract_code(llm(sys_prompt, user_msg, max_tokens=16000))
+    else:   # replay the candidate on its own training taskspecs before it may land
         replay_set = list(traces)
         if existing:
             old_ex = _load_examples(library, sid)
@@ -217,28 +218,43 @@ def _refine(traces: list[Trace], library: Library, verify: str = "off",
                 print(f"  ✗ {sid}: existing VERIFIED skill has no replays.json — refine skipped "
                       f"(old coverage can't be regression-checked); old skill kept")
                 return []
-        verified, fails = False, []
-        for attempt in range(1, max(rounds, 1) + 1):
-            print(f"    verify ({verify}) round {attempt}/{max(rounds, 1)} — "
-                  f"{len(replay_set)} instance(s), no model:", flush=True)
-            fails = _replay(code, replay_set, strict=(verify == "strict"))
-            if not fails:
-                verified = True
+        verified, fails, code = False, [], ""
+        # Two nested budgets, because two different things go wrong. --verify-rounds repairs the
+        # SAME candidate by feeding its failures back; --draws throws the candidate away and
+        # distils a fresh one. Distillation is stochastic — a draw can simply come out brittle,
+        # and repairing a bad draw is often worse than drawing again (measured: ~40% of draws
+        # pass first time on the same runs). Both stop the moment something verifies.
+        for draw in range(1, max(draws, 1) + 1):
+            tag = f" (draw {draw}/{draws})" if draws > 1 else ""
+            print(f"    distilling {len(traces)} solve(s) into {sid}{tag} …", flush=True)
+            code = _extract_code(llm(sys_prompt, user_msg, max_tokens=16000))
+            for attempt in range(1, max(rounds, 1) + 1):
+                print(f"    verify ({verify}) round {attempt}/{max(rounds, 1)}{tag} — "
+                      f"{len(replay_set)} instance(s), no model:", flush=True)
+                fails = _replay(code, replay_set, strict=(verify == "strict"))
+                if not fails:
+                    verified = True
+                    break
+                if attempt <= max(rounds, 1) - 1:   # feedback rounds remaining
+                    print(f"      {len(fails)} failed — re-distilling with the failures as feedback",
+                          flush=True)
+                    feedback = ("\n\n## Replay failures of your previous attempt (fix the GENERAL "
+                                "logic, do NOT hardcode answers)\n" + "\n".join(fails) +
+                                "\n\n## Your previous attempt\n```python\n" + code + "\n```")
+                    code = _extract_code(llm(sys_prompt, user_msg + feedback, max_tokens=16000))
+            if verified:
                 break
-            if attempt <= max(rounds, 1) - 1:   # feedback rounds remaining
-                print(f"      {len(fails)} failed — re-distilling with the failures as feedback",
+            if draw < max(draws, 1):
+                print(f"      draw {draw} exhausted its repair rounds — starting a fresh one",
                       flush=True)
-                feedback = ("\n\n## Replay failures of your previous attempt (fix the GENERAL "
-                            "logic, do NOT hardcode answers)\n" + "\n".join(fails) +
-                            "\n\n## Your previous attempt\n```python\n" + code + "\n```")
-                code = _extract_code(llm(sys_prompt, user_msg + feedback, max_tokens=16000))
         if not verified:
             # NEVER overwrite an existing (possibly verified) skill with an unverified one
             if on_fail == "reference" and not existing:
-                print(f"  ! {sid}: replay verification failed after {rounds} round(s) — landing "
+                print(f"  ! {sid}: no candidate verified after {draws} draw(s) — landing "
                       f"as grade=reference (a readable prior for the agent; standalone NOT trusted)")
             else:
-                print(f"  ✗ {sid}: replay verification failed after {rounds} round(s) — NOT written:")
+                print(f"  ✗ {sid}: no candidate verified after {draws} draw(s) × {rounds} round(s) "
+                      f"— NOT written:")
                 for f in fails:
                     print(f"      {f}")
                 if verify == "strict":
@@ -270,7 +286,7 @@ def _refine(traces: list[Trace], library: Library, verify: str = "off",
 
 
 def evolve(traces: list[Trace], library: Library, verify: str = "off",
-           rounds: int = 2, on_fail: str = "reject") -> dict:
+           rounds: int = 2, on_fail: str = "reject", draws: int = 1) -> dict:
     """Unified update: evolve the EXISTING library, deciding per trace's usage (use/adapt/skip) how
     to change it. This is the core of a continuously-growing library — not rebuilt from scratch each
     time, but grown from v_{n-1} into v_n.
@@ -297,14 +313,14 @@ def evolve(traces: list[Trace], library: Library, verify: str = "off",
         verdicts = {t.verdict for t in group}
         if tmpl not in existing_templates:
             # not covered -> add (distill a skill from this batch)
-            added = _refine(group, library, verify=verify, rounds=rounds, on_fail=on_fail)
+            added = _refine(group, library, verify=verify, rounds=rounds, on_fail=on_fail, draws=draws)
             key = "added" if added else "rejected"
             if added and library.get(added[0]) and library.get(added[0]).meta.get("grade") == "reference":
                 key = "reference"
             changelog.setdefault(key, []).append(added[0] if added else _slug(tmpl))
         elif "adapt" in verdicts:
             # a fix happened -> refine the fixed solves back into the skill (widen/harden)
-            added = _refine(group, library, verify=verify, rounds=rounds, on_fail=on_fail)
+            added = _refine(group, library, verify=verify, rounds=rounds, on_fail=on_fail, draws=draws)
             changelog["adapt_refined" if added else "rejected"].append(added[0] if added else _slug(tmpl))
         else:
             # all use-success -> skill is good enough, leave it
@@ -357,6 +373,10 @@ def main(argv=None) -> int:
                    help="Replay each new skill on its own training taskspecs before it enters "
                         "the library. shape: exact match OR well-formed non-empty (live data); "
                         "strict: exact match only. Needs the sites reachable from here.")
+    p.add_argument("--draws", type=int, default=2, metavar="N",
+                   help="Independent distillation attempts before giving up (default 2). A draw "
+                        "can just come out brittle; a fresh one often lands where repairing the "
+                        "bad one won't. Stops at the first that verifies.")
     p.add_argument("--verify-rounds", type=int, default=2,
                    help="Total build attempts (first + repairs) before giving up. Default 2.")
     p.add_argument("--on-fail", default="reject", choices=["reject", "reference"],
@@ -366,7 +386,7 @@ def main(argv=None) -> int:
     a = p.parse_args(argv)
     manifest = json.loads(Path(a.manifest).read_text(encoding="utf-8"))
     traces = traces_from_manifest(manifest)
-    changelog = evolve(traces, Library(a.library), verify=a.verify,
+    changelog = evolve(traces, Library(a.library), verify=a.verify, draws=a.draws,
                        rounds=a.verify_rounds, on_fail=a.on_fail)
     print(json.dumps(changelog, ensure_ascii=False, indent=2))
     return 0

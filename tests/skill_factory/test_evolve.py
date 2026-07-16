@@ -8,7 +8,7 @@ from webwright.skill_factory.library import Library, Skill
 
 def run():
     # stub _refine: deterministically "build/widen" a skill for the group's template
-    def fake_refine(group, library, verify="off", rounds=2, on_fail="reject"):
+    def fake_refine(group, library, verify="off", rounds=2, on_fail="reject", draws=1):
         from webwright.skill_factory.update import _slug
         sid = _slug(group[0].template)
         library.add(Skill(sid, f"# refined from {len(group)} solves\n",
@@ -191,3 +191,38 @@ def test_all():
 
 if __name__ == "__main__":
     run()
+
+
+def test_a_fresh_draw_lands_where_repairing_the_bad_one_would_not():
+    """--draws is not --verify-rounds: rounds repair the SAME candidate, draws throw it away.
+    A draw that is brittle all the way through must not sink the batch when a fresh one works."""
+    import tempfile
+    import webwright.skill_factory.update as U
+    from webwright.skill_factory.library import Library
+
+    BAD = "import json,sys\njson.dump({'retrieved_data': ['wrong']}, open('agent_response.json','w'))\n"
+    GOOD = "import json,sys\njson.dump({'retrieved_data': ['right']}, open('agent_response.json','w'))\n"
+    calls = []
+
+    def llm(system, user, **kw):
+        calls.append(user)
+        # every repair round of draw 1 stays broken; the fresh draw 2 is fine
+        feedback_round = "Replay failures of your previous attempt" in user
+        return f"```python\n{BAD if len(calls) <= 2 or feedback_round else GOOD}```"
+
+    U.llm = llm
+    with tempfile.TemporaryDirectory() as d:
+        lib = Library(d)
+        tr = [U.Trace("T", "code", answer=["right"], correct=True,
+                      meta={"params": {}, "output_schema": {"type": "array"}})]
+        U._refine(tr, lib, verify="strict", rounds=2, draws=1)
+        assert not lib.list(), "one draw, all rounds broken -> nothing lands"
+
+    calls.clear()
+    with tempfile.TemporaryDirectory() as d:
+        lib = Library(d)
+        tr = [U.Trace("T", "code", answer=["right"], correct=True,
+                      meta={"params": {}, "output_schema": {"type": "array"}})]
+        U._refine(tr, lib, verify="strict", rounds=2, draws=2)
+        assert lib.list(), "a second, fresh draw should land"
+        assert lib.list()[0].meta["grade"] == "executable"

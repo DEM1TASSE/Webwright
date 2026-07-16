@@ -14,8 +14,9 @@ The spec is a single human-editable file (draft one with `init`):
       - {origin: "Los Angeles (LAX)",    destination: "Chicago (ORD)",   date: "2026-08-15"}
     build:                 # optional — verification / aggregation policy, all with defaults
       verify: strict       # strict | shape | off
-      verify_rounds: 3
-      on_fail: reject      # reject | reference
+      draws: 2             # independent distillation attempts
+      verify_rounds: 3     # repair rounds within one attempt
+      on_fail: reject      # reject = executable or nothing | reference = keep a prior
       chunk: 25
 
 Machine-specific settings stay OUT of the spec (so it stays committable): the agent's model
@@ -89,7 +90,7 @@ def _pick(cli, spec_val, default):
 
 def build(spec_path: str, library: str, cfg: list[str], *, verify=None, verify_rounds=None,
           on_fail=None, chunk=None, golds=None, outputs_dir=None, dry_run=False,
-          assume_yes=False, jobs=1) -> int:
+          assume_yes=False, jobs=1, draws=None) -> int:
     spec = yaml.safe_load(Path(spec_path).read_text(encoding="utf-8")) or {}
     task = spec.get("task", "").strip()
     start_url = spec.get("start_url", "").strip()
@@ -102,6 +103,7 @@ def build(spec_path: str, library: str, cfg: list[str], *, verify=None, verify_r
     verify_rounds = _pick(verify_rounds, policy.get("verify_rounds"), 2)
     on_fail = _pick(on_fail, policy.get("on_fail"), "reject")
     chunk = _pick(chunk, policy.get("chunk"), 25)
+    draws = _pick(draws, policy.get("draws"), 2)
 
     lib = Path(library).resolve()
     outputs = Path(outputs_dir).resolve() if outputs_dir else (Path(spec_path).resolve().parent /
@@ -112,7 +114,7 @@ def build(spec_path: str, library: str, cfg: list[str], *, verify=None, verify_r
 
     print(f"build plan: {len(concrete)} instance(s) of\n  {task}\n"
           f"start_url: {start_url}\noutputs:   {outputs}\n"
-          f"policy:    verify={verify} rounds={verify_rounds} on_fail={on_fail} chunk={chunk}\n"
+          f"policy:    verify={verify} draws={draws} rounds={verify_rounds} on_fail={on_fail}\n"
           f"jobs:      {jobs} solve(s) in parallel\n"
           f"library:   {lib}\n")
     for i, (ct, _) in enumerate(concrete):
@@ -199,7 +201,7 @@ def build(spec_path: str, library: str, cfg: list[str], *, verify=None, verify_r
 
     print("\n-- learning from the solves --")
     learn(str(outputs), library, golds=golds, chunk=chunk, verify=verify,
-          rounds=verify_rounds, on_fail=on_fail)
+          rounds=verify_rounds, on_fail=on_fail, draws=draws)
     return 0
 
 
@@ -216,6 +218,8 @@ def main(argv=None) -> int:
     p.add_argument("--verify-rounds", type=int, help="Override build.verify_rounds (default 2).")
     p.add_argument("--on-fail", choices=["reject", "reference"], help="Override build.on_fail.")
     p.add_argument("--chunk", type=int, help="Override build.chunk (runs per grouping call).")
+    p.add_argument("--draws", type=int, metavar="N",
+                   help="Override build.draws: independent distillation attempts (default 2).")
     p.add_argument("--golds", default="", help="JSON file {task_id: gold_answer} for a gold gate.")
     p.add_argument("--outputs", help="Where to write solves (default: <spec dir>/build_outputs).")
     p.add_argument("--jobs", type=int, default=1, metavar="N",
@@ -228,7 +232,7 @@ def main(argv=None) -> int:
     golds = json.loads(Path(a.golds).read_text(encoding="utf-8")) if a.golds else None
     return build(a.spec, a.library, a.cfg, verify=a.verify, verify_rounds=a.verify_rounds,
                  on_fail=a.on_fail, chunk=a.chunk, golds=golds, outputs_dir=a.outputs,
-                 dry_run=a.dry_run, assume_yes=a.yes, jobs=a.jobs)
+                 dry_run=a.dry_run, assume_yes=a.yes, jobs=a.jobs, draws=a.draws)
 
 
 if __name__ == "__main__":
