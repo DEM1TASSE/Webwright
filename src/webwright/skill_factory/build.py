@@ -30,7 +30,7 @@ import json
 import re
 import subprocess
 import sys
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import yaml
@@ -149,14 +149,18 @@ def build(spec_path: str, library: str, cfg: list[str], *, verify=None, verify_r
     if jobs > 1 and len(pending) > 1:
         print(f"\n-- solving {len(pending)} instance(s), {jobs} at a time "
               f"(output -> {outputs}/solve_NN.log) --")
+        # as_completed, not map: map yields in submission order, so a finished instance
+        # stays invisible behind a slow one and the run looks hung when it isn't
         with ThreadPoolExecutor(max_workers=jobs) as pool:
-            for i, ct, rc, log in pool.map(_one, pending):
+            futures = [pool.submit(_one, p) for p in pending]
+            for done in as_completed(futures):
+                i, ct, rc, log = done.result()
                 if rc == 0 and _already_solved(outputs, ct):
                     solved += 1
-                    print(f"  [{i}] done: {ct[:70]}")
+                    print(f"  [{i}] done ({solved}/{len(pending)}): {ct[:70]}", flush=True)
                 else:
                     failed.append((i, ct))
-                    print(f"  ! [{i}] no answer (exit {rc}) — see {log}")
+                    print(f"  ! [{i}] no answer (exit {rc}) — see {log}", flush=True)
     else:
         for i, ct in pending:
             print(f"\n-- solving [{i}] {ct[:90]}")
