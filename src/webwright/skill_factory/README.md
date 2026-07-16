@@ -54,7 +54,7 @@ python -m webwright.skill_factory learn outputs/ --library ./library     # grow 
 Task: *what is the earliest nonstop flight from A to B on this date?*, on the
 live Google Flights.
 
-No model, no API key, about 30 seconds. The whole pitch in one command:
+No model, no API key, about 40 seconds. The whole pitch in one command:
 
 ```bash
 cd src/webwright/skill_factory/examples
@@ -69,7 +69,7 @@ steps; they're the skill's code.
 
 ### 2. Bring the agent in
 
-Run same task in 1, needs an API key:
+The same task family, now with the agent in the loop. Needs an API key:
 
 ```bash
 export OPENAI_API_KEY=...
