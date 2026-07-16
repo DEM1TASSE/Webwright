@@ -30,6 +30,7 @@ import json
 import re
 import subprocess
 import sys
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -146,11 +147,26 @@ def build(spec_path: str, library: str, cfg: list[str], *, verify=None, verify_r
         return i, ct, rc, log
 
     pending = [(i, ct) for i, (ct, _p) in enumerate(concrete) if not _already_solved(outputs, ct)]
+
+    def _ticker(stop: threading.Event, idxs: list[int]) -> None:
+        """A solve is 10-60 min of silence otherwise, which reads as a hang. Report the step
+        each instance is on, so progress is visible without opening the logs."""
+        while not stop.wait(30):
+            parts = []
+            for i in idxs:
+                runs = sorted(outputs.glob(f"build_{i:02d}_*"))
+                steps = len(list((runs[-1] / "steps").glob("*"))) if runs and (runs[-1] / "steps").is_dir() else 0
+                parts.append(f"[{i}] {steps} steps")
+            print(f"  … {'  '.join(parts)}", flush=True)
+
     if jobs > 1 and len(pending) > 1:
         print(f"\n-- solving {len(pending)} instance(s), {jobs} at a time "
-              f"(output -> {outputs}/solve_NN.log) --")
+              f"(output -> {outputs}/solve_NN.log; progress every 30s) --")
         # as_completed, not map: map yields in submission order, so a finished instance
         # stays invisible behind a slow one and the run looks hung when it isn't
+        stop = threading.Event()
+        tick = threading.Thread(target=_ticker, args=(stop, [i for i, _ in pending]), daemon=True)
+        tick.start()
         with ThreadPoolExecutor(max_workers=jobs) as pool:
             futures = [pool.submit(_one, p) for p in pending]
             for done in as_completed(futures):
@@ -165,6 +181,7 @@ def build(spec_path: str, library: str, cfg: list[str], *, verify=None, verify_r
                 else:
                     failed.append((i, ct))
                     print(f"  ! [{i}] no answer (exit {rc}) — see {log}", flush=True)
+        stop.set()
     else:
         for i, ct in pending:
             print(f"\n-- solving [{i}] {ct[:90]}")
