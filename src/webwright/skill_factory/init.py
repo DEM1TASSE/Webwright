@@ -16,13 +16,17 @@ from pathlib import Path
 from .llm import llm_json
 
 _SYS = (
-    "You turn a user's one-line description of a repeatable web task into a REUSABLE TEMPLATE. "
+    "You turn a user's one-line description of a web task into a REUSABLE TEMPLATE. "
     "Return STRICT JSON: {\"task\": \"<one sentence with {param} holes>\", "
     "\"params\": [\"<name>\", ...], \"start_url\": \"<best-guess full URL of the site to start on>\"}.\n"
-    "Rules: put a {hole} for every value the user would plausibly vary (places, dates, names, "
-    "counts); keep site-fixed things (the site itself, the phrasing) as literal text. Every "
-    "{hole} in task MUST appear in params and vice-versa. Ask for the answer in a stable, "
-    "unambiguous form. Do NOT put any concrete example values in the task or params — only holes."
+    "The user almost always describes ONE CONCRETE INSTANCE of a task they will repeat with "
+    "different values ('the cheapest makeup remover on Amazon' means 'the cheapest {product} on "
+    "Amazon'). GENERALIZE: every concrete value they mention — a product, a place, a date, a "
+    "name, a count — becomes a {hole}. Do not echo their example values back; the task must "
+    "contain holes, not their specifics.\n"
+    "Keep genuinely site-fixed things literal (the site itself, the phrasing). Every {hole} in "
+    "task MUST appear in params and vice-versa. Ask for the answer in a stable, unambiguous form. "
+    "Only if the need truly has nothing that could vary, return params: []."
 )
 
 
@@ -54,9 +58,16 @@ def init(need: str, out_path: str, rows: int = 3) -> int:
     start_url = (data.get("start_url") or "").strip()
     holes = set(re.findall(r"{(\w+)}", task))
     if not task or not holes:
-        raise SystemExit("init: the model did not produce a parameterized task. Try a more "
-                         "specific need, e.g. 'find the earliest nonstop flight between two "
-                         "cities on a date'.")
+        # No holes means the need names ONE task, not a task TYPE — and a skill is only worth
+        # building for something you will repeat with different values.
+        raise SystemExit(
+            f"init: nothing in this need varies, so there is no reusable skill to build:\n"
+            f"  {task or '(no task returned)'}\n\n"
+            f"Say what CHANGES between runs — name the varying part:\n"
+            f"  instead of 'the cheapest makeup remover on Amazon'\n"
+            f"  try     'the cheapest <product> on Amazon, for any product'\n\n"
+            f"If you really only want this one answer once, you don't need a skill — solve it "
+            f"directly (webwright), or use /webwright:craft to get a re-runnable CLI for it.")
     # trust the holes actually in the template over a possibly-mismatched params list
     params = [p for p in params if p in holes] or sorted(holes)
     out.write_text(_yaml_skeleton(task, params, start_url, rows), encoding="utf-8")
