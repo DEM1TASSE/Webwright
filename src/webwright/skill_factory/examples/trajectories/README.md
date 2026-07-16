@@ -7,13 +7,29 @@ template, so you don't have to:
 
 ```bash
 cd src/webwright/skill_factory/examples
-python -m webwright.skill_factory learn trajectories --library ./library
+python -m webwright.skill_factory learn trajectories --library ./library --verify off
 ```
 
-Three runs → one template → five lifted parameters → one skill, replay-verified before it lands.
-Needs an API key (the grouping and distillation are model calls). Takes ~5-13 minutes, and **may
-reject on the first attempt** — that's the gate, not a misconfiguration; run it again. See
-[What to expect](../../README.md#what-to-expect).
+Three runs → one template → five lifted parameters → one skill. ~100 s and an API key (the
+grouping and distillation are model calls). Nothing else is needed: **`--verify off` never opens
+a browser**, so this works today and in a year, and it can't be rejected.
+
+What lands is honestly unmarked — with no replay there is no claim to make, so its `meta.json`
+simply has no `verified` / `grade` field. That's the trade: you're seeing the distillation half
+(gate → group → lift parameters → skill), not the gate that proves it runs.
+
+**To see verification too**, drop the flag — but read the expiry note first, because the replay
+drives the live site:
+
+```bash
+python -m webwright.skill_factory learn trajectories --library ./library   # --verify strict
+```
+
+That takes ~5-13 min, opens a browser per instance, and **may reject on the first attempt** —
+that's the gate working, not a misconfiguration; run it again. See
+[What to expect](../../README.md#what-to-expect). The proof that verification works doesn't rest
+on this demo anyway: the checked-in skill in `../learned_library/` carries
+`verified: true, grade: executable`, and `./quickstart.sh` runs it.
 
 ## What's here, and what isn't
 
@@ -38,8 +54,8 @@ The runs are pinned to **2026-08-15**, and their answers were true on 2026-07-15
 | SFO→BOS | `["B6 434", "JetBlue", "6:00 AM"]` |
 | LAX→ORD | `["UA 729", "United", "12:10 AM"]` |
 
-`--verify strict` (the default) replays the skill against the **live** site and demands these
-answers back. So:
+This only matters if you drop `--verify off`. `--verify strict` (the default) replays the skill
+against the **live** site and demands these answers back. So:
 
 - **if an airline reschedules**, the replay returns a different flight and the skill is rejected;
 - **once 2026-08-15 is in the past**, Google Flights can't show that date at all, the skill
@@ -49,6 +65,6 @@ Neither is a bug in the pipeline — it's a fixture with a shelf life, and this 
 life looks like. `--verify shape` does **not** rescue the second case: a crashed skill writes no
 answer, and shape still requires a non-empty one.
 
-To see the distillation half after they've gone stale, `--verify off` skips the replay entirely
-(and lands an unverified skill — fine for a demo, not for a library you trust). To get the whole
-loop back, re-solve with a live date: `build flights.skill.yaml` after moving its `date`.
+`--verify off` is immune to both, which is why it's the command at the top: it never opens the
+page, so there is nothing to be stale about. To get the *whole* loop back on live data, re-solve
+with a future date — move the `date` in `../flights.skill.yaml` and `build` it.

@@ -128,10 +128,17 @@ Skip the solving and distill what's there:
 python -m webwright.skill_factory learn outputs/ --library ./library
 ```
 
-Never run Webwright, so you have no runs to try this on? Three real solves ship with the repo —
-`learn examples/trajectories --library ./library` distils them without solving anything first.
-They're pinned to a date and [expire](examples/trajectories/README.md); the README there says
-exactly how.
+Never run Webwright, so you have no runs to try this on? Three real solves ship with the repo:
+
+```bash
+python -m webwright.skill_factory learn examples/trajectories --library ./library --verify off
+```
+
+~100 s, and it distils them without solving anything first. `--verify off` skips the replay, so
+it never opens a browser — nothing to go stale, nothing to reject, and the skill lands honestly
+unmarked (no `verified`/`grade`, because nothing was proved). Drop the flag to see the gate too,
+but [read the note first](examples/trajectories/README.md): the replay drives the live site, and
+these runs are pinned to a date.
 
 This is the day-to-day path once you're using Webwright anyway: the trajectories you produced
 solving real work become the library, with no spec to write. `build` leaves its solves in
