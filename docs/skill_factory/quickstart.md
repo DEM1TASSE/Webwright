@@ -10,8 +10,9 @@ Three ways in, in the order you'd meet them:
 3. **[Do it for your own task](#3-do-it-for-your-own-task)** — `init` → fill → `build`, or
    `learn` if you already have runs. **This is the part that's yours.**
 
-Solves are long (10-30 min each) — if your shell enforces command timeouts, run them in the
-background or pass `--jobs`.
+Solves are long (10-30 min each). If your shell or tooling enforces command timeouts, run them
+in the background — `--jobs` shortens the wall clock but the command still blocks until the last
+one finishes.
 
 ---
 
@@ -38,15 +39,18 @@ would fail all three. See [choosing a task](#choosing-a-task-that-can-be-verifie
 
 ```bash
 export OPENAI_API_KEY=...
-./quickstart.sh full     # 3 solves -> learn -> reuse on an unseen route (~40 min)
-./quickstart.sh ask      # or: ask the library about a task it has never seen
-./quickstart.sh solve    # or: watch the agent reuse the checked-in skill
+./quickstart.sh ask      # one LLM call: "can the library help here?" -> use / adapt / skip
+./quickstart.sh solve    # a full agent solve of an unseen route, reusing the checked-in skill
+./quickstart.sh full     # the whole loop from nothing: 3 solves -> learn -> reuse (~40 min)
 ```
 
-What `full` does, spelled out:
+`demo` (above) runs the skill itself. `ask` only **retrieves** — one round trip showing what the
+agent gets told about the library, without solving anything. `solve` is the agent actually doing
+a task with it. `full` rebuilds the library from scratch so you can watch it being made.
+
+What `full` does, spelled out — this is the loop, without the wrapper:
 
 ```bash
-export OPENAI_API_KEY=...
 # custom / OpenAI-compatible gateway? TWO knobs, both needed:
 #  1. env vars for learn / skill_use (or reuse is silently off). The endpoint is the
 #     FULL request URL — ".../api" alone fails, ".../api/responses" works:
@@ -178,6 +182,17 @@ about to solve and asks before spending agent time (`--dry-run` shows the plan a
 already produced an answer is never re-solved** — if a run dies halfway, re-running `build` only
 pays for what's missing.
 
+### Already have runs? Skip the solving
+
+If you've been using Webwright anyway, the trajectories are already on disk — hand them straight
+to `learn`, no spec to write:
+
+```bash
+python -m webwright.skill_factory learn outputs/ --library ./library
+```
+
+That's the day-to-day path. The rest of this section is for a task you *haven't* solved yet.
+
 ### `--jobs N`: solve N instances at once
 
 Each solve takes 10-30 minutes and they don't depend on each other, so they can overlap. `N` is
@@ -201,12 +216,6 @@ this box runs 3 against Google Flights and Amazon without trouble.
 Parallelism only speeds up the solving half. `learn` — distil, then replay each instance in a
 browser — is serial, so `--jobs` won't shorten those 5-13 minutes.
 
-Already have webwright runs lying around? Skip straight to the second half:
-
-```bash
-python -m webwright.skill_factory learn outputs/ --library ./library
-```
-
 ### Vary the parameters, not just the count
 
 Distillation lifts a parameter from the **differences it observes**. A value that's identical in
@@ -214,9 +223,10 @@ every instance has no evidence behind it and may get baked in. So two instances 
 everything you care about beat five that share a date:
 
 ```yaml
-instances:   # origin, destination AND date all move
-  - {origin: "SEA", destination: "JFK", date: "2026-08-15"}
-  - {origin: "LAX", destination: "ORD", date: "2026-09-03"}
+# a spec with two params: two instances that move BOTH beat five that only move one
+instances:
+  - {product: "makeup remover", max_price: "10"}
+  - {product: "usb mouse",      max_price: "25"}
 ```
 
 ### Choosing a task that can be verified

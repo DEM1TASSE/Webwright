@@ -85,7 +85,7 @@ solve)
 full)
   need_key
   warn_gateway_agent
-  echo "== full loop: 3 from-scratch solves -> learn -> reuse on an unseen route (~30 min) =="
+  echo "== full loop: 3 from-scratch solves -> learn -> reuse on an unseen route (~40 min) =="
   for r in "Seattle (SEA)|New York (JFK)" "San Francisco (SFO)|Boston (BOS)" "Los Angeles (LAX)|Chicago (ORD)"; do
     FROM="${r%|*}"; TO="${r#*|}"
     echo "-- solving $FROM -> $TO from scratch"
