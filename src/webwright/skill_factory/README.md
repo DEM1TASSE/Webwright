@@ -277,7 +277,7 @@ Here are some known rough edges, and directions we might take them.
 | doc | what's in it |
 |---|---|
 | [docs/skill_factory/quickstart.md](../../../docs/skill_factory/quickstart.md) | the complete tutorial: the flight-schedule loop, gateway knobs, standalone usage, measured costs |
-| [docs/skill_factory/manual.md](../../../docs/skill_factory/manual.md) | manual mode: manifests field by field, gold gates, the batch pipeline |
+| [docs/skill_factory/manual.md](../../../docs/skill_factory/manual.md) | manual mode: you declare the template, params and admission yourself — for benchmarks (pipe your evaluator's verdict in as the gate), logged-in sites, or when an LLM shouldn't be guessing your template |
 | [docs/skill_factory/reference.md](../../../docs/skill_factory/reference.md) | verification & grades, every flag and env var, component map, backend |
 | [examples/README.md](examples/README.md) | the checked-in skill and the example inputs |
 

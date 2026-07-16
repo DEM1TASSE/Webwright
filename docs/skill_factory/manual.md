@@ -2,17 +2,38 @@
 
 [← back to the module README](../../src/webwright/skill_factory/README.md)
 
-> **You probably want [`build` or `learn`](quickstart.md#4-do-it-for-your-own-task) instead.**
-> This is the layer underneath them: you write the manifest yourself, declare each run's
-> admission by hand, and call `update` directly. It is still supported and still the way in when
-> you need per-field control or a benchmark-grade gold gate — it is simply lower-level, and
-> nothing here is done for you.
+> ### Which one do you want?
 >
-> Two differences from the Quick Start worth knowing before you read on. The examples below use a
-> **gitlab commit-counting** template rather than the flights one the rest of the docs use —
-> older, but the mechanics are identical. And `update` defaults to **`--verify off`**, so a skill
-> lands with `grade: unverified` unless you ask for a replay: pass `--verify strict` (or `shape`)
-> to get the gate that `learn` gives you by default. See
+> `build` / `learn` and `update` differ in **who decides**, not in how old they are.
+>
+> | | `build` / `learn` | `update --manifest` (this doc) |
+> |---|---|---|
+> | the template | an LLM infers it by grouping your runs | **you write the exact string** |
+> | the parameters | an LLM extracts them | **you declare them per run** |
+> | is this solve correct? | the gate decides: `--golds` (exact match by task_id) or `self_verify` (shape + the agent's own SUCCESS report) | **you say so** — `admit` is required per run, and it can come from anywhere |
+> | ADD or REFINE? | derived: refine if the template already exists | **you say so** (`verdict`) |
+> | which runs | everything under one folder | **you list the directories** |
+> | credentials | ✗ not passed — a replay can't log in | ✓ `credentials` per run |
+>
+> **Use `build`/`learn`** for your own work: it's the whole point, and the inference is usually
+> right. **Reach for `update`** when one of these bites:
+>
+> - **You're running a benchmark and already know the answers.** This is the canonical case. The
+>   harness has its own evaluator, so you don't want *our* gate guessing — you pipe its verdict
+>   straight in as `admit`. That is exactly how this repo's WebArena numbers were produced:
+>   `gold_eval()` scored each solve, and its result became `admit` in the manifest.
+> - **Correctness isn't an exact string match.** `--golds` compares answers with `==`. A human
+>   review, a judge model, partial credit — none of that fits in a golds file, but all of it fits
+>   in a boolean you set yourself.
+> - **The site needs a login.** `learn` doesn't carry credentials into the replay, so a skill for
+>   a logged-in site can't verify. The manifest does.
+> - **You don't want an LLM guessing your template or parameters.** Grouping can split one
+>   template in two, or lift the wrong parameters. Here you state them.
+>
+> Two notes before you read on. The examples below use a **gitlab commit-counting** template
+> rather than the flights one the rest of the docs use — older, but the mechanics are identical.
+> And `update` defaults to **`--verify off`** while `learn` defaults to `strict`, so a skill lands
+> with `grade: unverified` unless you ask for a replay: pass `--verify strict` (or `shape`). See
 > [verification and grades](reference.md#verification-and-grades).
 
 The library grows **offline** from batches of solved tasks, and is consumed **at solve time** by
