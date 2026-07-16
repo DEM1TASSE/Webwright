@@ -152,37 +152,37 @@ An `executable` skill skips that path entirely: it runs standalone, with no agen
 in the loop, in a fixed handful of steps, so every repeat after the first is essentially free.
 (Results on this mode coming soon.)
 
-## ⚠️ Limitations & Roadmap
+## 🚧 Limitations & Roadmap
 
-- **A skill can't outrun the agent that made it.** Everything in the library was distilled from
-  solves; if the agent never found a good strategy for a task, no amount of aggregating its
-  attempts will invent one. The factory makes reuse cheap and reliable — it doesn't raise the
-  ceiling on what can be solved in the first place.
-- **`decide` reaches for the library too eagerly.** It judges whether a skill is *relevant*, not
-  whether reusing it is *worth it*, so on the WebArena run it answered `use` 49 times and `skip`
-  zero — including tasks that would have been cheaper from scratch. It should weigh the cost of
-  solving fresh against the cost of reading and fitting a skill.
-- **Verification is only as strong as the task's ground truth.** Stable, page-stated facts
-  (schedules) earn real `--verify strict`; answers that drift on their own — prices, stock,
-  rankings — fall back to a shape check, which catches a broken skill but not a wrong one. Real
-  correctness needs `--golds`, and today choosing a verifiable task or supplying golds is on you.
-  Wiring in an independent judge (WebJudge-style, or cross-source agreement) would lift that.
-- **Not every batch yields an `executable` skill.** Distillation is stochastic: a draw can come
-  out brittle and fail its replay. That's the gate working — nothing unproven lands, and the
-  solves stay retryable — and `--on-fail reference` keeps the attempt as a readable prior rather
-  than nothing. But the `reference` grade has not been evaluated on its own: we know an
-  `executable` skill is worth 70% vs 55%; we don't yet have a number for what a `reference`
-  skill is worth to an agent.
-- **Aggregation stops at the literal template.** Solves group into one skill only when they share
-  a template string, so the same underlying task asked two ways — "the cheapest flight" and
-  "which flight costs least" — becomes two skills, each thinner than one merged skill would be.
-  Semantic grouping (an LLM deciding when different wordings mean the same task) is the obvious
-  next step, and it needs a stronger admission bar with it: merging tasks that only *look* alike
-  would quietly poison a skill.
-- **Strict replay runs against the live site, not a recorded page**, so it's a fair bar only when
-  `learn` closely follows the solves; deterministic offline replay from recorded traces is
-  planned. And nothing watches a skill after it lands — a site can drift under a verified skill
-  and no one finds out until it's used.
+Here are some known rough edges, and directions we might take them.
+
+- **A skill can't outrun the agent that made it.** Everything is distilled from solves, so if the
+  agent never figured out a good way to do something, there's nothing to distill. Pooling a bunch
+  of failed attempts won't invent a strategy that was never there. The factory makes reuse cheap;
+  it doesn't make hard tasks solvable.
+
+- **The agent reaches for skills too eagerly.** Right now `decide` only asks "is there a relevant
+  skill?", not "is using it actually worth it?" On WebArena it said `use` 49 times and `skip` not
+  once, even on tasks that would've been quicker from scratch. It should weigh the two, and skip
+  when starting fresh is the cheaper bet.
+
+- **Reuse today is copy-and-edit, not a clean import.** The agent reuses a skill by reading the
+  source and editing a copy, which is why `use` and `adapt` blur together in practice, and even a
+  `use` can quietly rewrite half the code. A proper callable interface, where you import a skill
+  and just pass it parameters, would make reuse a lot cleaner.
+
+- **Verification is only as reliable as the reference answer it checks against.** On real websites, where no gold label is available, the LLM may misinterpret the task or produce an incorrect reference answer, and self-verification may fail to detect that error. For dynamic answers such as prices or rankings, verification often falls back to checking only the output format or structure. This can catch a skill that is broken or fails to execute, but not one that executes successfully and returns the wrong result. Achieving true correctness in these settings requires a stronger, independent judge, such as a WebJudge-style model.
+
+- **Distillation is stochastic.** A given attempt may produce a fragile skill that fails even its own replay. The gate filters out these failures, and rerunning distillation a few times usually succeeds. However, each retry consumes additional tokens, so improving the reliability of executable skill generation—ideally succeeding on the first attempt—remains an important direction to explore.
+
+- **Aggregation only groups by the literal template.** Ask the same task two different ways and
+  you get two skills, each thinner than one merged one would be. Letting a model recognize when
+  two wordings mean the same task would fix it.
+
+- **The library needs upkeep, like any package registry.** After a skill lands, a site can shift
+  under it with nothing re-checking, so it can quietly go stale and keep returning wrong answers.
+  Stale skills never retire, and near-duplicate ones never get merged. Health checks, a retirement
+  policy, and de-duplication are the obvious directions.
 
 ## 📚 Documentation
 
