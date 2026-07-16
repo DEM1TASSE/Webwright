@@ -125,20 +125,29 @@ python "$SKILL" taskspec.json
 # -> {"retrieved_data": ["UA 2601", "United", "5:00 AM"]}   (schedule may shift by season)
 ```
 
-**What each way of running it actually costs** — measured on this machine:
+**What each way of running it actually costs** — one question, SEA→DEN, a route the skill never
+trained on, answered three ways on this machine:
 
-|             | from scratch (3 training routes) | the skill, standalone (SEA→DEN) |
-|-------------|----------------------------------|---------------------------------|
-| steps       | 25 / 40 / 59                     | **10** (fixed)                  |
-| wall time   | 10.8 / 25.7 / 32.0 min           | **~40 s**                       |
-| LLM calls   | 29 / 45 / 65                     | **0**                           |
+|            | from scratch<br><sub>no library</sub> | the agent, with the library | the skill, standalone |
+|------------|--------------|------------------|----------------------|
+| steps      | 50           | **11**           | **10** (fixed)       |
+| wall clock | 23.5 min     | **~4 min**       | **~40 s**            |
+| LLM calls  | 55           | **12**           | **0**                |
+| answer     | `WN 4697, Southwest, 6:50 AM` | same | same |
 
-How to read it: from-scratch cost is high-variance — the *same* task type took 25, 40 and 59
-steps on three routes, because the agent re-derives the strategy each time (apply the nonstop
-filter, sort by departure, expand the earliest row for its flight number). The learned skill
-pins that strategy down to a fixed 10 steps, and the last column is the structural win:
-**every run after the library exists uses no model at all** — a schedule watcher in cron pays
-the agent exploration once, then ~40 s forever.
+For reference, the three solves that *built* the skill took 25 / 40 / 59 steps and 11 / 26 / 32
+minutes — same task type, three routes. That spread is the point: from-scratch cost is
+high-variance because the agent re-derives the strategy every time, and the skill pins it to a
+fixed 10.
+
+How to read the middle column. The agent asked the library, got `use`, and stopped exploring:
+50 steps to 11. That gap is a property of *this* task, not a promise — Google Flights is fiddly
+enough that the agent flails without help, and on a site the model drives from memory the gap
+narrows or inverts (querying and reading a skill isn't free). The honest general version:
+**step savings scale with how much the agent doesn't already know.**
+
+The last column doesn't depend on any of that. **Every run after the library exists uses no model
+at all** — a schedule watcher in cron pays the agent exploration once, then ~40 s forever.
 
 **Verification, honestly:** because a schedule is a fixed, client-independent fact, this
 family earns `--verify strict` — the distilled skill had to reproduce all three training

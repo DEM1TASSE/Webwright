@@ -67,20 +67,24 @@ cd src/webwright/skill_factory/examples
 It prints the ten fixed steps it took and where it saved its screenshots. No model chose those
 steps; they're the skill's code.
 
-**What that just saved.** The same answer, on this machine — the library's way, and the way it
-would go without one:
+**What that just saved.** The same question — SEA→DEN, a route the skill was never trained on —
+answered three ways on this machine:
 
-|            | from scratch, per route<br><sub>the 3 solves that built the skill</sub> | the skill, standalone<br><sub>what you just ran</sub> |
-|------------|---------------------------|----------------------|
-| steps      | 25 / 40 / 59              | **10**, fixed        |
-| wall clock | 11 / 26 / 32 min          | **~40 s**            |
-| LLM calls  | 29 / 45 / 65              | **0**                |
+|            | from scratch<br><sub>no library</sub> | the agent, with the library<br><sub>`quickstart.sh solve`</sub> | the skill, standalone<br><sub>what you just ran</sub> |
+|------------|--------------|---------------------|----------------------|
+| steps      | 50           | **11**              | **10**, fixed        |
+| wall clock | 23.5 min     | **~4 min**          | **~40 s**            |
+| LLM calls  | 55           | **12**              | **0**                |
 
-Two things to read off it. From-scratch cost is **high-variance** — the *same* task took 25, 40
-and 59 steps on three routes, because the agent re-derives the strategy every time; the skill
-pins it to a fixed 10. And the last column is the structural one: **every run after the library
-exists uses no model at all.** A watcher in cron pays for the exploration once, then ~40 s
-forever.
+All three returned `["WN 4697", "Southwest", "6:50 AM"]`, and so did an independent model-free
+probe of the page — so this is three routes to one answer, not one answer agreeing with itself.
+
+Two things to read off it. The middle column is reuse working as intended: the agent asked the
+library, got `use`, and stopped exploring — 50 steps to 11. But that gap is a property of the
+task, not a promise; on a site the model already knows well it narrows, and the honest version of
+this is in [Results](#-results). The last column is the one that doesn't depend on any of that:
+**every run after the library exists uses no model at all.** A watcher in cron pays for the
+exploration once, then ~40 s forever.
 
 ---
 

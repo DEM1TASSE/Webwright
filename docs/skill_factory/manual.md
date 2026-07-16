@@ -35,6 +35,11 @@
 > gold evaluator — it hits two of the four cases above at once. Flights hits none of them, which
 > is exactly why the Quick Start builds it with `learn` instead.
 >
+> **These examples don't run as written.** [WebArena](https://github.com/web-arena-x/webarena) is
+> a set of self-hosted Docker sites, so `http://gitlab.example.com` and the credentials are
+> stand-ins for **your** instance — point them at your own host and accounts once it's up.
+> Everything else transfers unchanged.
+>
 > One default to know: `update` defaults to **`--verify off`** while `learn` defaults to
 > `strict`, so a skill lands with `grade: unverified` unless you ask for a replay — pass
 > `--verify strict` (or `shape`). See

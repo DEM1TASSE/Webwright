@@ -34,9 +34,10 @@ before it landed (`meta.json`: `verified: true, grade: executable`):
 
 Why this task: a flight *schedule* is a stable, client-independent fact the page states
 plainly — so the answer is the same today, tomorrow, and on your machine, which is exactly
-what lets `--verify strict` and standalone reuse mean something. On an unseen route
-(SEA→DEN): from scratch 25–59 steps (the training spread), standalone **~40 s with no model**,
-answer `["UA 2601", "United", "5:00 AM"]` — identical to an independent model-free probe.
+what lets `--verify strict` and standalone reuse mean something. On the unseen route SEA→DEN, all three
+paths return the same answer: from scratch **50 steps / 23.5 min**, the agent with the library
+**11 steps**, the skill standalone **10 steps / ~40 s / no model at all** — and an independent
+model-free probe of the page agrees with them.
 
 ## Run it
 
