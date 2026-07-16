@@ -14,7 +14,7 @@ https://github.com/user-attachments/assets/3f93fac4-bb93-4ea5-8b45-280ed1334feb
 
 ## ✨ Highlights
  
-- 🏃 **Runs standalone, no model.** A learned skill is just code. It re-executes in ~30 s with zero tokens, so you can cron it to run every day, instead of having a model re-read a note and redo the work every time.
+- 🏃 **Runs standalone, no model.** A learned skill is just code. It re-executes in ~40 s with zero tokens, so you can cron it to run every day, instead of having a model re-read a note and redo the work every time.
 - 🛠️ **Has a real software-engineering surface.** Because skills are code, they inherit code's tools and properties for free: inheritance, polymorphism, encapsulation, tests, versioning, and history. A skill is executable and verifiable, not prose the model has to interpret.
 - ✅ **Verified twice before it lands.** First an input gate: a solve only becomes material if it got the task right, so a wrong answer never feeds a skill. Then the distilled skill must replay its own answers standalone, with no model, so a broken skill can't slip in and poison the library.
 - 🌱 **Gets stronger the more you use it.** New solves widen a skill in place, self-evolving as you go. Regression-replay keeps old coverage from breaking, so a skill that's already been verified is never damaged by a later change.

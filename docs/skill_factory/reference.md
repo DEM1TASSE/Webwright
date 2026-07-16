@@ -98,3 +98,26 @@ uses the same backend as the running agent. No gateway or key is hardcoded.
 | `SKILL_LIBRARY_ROOT` | skill_use | default library path |
 | `WORKSPACE_DIR` | generated skills | where a skill writes its artifacts (default: cwd) |
 | `MODEL_CFG` | examples/quickstart.sh | model yaml for the agent in solve/full modes |
+
+### `--jobs N` — solving in parallel
+
+Each solve takes 10-30 minutes and they don't depend on each other, so they can overlap. `N` is
+any number you like; the default is `1`, meaning one after another.
+
+```bash
+--jobs 1     # the default — one at a time, output streams to your terminal
+--jobs 3     # three at once — wall clock drops to roughly the slowest one
+--jobs 10    # more than you have instances just means "all of them"
+```
+
+With `N > 1` each solve writes to `build_outputs/solve_NN.log` instead of interleaving on your
+terminal, a progress line every 30 s shows the step each one is on, and each prints its result as
+it finishes.
+
+The real ceiling isn't the flag — it's the site. Too many browsers from one IP and you get
+throttled or soft-blocked, which shows up as *your* solves failing when it's the site pushing
+back, and a throttled page can even poison a training answer. **3-5 is a safe place to start**;
+this box runs 3 against Google Flights and Amazon without trouble.
+
+Parallelism only speeds up the solving half. `learn` — distil, then replay each instance in a
+browser — is serial, so `--jobs` won't shorten those 5-13 minutes.

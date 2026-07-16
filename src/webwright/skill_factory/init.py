@@ -41,7 +41,7 @@ _SYS = (
 
 
 def _yaml_skeleton(task: str, params: list[str], start_url: str, rows: int,
-                   drifts: bool = False) -> str:
+                   drifts: bool = False, reason: str = "") -> str:
     cols = ", ".join(f"{p}: \"____\"" for p in params)
     instance_lines = "\n".join(f"  - {{{cols}}}" for _ in range(rows))
     # strict compares the replay against the recorded answer, so it is only fair when the
@@ -49,10 +49,10 @@ def _yaml_skeleton(task: str, params: list[str], start_url: str, rows: int,
     # working skill for doing its job — pick shape up front rather than let the user find out
     # after paying for the solves.
     verify = "shape " if drifts else "strict"
-    why = ("# this answer drifts (prices/stock/rankings change on their own), so replay only\n"
-           "  # checks the shape — strict would reject a working skill when the value moved\n  "
+    why = (f"# this answer drifts ({reason}), so replay only checks the shape —\n"
+           f"  # strict would reject a working skill for reporting today's truth\n  "
            if drifts else
-           "# this answer should hold still, so replay demands the recorded answer back\n  ")
+           f"# this answer should hold still ({reason}), so replay demands it back exactly\n  ")
     return (
         f"# Draft skill spec — fill the ____ values (your ground truth), then: build skill.yaml\n"
         f"# The {{holes}} in `task` are the parameters; each is a column below.\n\n"
@@ -92,7 +92,9 @@ def init(need: str, out_path: str, rows: int = 3) -> int:
     # trust the holes actually in the template over a possibly-mismatched params list
     params = [p for p in params if p in holes] or sorted(holes)
     drifts = bool(data.get("drifts"))
-    out.write_text(_yaml_skeleton(task, params, start_url, rows, drifts), encoding="utf-8")
+    reason = (data.get("drift_reason") or "").strip().rstrip(".") or (
+        "it changes on its own" if drifts else "nothing in it moves on its own")
+    out.write_text(_yaml_skeleton(task, params, start_url, rows, drifts, reason), encoding="utf-8")
     print(f"wrote {out}\n\n  task:      {task}\n  params:    {params}\n  start_url: {start_url}\n  verify:    {'shape (this answer drifts)' if drifts else 'strict (this answer should hold still)'}\n\n"
           f"Next: fill the ____ values in {out}, then\n"
           f"  python -m webwright.skill_factory build {out} --library ./library -c your_model.yaml")

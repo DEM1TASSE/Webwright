@@ -2,12 +2,13 @@
 
 [← back to the module README](../../src/webwright/skill_factory/README.md)
 
-Three ways in, in the order you'd meet them:
+Four sections, in the order you'd meet them:
 
 1. **[Run the checked-in skill](#1-run-the-checked-in-skill)** — no model, no key, ~40 s.
-2. **[Watch the loop build it](#2-watch-the-loop-build-that-skill)** — the Google Flights
-   example, end to end, ~40 min.
-3. **[Do it for your own task](#3-do-it-for-your-own-task)** — `init` → fill → `build`, or
+2. **[Reuse it with the agent](#2-reuse-the-skill-with-the-agent)** — `ask` / `solve`, needs a key.
+3. **[Watch the library get built](#3-watch-the-library-get-built-from-nothing)** — the Google
+   Flights example, from nothing, ~40 min.
+4. **[Do it for your own task](#4-do-it-for-your-own-task)** — `init` → fill → `build`, or
    `learn` if you already have runs. **This is the part that's yours.**
 
 Solves are long (10-30 min each). If your shell or tooling enforces command timeouts, run them
@@ -35,27 +36,35 @@ reads the same on your machine as on ours. That's what lets the skill be replay-
 (`--verify strict`) and reused standalone with a straight face. The **fare** on the same page
 would fail all three. See [choosing a task](#choosing-a-task-that-can-be-verified).
 
-## 2. Watch the loop build that skill
+## 2. Reuse the skill with the agent
+
+The library already has the skill; this is the agent using it. Same route as step 1, so the
+numbers are comparable.
 
 ```bash
 export OPENAI_API_KEY=...
 ./quickstart.sh ask      # ~10 s — one LLM call: "can the library help here?" -> use/adapt/skip
-./quickstart.sh solve    # ~5 min — a full agent solve of an unseen route, reusing the skill
+./quickstart.sh solve    # ~5 min — a full agent solve of SEA->DEN, reusing the skill
 ```
 
 `demo` (above) runs the skill itself. `ask` only **retrieves** — one round trip printing the JSON
 the agent is handed (`verdict / skill_id / source_path / how_to_reuse`), which is the integration
-surface, at a tenth of a solve's cost. `solve` is the agent actually doing a task with it.
+surface, at a tenth of a solve's cost. `solve` is the agent actually doing the task with it.
 
-To watch the library get built from nothing, use the shipped spec — same 3 solves → learn, but
-parallel, resumable, and it prints the plan before spending anything:
+## 3. Watch the library get built from nothing
+
+The spec that produced the checked-in library ships with it. `--dry-run` prints the plan and
+spends nothing:
 
 ```bash
 cd src/webwright/skill_factory/examples
 python -m webwright.skill_factory build flights.skill.yaml --library ./library --jobs 3 --dry-run
 ```
 
-What that does, spelled out — this is the loop, without the wrapper:
+<details>
+<summary><b>The same loop by hand, without the wrapper</b> — what <code>build</code> is doing for you</summary>
+
+<br>
 
 ```bash
 # custom / OpenAI-compatible gateway? TWO knobs, both needed:
@@ -93,6 +102,8 @@ examples/solve_with_library.sh \
   https://www.google.com/flights "$PWD/library" -o outputs -c base.yaml -c model_openai.yaml
 # outputs/<run>/skill_decision.json -> {"verdict": "use", "skill_id": "what_is_the_earliest_nonstop_..."}
 ```
+
+</details>
 
 The library is also usable **without the agent** — this is the whole point of code skills:
 
@@ -145,32 +156,35 @@ Exactly this loop, already run and checked in: `examples/learned_library/` (prov
 
 ---
 
-## 3. Do it for your own task
+## 4. Do it for your own task
 
 The example above is ours. This is the part that's yours.
 
 ```bash
 # a task you keep repeating -> draft a spec
-python -m webwright.skill_factory init "the cheapest <product> on Amazon, for any product"
+python -m webwright.skill_factory init "the earliest nonstop flight from A to B on a given date"
 ```
 
-`init` makes one model call and writes `skill.yaml`:
+`init` makes one model call and writes `skill.yaml` — this is its real output, verbatim:
 
 ```yaml
-task: Find the cheapest {product} on Amazon and return its brand and price.
-start_url: https://www.amazon.com/    # guessed — check it opens the right page
+# Draft skill spec — fill the ____ values (your ground truth), then: build skill.yaml
+# The {holes} in `task` are the parameters; each is a column below.
+
+task: Find the earliest nonstop flight from {origin_airport} to {destination_airport} on {travel_date} and return the departure time, arrival time, airline, and flight number.
+start_url: https://www.google.com/travel/flights    # guessed — check it opens the right page
 
 instances:            # give a few real instances (3+ makes a verifiable skill)
-  - {product: "____"}
-  - {product: "____"}
-  - {product: "____"}
+  - {origin_airport: "____", destination_airport: "____", travel_date: "____"}
+  - {origin_airport: "____", destination_airport: "____", travel_date: "____"}
+  - {origin_airport: "____", destination_airport: "____", travel_date: "____"}
 
-build:
-  # this answer drifts (prices/stock/rankings change on their own), so replay only
-  # checks the shape — strict would reject a working skill when the value moved
-  verify: shape
+build:                # optional policy — CLI flags override these
+  # this answer should hold still (published flight schedules for a given future date typically
+  # remain the same tomorrow), so replay demands it back exactly
+  verify: strict     # strict (reproduce answers) | shape (drifting data) | off
   verify_rounds: 2
-  on_fail: reject
+  on_fail: reject     # reject | reference
   chunk: 25
 ```
 
@@ -180,14 +194,36 @@ model invented would quietly train the skill on an answer nobody checked. Fill t
 at the guessed `start_url`, then:
 
 ```bash
-python -m webwright.skill_factory build skill.yaml --library ./library --jobs 3
+python -m webwright.skill_factory build skill.yaml --library ./library --jobs 3   # 3 at once
 ```
 
 `build` = **solve × N + learn**. It fills the template with each instance, prints the tasks it's
 about to solve and asks before spending agent time (`--dry-run` shows the plan and stops,
 `--yes` skips the prompt), solves them, and hands the batch to `learn`. **An instance that
 already produced an answer is never re-solved** — if a run dies halfway, re-running `build` only
-pays for what's missing.
+pays for what's missing. Solves are slow and independent, so `--jobs N` runs N at a time; see
+[the reference](reference.md#--jobs-n--solving-in-parallel) for tuning and the rate-limit caveat.
+
+#### When the answer moves on its own
+
+`init` also judges whether your answer **drifts**, and picks the verify mode to match. Ask it for
+something live and it says so in the spec it writes:
+
+```bash
+python -m webwright.skill_factory init "the latest release version of a GitHub repo, for any repo"
+```
+```yaml
+build:
+  # this answer drifts (new releases can be published), so replay only checks the shape —
+  # strict would reject a working skill for reporting today's truth
+  verify: shape
+```
+
+That's the difference `strict` can't paper over: a flight schedule for a fixed future date reads
+the same tomorrow, so demanding the recorded answer back is fair. A release version doesn't —
+`strict` would reject a perfectly good skill for correctly reporting a newer one. `shape` still
+catches a **broken** skill (empty or misshapen output); it just can't catch a **wrong** one. For
+that you need `--golds`.
 
 ### Already have runs? Skip the solving
 
@@ -200,41 +236,11 @@ python -m webwright.skill_factory learn outputs/ --library ./library
 
 That's the day-to-day path. The rest of this section is for a task you *haven't* solved yet.
 
-### `--jobs N`: solve N instances at once
-
-Each solve takes 10-30 minutes and they don't depend on each other, so they can overlap. `N` is
-any number you like; the default is `1`, meaning one after another.
-
-```bash
---jobs 1     # the default — one at a time, output streams to your terminal
---jobs 3     # three at once — wall clock drops to roughly the slowest one
---jobs 10    # more than you have instances just means "all of them"
-```
-
-With `N > 1` each solve writes to `build_outputs/solve_NN.log` instead of interleaving on your
-terminal, a progress line every 30 s shows the step each one is on, and each prints its result as
-it finishes.
-
-The real ceiling isn't the flag — it's the site. Too many browsers from one IP and you get
-throttled or soft-blocked, which shows up as *your* solves failing when it's the site pushing
-back, and a throttled page can even poison a training answer. **3-5 is a safe place to start**;
-this box runs 3 against Google Flights and Amazon without trouble.
-
-Parallelism only speeds up the solving half. `learn` — distil, then replay each instance in a
-browser — is serial, so `--jobs` won't shorten those 5-13 minutes.
-
 ### Vary the parameters, not just the count
 
-Distillation lifts a parameter from the **differences it observes**. A value that's identical in
-every instance has no evidence behind it and may get baked in. So two instances that vary
-everything you care about beat five that share a date:
-
-```yaml
-# a spec with two params: two instances that move BOTH beat five that only move one
-instances:
-  - {product: "makeup remover", max_price: "10"}
-  - {product: "usb mouse",      max_price: "25"}
-```
+Distillation lifts a parameter from the differences it **observes**, so a value that's identical
+in every instance has no evidence behind it and may get baked in. Two instances that vary
+everything you care about beat five that share a date.
 
 ### Choosing a task that can be verified
 
