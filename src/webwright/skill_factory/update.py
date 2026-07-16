@@ -78,9 +78,14 @@ def _replay(code: str, traces: list["Trace"], strict: bool = False) -> list[str]
     import tempfile
     from .gate import gate
     fails = []
+    live = [t for t in traces if t.answer is not None]
     for i, tr in enumerate(traces):
         if tr.answer is None:
             continue
+        # each replay drives a live site for up to 240s; without a line per instance the
+        # whole verify phase is minutes of silence that reads as a hang
+        print(f"      replaying {live.index(tr) + 1}/{len(live)}: "
+              f"{json.dumps(tr.meta.get('params'), ensure_ascii=False)[:70]}", flush=True)
         with tempfile.TemporaryDirectory() as td:
             tdp = Path(td)
             (tdp / "skill.py").write_text(code, encoding="utf-8")
@@ -191,6 +196,7 @@ def _refine(traces: list[Trace], library: Library, verify: str = "off",
         )
     sys_prompt = _REFINE_SYS + (_REFINE_INCREMENTAL if existing else "")
     user_msg = "\n\n".join(blocks)
+    print(f"    distilling {len(traces)} solve(s) into {sid} …", flush=True)
     code = _extract_code(llm(sys_prompt, user_msg, max_tokens=16000))
     verified = None
     if verify != "off":   # replay the candidate on its own training taskspecs before it may land
@@ -213,11 +219,15 @@ def _refine(traces: list[Trace], library: Library, verify: str = "off",
                 return []
         verified, fails = False, []
         for attempt in range(1, max(rounds, 1) + 1):
+            print(f"    verify ({verify}) round {attempt}/{max(rounds, 1)} — "
+                  f"{len(replay_set)} instance(s), no model:", flush=True)
             fails = _replay(code, replay_set, strict=(verify == "strict"))
             if not fails:
                 verified = True
                 break
             if attempt <= max(rounds, 1) - 1:   # feedback rounds remaining
+                print(f"      {len(fails)} failed — re-distilling with the failures as feedback",
+                      flush=True)
                 feedback = ("\n\n## Replay failures of your previous attempt (fix the GENERAL "
                             "logic, do NOT hardcode answers)\n" + "\n".join(fails) +
                             "\n\n## Your previous attempt\n```python\n" + code + "\n```")
