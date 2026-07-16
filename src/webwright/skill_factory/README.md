@@ -1,3 +1,4 @@
+
 # Web Skill Factory
 
 **Most agent skills are context the model refers to. Ours are programs.**
@@ -8,7 +9,8 @@ run without a model and compose into the next task instead of re-exploring the s
 
 ## 🎥 Demo
 
-https://github.com/user-attachments/assets/d15b1f83-2c8d-4f2d-bbc5-be365c0bcf4e
+https://github.com/user-attachments/assets/3f93fac4-bb93-4ea5-8b45-280ed1334feb
+
 
 ## ✨ Highlights
  
@@ -89,8 +91,9 @@ export OPENAI_API_KEY=...
 
 Two ways in, depending on whether you've solved the task yet.
 
-**3a. You have a task you keep repeating, but no runs yet.** Describe it, fill in your values,
-build:
+**3a. You have a task you keep repeating, but no runs yet.**
+
+Describe it, fill in your values, build:
 
 ```bash
 python -m webwright.skill_factory init "your task"
@@ -108,7 +111,9 @@ Nothing runs until you say so. `build` prints the tasks it's about to solve and 
 > If your answer moves on its own (a price, a ranking), the shape check can't tell right from
 > wrong. Supply `--golds`, or plan to gate it with a judge (see Limitations).
 
-**3b. You already have a folder of webwright runs.** Skip the solving and distil what's there:
+**3b. You already have a folder of webwright runs.**
+
+Skip the solving and distill what's there:
 
 ```bash
 python -m webwright.skill_factory learn outputs/ --library ./library
