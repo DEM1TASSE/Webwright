@@ -1,0 +1,239 @@
+"""Unit tests: build (spec -> concrete tasks -> learn) and init (need -> spec skeleton).
+
+Everything here is LLM-free and site-free: the solve subprocess and the one LLM call in init
+are stubbed, so what is under test is the logic those two commands actually own — template
+substitution, policy precedence, resume detection, and the shape of the drafted spec.
+"""
+import json
+import tempfile
+from pathlib import Path
+
+import pytest
+import yaml
+
+import webwright.skill_factory.build as B
+import webwright.skill_factory.init as I
+
+
+# ---------------------------------------------------------------- build: substitution
+
+def test_fill_substitutes_every_hole():
+    got = B._fill("earliest flight from {origin} to {dest} on {date}",
+                  {"origin": "SEA", "dest": "JFK", "date": "2026-08-15"})
+    assert got == "earliest flight from SEA to JFK on 2026-08-15"
+
+
+def test_fill_reports_the_missing_value_instead_of_guessing():
+    # a hole with no value would otherwise be solved as the literal "{date}"
+    with pytest.raises(SystemExit) as e:
+        B._fill("flight on {date} from {origin}", {"origin": "SEA"})
+    assert "date" in str(e.value)
+
+
+def test_fill_ignores_extra_columns():
+    assert B._fill("hi {a}", {"a": "x", "unused": "y"}) == "hi x"
+
+
+# ---------------------------------------------------------------- build: policy precedence
+
+def test_policy_precedence_cli_over_spec_over_default():
+    assert B._pick("shape", "strict", "strict") == "shape"   # CLI wins
+    assert B._pick(None, "shape", "strict") == "shape"       # spec beats the default
+    assert B._pick(None, None, "strict") == "strict"         # default when nobody said
+
+
+# ---------------------------------------------------------------- build: resume
+
+def _run_dir(outputs: Path, name: str, task: str, answer=True):
+    d = outputs / name
+    d.mkdir(parents=True)
+    (d / "task.json").write_text(json.dumps({"task": task}), encoding="utf-8")
+    if answer:
+        (d / "agent_response.json").write_text('{"retrieved_data": ["x"]}', encoding="utf-8")
+    return d
+
+
+def test_resume_finds_a_prior_run_that_produced_an_answer():
+    with tempfile.TemporaryDirectory() as d:
+        out = Path(d)
+        # the real prompt wraps the task in a skill hint + answer instruction, so the match
+        # must be a containment, not equality
+        _run_dir(out, "build_00_2026", "## Skill library ... --- cheapest widget on Acme. Also write...")
+        assert B._already_solved(out, "cheapest widget on Acme") is not None
+        assert B._already_solved(out, "cheapest gadget on Acme") is None
+
+
+def test_resume_ignores_a_run_that_never_wrote_an_answer():
+    with tempfile.TemporaryDirectory() as d:
+        out = Path(d)
+        _run_dir(out, "build_00_2026", "cheapest widget on Acme", answer=False)
+        assert B._already_solved(out, "cheapest widget on Acme") is None
+
+
+# ---------------------------------------------------------------- build: spec validation + flow
+
+def _spec(tmp: Path, **over) -> Path:
+    spec = {"task": "cheapest {product} on Acme",
+            "start_url": "https://acme.example",
+            "instances": [{"product": "widget"}, {"product": "gadget"}]}
+    spec.update(over)
+    p = tmp / "skill.yaml"
+    p.write_text(yaml.safe_dump(spec), encoding="utf-8")
+    return p
+
+
+@pytest.mark.parametrize("missing", ["task", "start_url", "instances"])
+def test_spec_must_have_the_three_things_build_cannot_invent(missing):
+    with tempfile.TemporaryDirectory() as d:
+        p = _spec(Path(d), **{missing: "" if missing != "instances" else []})
+        with pytest.raises(SystemExit):
+            B.build(str(p), str(Path(d) / "lib"), [], dry_run=True)
+
+
+def test_dry_run_neither_solves_nor_learns():
+    calls = []
+    with tempfile.TemporaryDirectory() as d:
+        p = _spec(Path(d))
+        B._solve = lambda *a, **k: calls.append("solve")
+        B.learn = lambda *a, **k: calls.append("learn")
+        assert B.build(str(p), str(Path(d) / "lib"), [], dry_run=True) == 0
+        assert calls == []
+
+
+def test_build_solves_each_instance_then_hands_the_batch_to_learn(monkeypatch):
+    seen, learned = [], {}
+    with tempfile.TemporaryDirectory() as d:
+        tmp = Path(d)
+        p = _spec(tmp)
+        outputs = tmp / "build_outputs"
+
+        def fake_solve(core_task, start_url, library, out, task_id, cfg, log_path=None):
+            seen.append(core_task)
+            _run_dir(Path(out), f"{task_id}_2026", core_task)
+            return 0
+
+        def fake_learn(runs_dir, lib, **kw):
+            learned.update({"runs_dir": runs_dir, **kw})
+
+        monkeypatch.setattr(B, "_solve", fake_solve)
+        monkeypatch.setattr(B, "learn", fake_learn)
+        B.build(str(p), str(tmp / "lib"), [], assume_yes=True, verify="shape", verify_rounds=3)
+
+        assert seen == ["cheapest widget on Acme", "cheapest gadget on Acme"]
+        assert learned["runs_dir"] == str(outputs)
+        # the flags the user chose must reach learn, not be silently dropped
+        assert learned["verify"] == "shape" and learned["rounds"] == 3
+
+
+def test_an_already_solved_instance_is_not_solved_again(monkeypatch):
+    """Solving is the expensive half; a re-run must not re-spend it."""
+    seen = []
+    with tempfile.TemporaryDirectory() as d:
+        tmp = Path(d)
+        p = _spec(tmp)
+        outputs = tmp / "build_outputs"
+        _run_dir(outputs, "build_00_2026", "cheapest widget on Acme")   # widget already done
+
+        monkeypatch.setattr(B, "_solve", lambda ct, *a, **k: (seen.append(ct), 0)[1])
+        monkeypatch.setattr(B, "learn", lambda *a, **k: None)
+        B.build(str(p), str(tmp / "lib"), [], assume_yes=True)
+
+        assert seen == ["cheapest gadget on Acme"], "the solved instance should have been skipped"
+
+
+def test_a_solve_that_wrote_its_answer_counts_even_if_it_exited_non_zero(monkeypatch, capsys):
+    """learn reads the artifact, so build must not call it a failure."""
+    with tempfile.TemporaryDirectory() as d:
+        tmp = Path(d)
+        p = _spec(tmp, instances=[{"product": "widget"}])
+
+        def killed_but_wrote(core_task, start_url, library, out, task_id, cfg, log_path=None):
+            _run_dir(Path(out), f"{task_id}_2026", core_task)
+            return -15   # SIGTERM
+
+        monkeypatch.setattr(B, "_solve", killed_but_wrote)
+        monkeypatch.setattr(B, "learn", lambda *a, **k: None)
+        B.build(str(p), str(tmp / "lib"), [], assume_yes=True)
+        assert "solved 1/1" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------- init: the drafted spec
+
+def _fake_llm(payload):
+    return lambda system, user, **kw: payload
+
+
+def test_init_drafts_a_spec_whose_holes_match_its_instance_columns(monkeypatch):
+    monkeypatch.setattr(I, "llm_json", _fake_llm({
+        "task": "cheapest {product} on Acme", "params": ["product"],
+        "start_url": "https://acme.example", "drifts": True}))
+    with tempfile.TemporaryDirectory() as d:
+        out = Path(d) / "skill.yaml"
+        I.init("cheapest stuff on Acme", str(out))
+        spec = yaml.safe_load(out.read_text(encoding="utf-8"))   # must be valid YAML
+        assert set(spec["instances"][0]) == {"product"}, "columns must match the template's holes"
+        assert spec["start_url"] == "https://acme.example"
+
+
+def test_init_drafts_valid_yaml_for_a_multi_param_task(monkeypatch):
+    """A one-column row needs no separator, so single-param specs cannot catch a broken
+    flow mapping. Most real tasks have several params — that is where it bites."""
+    monkeypatch.setattr(I, "llm_json", _fake_llm({
+        "task": "earliest flight from {origin} to {dest} on {date}",
+        "params": ["origin", "dest", "date"],
+        "start_url": "https://flights.example", "drifts": False}))
+    with tempfile.TemporaryDirectory() as d:
+        out = Path(d) / "skill.yaml"
+        I.init("earliest flight between two cities", str(out))
+        spec = yaml.safe_load(out.read_text(encoding="utf-8"))   # would raise on a bad flow map
+        assert set(spec["instances"][0]) == {"origin", "dest", "date"}
+        # and the drafted spec must be something build can actually consume
+        B._fill(spec["task"], {"origin": "SEA", "dest": "JFK", "date": "2026-08-15"})
+
+
+def test_init_leaves_the_values_blank_for_the_user_to_fill(monkeypatch):
+    """The model proposes structure; the ground truth stays the user's."""
+    monkeypatch.setattr(I, "llm_json", _fake_llm({
+        "task": "cheapest {product} on Acme", "params": ["product"],
+        "start_url": "https://acme.example", "drifts": True}))
+    with tempfile.TemporaryDirectory() as d:
+        out = Path(d) / "skill.yaml"
+        I.init("cheapest stuff on Acme", str(out), rows=3)
+        spec = yaml.safe_load(out.read_text(encoding="utf-8"))
+        assert len(spec["instances"]) == 3
+        assert all(i["product"] == "____" for i in spec["instances"])
+
+
+@pytest.mark.parametrize("drifts,expected", [(True, "shape"), (False, "strict")])
+def test_init_picks_the_verify_mode_from_whether_the_answer_drifts(monkeypatch, drifts, expected):
+    """strict on a drifting answer rejects a working skill — the default must follow the task."""
+    monkeypatch.setattr(I, "llm_json", _fake_llm({
+        "task": "x {p}", "params": ["p"], "start_url": "https://a.example", "drifts": drifts}))
+    with tempfile.TemporaryDirectory() as d:
+        out = Path(d) / "skill.yaml"
+        I.init("something", str(out))
+        assert yaml.safe_load(out.read_text(encoding="utf-8"))["build"]["verify"] == expected
+
+
+def test_init_refuses_a_need_with_nothing_varying(monkeypatch):
+    """No holes means one task, not a task type — there is no reusable skill in it."""
+    monkeypatch.setattr(I, "llm_json", _fake_llm({
+        "task": "today's top headline on Example News", "params": [],
+        "start_url": "https://news.example", "drifts": True}))
+    with tempfile.TemporaryDirectory() as d:
+        out = Path(d) / "skill.yaml"
+        with pytest.raises(SystemExit) as e:
+            I.init("today's headline", str(out))
+        assert "varies" in str(e.value)
+        assert not out.exists()
+
+
+def test_init_will_not_clobber_an_existing_spec(monkeypatch):
+    monkeypatch.setattr(I, "llm_json", _fake_llm({
+        "task": "x {p}", "params": ["p"], "start_url": "https://a.example"}))
+    with tempfile.TemporaryDirectory() as d:
+        out = Path(d) / "skill.yaml"
+        out.write_text("# my filled-in values", encoding="utf-8")
+        with pytest.raises(SystemExit):
+            I.init("something", str(out))
+        assert out.read_text(encoding="utf-8") == "# my filled-in values"
