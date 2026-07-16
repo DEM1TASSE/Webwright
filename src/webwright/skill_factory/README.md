@@ -51,18 +51,14 @@ pitch, and it buys three things a text playbook can't:
 
 ### How it compares
 
-Published skill collections (anthropics/skills and friends) are prose you install — the model
-reads them and still does all the work. The comparisons worth making are with the two projects
-that also produce something executable or trainable:
-
-|  | SkillOpt | OpenCLI | **Web Skill Factory** |
-|---|---|---|---|
-| a skill **is** | prose the model reads (`best_skill.md`) | a JS adapter — one CLI command per site capability | **a parameterized Python program that runs standalone, with no model** |
-| **produced by** | trajectory-driven edits to one document; no parameters | an agent authors it per site (recon → strategy → code → verify) and declares its `args` | **distilling N solves of the same task template — the parameters are the differences actually observed between your solves** |
-| **whose need it serves** | general agent benchmarks — ALFWorld, DocVQA, spreadsheets, math; none of them web | **the site's common capabilities**, defined upstream, shared by everyone | **your specific need** — you set the template, the parameters and the constraints, including the private, cross-site, multi-step workflow no shared catalogue would carry |
-| **verify gate** | one — the candidate must score higher on a held-out split | one — `opencli browser verify` at authoring time, plus live adapter tests | **two** — *input:* only gate-passed solves become material, so a wrong answer never feeds a skill; *replay:* the skill must reproduce its own training answers standalone, with no model |
-| agent can **adapt** it | ✗ read-only | 🔶 editable — but **offline**, in the authoring or repair flow, to fix the catalogue | **✓ at runtime, per task** — `use` / `adapt` / `skip`: reuse its navigation and extraction core, change only the last step, without touching the library |
-| **grows new capability from your runs** | ✓ — but what grows is prose for a frozen agent, not a runnable program | ✗ — AutoFix restores what the adapter already did; nothing accumulates from your runs | **✓ each new solve widens params, strategies and fallbacks in place, regression-replayed so old coverage can't break** |
+|  | published `SKILL.md`<br>(anthropics/skills & co.) | SkillOpt | OpenCLI | **Web Skill Factory** |
+|---|---|---|---|---|
+| a skill **is** | prose the model reads | prose the model reads (`best_skill.md`) | a JS adapter — one CLI command per site capability | **a parameterized Python program that runs standalone, with no model** |
+| **produced by** | written by people and published — you install it; whoever wrote it decided what it covers | trajectory-driven edits to one document; no parameters | an agent authors it per site (recon → strategy → code → verify) and declares its `args` | **distilling N solves of the same task template — the parameters are the differences actually observed between your solves** |
+| **whose need it serves** | whatever its author had in mind, shared by everyone | general agent benchmarks — ALFWorld, DocVQA, spreadsheets, math; none of them web | **the site's common capabilities**, defined upstream, shared by everyone | **your specific need** — you set the template, the parameters and the constraints, including the private, cross-site, multi-step workflow no shared catalogue would carry |
+| **verify gate** | none | one — the candidate must score higher on a held-out split | one — `opencli browser verify` at authoring time, plus live adapter tests | **two** — *input:* only gate-passed solves become material, so a wrong answer never feeds a skill; *replay:* the skill must reproduce its own training answers standalone, with no model |
+| agent can **adapt** it | ✗ read-only | ✗ read-only | 🔶 editable — but **offline**, in the authoring or repair flow, to fix the catalogue | **✓ at runtime, per task** — `use` / `adapt` / `skip`: reuse its navigation and extraction core, change only the last step, without touching the library |
+| **grows new capability from your runs** | ✗ — it is what its author last wrote | ✓ — but what grows is prose for a frozen agent, not a runnable program | ✗ — AutoFix restores what the adapter already did; nothing accumulates from your runs | **✓ each new solve widens params, strategies and fallbacks in place, regression-replayed so old coverage can't break** |
 
 **What's different is not "we verify and they don't."** SkillOpt gates on a held-out score;
 OpenCLI ships a `verify` step and live adapter tests, and `opencli-autofix` even repairs an
