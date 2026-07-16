@@ -210,8 +210,8 @@ python -m webwright.skill_factory build skill.yaml --library ./library --jobs 3 
 about to solve and asks before spending agent time (`--dry-run` shows the plan and stops,
 `--yes` skips the prompt), solves them, and hands the batch to `learn`. **An instance that
 already produced an answer is never re-solved** — if a run dies halfway, re-running `build` only
-pays for what's missing. Solves are slow and independent, so `--jobs N` runs N at a time; see
-[the reference](reference.md#--jobs-n--solving-in-parallel) for tuning and the rate-limit caveat.
+pays for what's missing. Solves are slow and independent, so `--jobs N` runs N at a time; the
+[reference](reference.md#all-parameters) has the tuning and the rate-limit caveat.
 
 #### When the answer moves on its own
 

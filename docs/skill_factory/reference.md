@@ -82,7 +82,7 @@ can be overridden here; machine-specific things are flags only, so the spec stay
 |---|---|---|
 | `--library` | `library` | library directory to grow |
 | `-c`, `--config` | — | webwright model config for the AGENT (repeatable). It reads a yaml, **not** the env vars |
-| `--jobs` | 1 | solve N instances at once — [see below](#--jobs-n--solving-in-parallel) |
+| `--jobs` | 1 | solve N instances at once; more than you have means all of them. N > 1 sends each solve to `build_outputs/solve_NN.log` and ticks progress every 30 s. The ceiling is the site, not the flag — too many browsers from one IP gets you throttled, which reads as your solves failing. 3-5 is safe. Only solving parallelises; `learn` is serial |
 | `--outputs` | `<spec dir>/build_outputs` | where solves are written; also what you point `learn` at to retry |
 | `--dry-run` | off | print the plan (substituted tasks, policy, what would be solved) and stop |
 | `--yes` | off | skip the confirmation before spending agent time |
@@ -127,26 +127,3 @@ can be overridden here; machine-specific things are flags only, so the spec stay
 | `SKILL_LIBRARY_ROOT` | skill_use | default library path |
 | `WORKSPACE_DIR` | generated skills | where a skill writes its artifacts (default: cwd) |
 | `MODEL_CFG` | examples/quickstart.sh | model yaml for the agent in solve/full modes |
-
-### `--jobs N` — solving in parallel
-
-Each solve takes 10-30 minutes and they don't depend on each other, so they can overlap. `N` is
-any number you like; the default is `1`, meaning one after another.
-
-```bash
---jobs 1     # the default — one at a time, output streams to your terminal
---jobs 3     # three at once — wall clock drops to roughly the slowest one
---jobs 10    # more than you have instances just means "all of them"
-```
-
-With `N > 1` each solve writes to `build_outputs/solve_NN.log` instead of interleaving on your
-terminal, a progress line every 30 s shows the step each one is on, and each prints its result as
-it finishes.
-
-The real ceiling isn't the flag — it's the site. Too many browsers from one IP and you get
-throttled or soft-blocked, which shows up as *your* solves failing when it's the site pushing
-back, and a throttled page can even poison a training answer. **3-5 is a safe place to start**;
-this box runs 3 against Google Flights and Amazon without trouble.
-
-Parallelism only speeds up the solving half. `learn` — distil, then replay each instance in a
-browser — is serial, so `--jobs` won't shorten those 5-13 minutes.
