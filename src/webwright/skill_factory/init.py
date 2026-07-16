@@ -63,8 +63,9 @@ def _yaml_skeleton(task: str, params: list[str], start_url: str, rows: int,
         f"build:                # optional policy — CLI flags override these\n"
         f"  {why}"
         f"verify: {verify}     # strict (reproduce answers) | shape (drifting data) | off\n"
-        f"  verify_rounds: 2\n"
-        f"  on_fail: reject     # reject | reference\n"
+        f"  draws: 2            # independent distillation attempts — a draw can come out brittle\n"
+        f"  verify_rounds: 2    # repair rounds within one attempt\n"
+        f"  on_fail: reject     # reject = executable or nothing | reference = keep it as a prior\n"
         f"  chunk: 25\n"
     )
 

@@ -107,7 +107,7 @@ can be overridden here; machine-specific things are flags only, so the spec stay
 |---|---|---|
 | `--manifest` | required | `{template, runs:[{dir, admit(bool, REQUIRED), params, verdict, site, output_schema, answer?, credentials?}]}` |
 | `--library` | required | library directory |
-| `--verify` / `--verify-rounds` / `--on-fail` | `off` / 2 / `reject` | as above (off by default: benchmark sites may need credentials) |
+| `--verify` / `--verify-rounds` / `--draws` / `--on-fail` | `off` / 2 / 2 / `reject` | as above (off by default: benchmark sites may need credentials) |
 
 ### `python -m webwright.tools.skill_use`
 

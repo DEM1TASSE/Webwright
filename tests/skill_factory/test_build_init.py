@@ -5,6 +5,7 @@ are stubbed, so what is under test is the logic those two commands actually own 
 substitution, policy precedence, resume detection, and the shape of the drafted spec.
 """
 import json
+import re
 import tempfile
 from pathlib import Path
 
@@ -237,3 +238,18 @@ def test_init_will_not_clobber_an_existing_spec(monkeypatch):
         with pytest.raises(SystemExit):
             I.init("something", str(out))
         assert out.read_text(encoding="utf-8") == "# my filled-in values"
+
+
+def test_the_spec_init_writes_is_exactly_what_build_reads(monkeypatch):
+    """A key init writes that build ignores is a lie; a key build reads that init omits is a knob
+    the user never learns they have. Adding --draws broke the second half — pin both directions."""
+    import inspect
+    monkeypatch.setattr(I, "llm_json", _fake_llm({
+        "task": "x {p}", "params": ["p"], "start_url": "https://a.example", "drifts": False}))
+    with tempfile.TemporaryDirectory() as d:
+        out = Path(d) / "skill.yaml"
+        I.init("something", str(out))
+        written = set(yaml.safe_load(out.read_text(encoding="utf-8"))["build"])
+
+    read = set(re.findall(r'policy\.get\("([a-z_]+)"\)', inspect.getsource(B)))
+    assert written == read, f"init writes {sorted(written)}, build reads {sorted(read)}"
