@@ -39,16 +39,23 @@ would fail all three. See [choosing a task](#choosing-a-task-that-can-be-verifie
 
 ```bash
 export OPENAI_API_KEY=...
-./quickstart.sh ask      # one LLM call: "can the library help here?" -> use / adapt / skip
-./quickstart.sh solve    # a full agent solve of an unseen route, reusing the checked-in skill
-./quickstart.sh full     # the whole loop from nothing: 3 solves -> learn -> reuse (~40 min)
+./quickstart.sh ask      # ~10 s — one LLM call: "can the library help here?" -> use/adapt/skip
+./quickstart.sh solve    # ~5 min — a full agent solve of an unseen route, reusing the skill
 ```
 
-`demo` (above) runs the skill itself. `ask` only **retrieves** — one round trip showing what the
-agent gets told about the library, without solving anything. `solve` is the agent actually doing
-a task with it. `full` rebuilds the library from scratch so you can watch it being made.
+`demo` (above) runs the skill itself. `ask` only **retrieves** — one round trip printing the JSON
+the agent is handed (`verdict / skill_id / source_path / how_to_reuse`), which is the integration
+surface, at a tenth of a solve's cost. `solve` is the agent actually doing a task with it.
 
-What `full` does, spelled out — this is the loop, without the wrapper:
+To watch the library get built from nothing, use the shipped spec — same 3 solves → learn, but
+parallel, resumable, and it prints the plan before spending anything:
+
+```bash
+cd src/webwright/skill_factory/examples
+python -m webwright.skill_factory build flights.skill.yaml --library ./library --jobs 3 --dry-run
+```
+
+What that does, spelled out — this is the loop, without the wrapper:
 
 ```bash
 # custom / OpenAI-compatible gateway? TWO knobs, both needed:

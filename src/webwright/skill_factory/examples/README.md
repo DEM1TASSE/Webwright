@@ -5,7 +5,8 @@ verbatim `learn` output.
 
 ```
 examples/
-├── quickstart.sh          # one command, every parameter pre-filled (demo, ask, solve, full)
+├── quickstart.sh          # one command, every parameter pre-filled (demo, ask, solve)
+├── flights.skill.yaml     # the example spec: build it to rebuild the library below
 ├── solve_with_library.sh  # the solve wrapper: skill hint + answer-output instruction
 ├── learned_library/       # the Quickstart's artifact, checked in (skill.py + meta.json + replays.json)
 │   └── what_is_the_earliest_nonstop_flight…/

@@ -6,11 +6,14 @@
 #   ./quickstart.sh demo LAX ORD 2026-09-01   # ...and YOUR date
 #   ./quickstart.sh ask      # ask the library about a new task    (needs OPENAI_API_KEY)
 #   ./quickstart.sh solve    # one agent solve that REUSES the checked-in skill (needs key)
-#   ./quickstart.sh full     # the whole loop: 3 solves -> learn -> reuse (needs key, ~40 min)
+#
+# The whole loop from nothing is a spec now, not a mode of this script — it is the same
+# 3 solves -> learn, but parallel, resumable, and it shows you the plan first:
+#   python -m webwright.skill_factory build flights.skill.yaml --library ./library --jobs 3
 #
 # Custom / OpenAI-compatible gateway? Two knobs, both needed:
 #   export OPENAI_ENDPOINT=... OPENAI_MODEL=...   (for learn / skill_use)
-#   export MODEL_CFG=/path/to/your_model.yaml     (for the agent in solve/full — copy
+#   export MODEL_CFG=/path/to/your_model.yaml     (for the agent in solve/build — copy
 #     model_openai.yaml and set openai_endpoint/model_name; env vars do NOT reach it)
 set -euo pipefail
 SELF="$(readlink -f "$0")"
@@ -22,7 +25,7 @@ CFG=(-c base.yaml -c "${MODEL_CFG:-model_openai.yaml}")
 
 need_key() { : "${OPENAI_API_KEY:?export OPENAI_API_KEY first (on a gateway also OPENAI_ENDPOINT / OPENAI_MODEL)}"; }
 
-warn_gateway_agent() {  # solve/full: the AGENT reads its yaml, not the env vars
+warn_gateway_agent() {  # solve: the AGENT reads its yaml, not the env vars
   if [ -n "${OPENAI_ENDPOINT:-}" ] && [ -z "${MODEL_CFG:-}" ]; then
     echo "!! OPENAI_ENDPOINT is set but MODEL_CFG is not." >&2
     echo "!! learn/ask will use your gateway, but the AGENT in this mode reads a yaml" >&2
@@ -65,7 +68,7 @@ demo)
   SHOTS=$(ls "$WORK"/runs/run_*/screenshots/*.png 2>/dev/null | wc -l)
   echo "evidence: $SHOTS screenshots + step log ->"
   echo "  $(ls -d "$WORK"/runs/run_* 2>/dev/null | head -1)"
-  echo "-> a learned skill just drove the live site with ZERO tokens. Next: $0 ask | solve | full"
+  echo "-> a learned skill just drove the live site with ZERO tokens. Next: $0 ask | solve"
   ;;
 ask)
   need_key
@@ -81,25 +84,6 @@ solve)
     https://www.google.com/flights "$LIB" -o "$WORK/outputs" --task-id qs_solve "${CFG[@]}"
   echo "skill decision: $(cat "$WORK"/outputs/qs_solve_*/skill_decision.json 2>/dev/null || echo '(missing)')"
   echo "answer:         $(cat "$WORK"/outputs/qs_solve_*/agent_response.json 2>/dev/null || echo '(missing)')"
-  ;;
-full)
-  need_key
-  warn_gateway_agent
-  echo "== full loop: 3 from-scratch solves -> learn -> reuse on an unseen route (~40 min) =="
-  for r in "Seattle (SEA)|New York (JFK)" "San Francisco (SFO)|Boston (BOS)" "Los Angeles (LAX)|Chicago (ORD)"; do
-    FROM="${r%|*}"; TO="${r#*|}"
-    echo "-- solving $FROM -> $TO from scratch"
-    ./solve_with_library.sh "$(flight_task "$FROM" "$TO")" \
-      https://www.google.com/flights "$WORK/library" -o "$WORK/outputs" "${CFG[@]}"
-  done
-  echo "-- learning (verify=strict: a schedule is stable, so each skill must reproduce
-     its own training answers standalone before it may land)"
-  python -m webwright.skill_factory learn "$WORK/outputs" --library "$WORK/library" --verify strict --verify-rounds 3
-  echo "-- reusing on an unseen route"
-  ./solve_with_library.sh "$(flight_task 'Seattle (SEA)' 'Denver (DEN)')" \
-    https://www.google.com/flights "$WORK/library" -o "$WORK/outputs" --task-id qs_heldout "${CFG[@]}"
-  echo "skill decision: $(cat "$WORK"/outputs/qs_heldout_*/skill_decision.json 2>/dev/null || echo '(missing)')"
-  echo "library now at: $WORK/library"
   ;;
 *)
   # print the whole header comment — robust to edits, unlike a fixed line range

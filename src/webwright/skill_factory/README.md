@@ -75,21 +75,30 @@ The same task family, now with the agent in the loop. Needs an API key:
 
 ```bash
 export OPENAI_API_KEY=...
-./quickstart.sh ask     # one LLM call: "can the library help here?" -> use / adapt / skip
-./quickstart.sh solve   # a full agent solve of an unseen route, reusing the checked-in skill
-./quickstart.sh full    # the whole loop from nothing: 3 solves -> learn -> reuse (~40 min)
+./quickstart.sh ask     # ~10 s, one LLM call: "can the library help here?" -> use / adapt / skip
+./quickstart.sh solve   # ~5 min, a full agent solve of an unseen route, reusing the skill
 ```
 
 - `demo` runs the skill directly
-- `ask` only *retrieves*: one round trip that shows what the agent is told about the library, without solving anything
+- `ask` only *retrieves*: one round trip printing the JSON the agent is handed
+  (`verdict / skill_id / source_path / how_to_reuse`) — this is the integration surface, and it
+  costs a tenth of a solve to look at
 - `solve` is the agent actually doing a task with it
-- `full` rebuilds the library from scratch, so you can watch it being made
+
+Want to watch the library get built from nothing? That's the spec below, not a mode of this
+script — same 3 solves → learn, but parallel, resumable, and it shows you the plan first:
+
+```bash
+python -m webwright.skill_factory build flights.skill.yaml --library ./library --jobs 3
+```
 
 ---
 
 ### 3. Do it for your task
 
-Two ways in, depending on whether you've solved the task yet.
+Everything from here needs an API key, takes 5-40 minutes, and can fail — see
+[what to expect](#what-to-expect) before you start. Two ways in, depending on whether you've
+solved the task yet.
 
 **3a. You have a task you keep repeating, but no runs yet.**
 
@@ -120,7 +129,24 @@ python -m webwright.skill_factory learn outputs/ --library ./library
 ```
 
 This is the day-to-day path once you're using Webwright anyway: the trajectories you produced
-solving real work become the library, with no spec to write.
+solving real work become the library, with no spec to write. `build` leaves its solves in
+`build_outputs/` too, so `learn ./build_outputs` re-distils them without re-solving — which is
+also how you retry a rejected skill.
+
+#### What to expect
+
+Distillation is stochastic, so **a first attempt is not a guarantee**. Measured on the same set
+of runs: **~40% of draws verify on the first try**. That's why `--draws` defaults to 2 (an
+independent fresh attempt, not a repair of the brittle one) — and why a rejection is cheap to
+recover from:
+
+```bash
+python -m webwright.skill_factory learn ./build_outputs --library ./library   # just run it again
+```
+
+A rejected skill costs you the distillation, never the solves: the runs are kept out of
+`library/.learned.json` and stay retryable. If it rejects, that's the gate doing its job —
+nothing unproven lands. It is not a sign you configured something wrong.
 
 <details>
 <summary><b>On a custom OpenAI-compatible gateway</b></summary>
