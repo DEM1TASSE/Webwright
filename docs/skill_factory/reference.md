@@ -26,12 +26,13 @@ Whichever level the output gate ran at becomes the skill's **grade**:
 | refining | incremental refines must pass **regression replay** (`replays.json`); a verified skill is never overwritten by an unverified refine | refined freely | refined freely |
 
 `unverified` (`--verify off`) skips replay entirely. Use it when no replay could be fair: the site
-needs credentials the library can't store, or the training instances themselves have expired — the
-date has passed, the listing is gone — so the skill comes back with nothing and even `shape`
+needs credentials the library can't store, or the training instances themselves have expired (the
+date has passed, the listing is gone), so the skill comes back with nothing and even `shape`
 rejects it (an empty answer fails the gate) for something that isn't the skill's fault. Drifting
-*values* are not that case; `shape` replays those and compares loosely. Nor is a page that moved,
-where a failed replay is real news and `reference` records it. It's an escape hatch, not a grade
-to aim for; normal runs land `executable` or `reference`.
+*values* are not that case; `shape` replays those and compares loosely. Nor is a page that moved:
+there the failed replay is real news, and `--on-fail reference` keeps the broken skill as a
+labelled prior (the default, `reject`, just leaves the runs retryable). It's an escape hatch, not
+a grade to aim for; normal runs land `executable` or `reference`.
 
 Why code even at `reference` grade, versus a natural-language note: the selectors, URLs and param
 shapes are verbatim-copyable into the agent's next script, individual primitives often still run
@@ -109,7 +110,8 @@ hand rather than from a spec.
  
 #### `python -m webwright.tools.skill_use`
  
-The call the agent makes to query the library while solving a task.
+The call the agent makes to query the library while solving a task. Ranking is local; the
+verdict is one LLM round trip on the module's model (below).
  
 | flag | default | meaning |
 |---|---|---|
@@ -131,15 +133,15 @@ The call the agent makes to query the library while solving a task.
 | what URL | `openai_endpoint:` in that yaml | `SKILL_MODEL_ENDPOINT`, else `OPENAI_ENDPOINT`, else the class's fallback |
 
 Same class underneath (`models/openai_model.py`); `llm.py` just builds from env the config the
-yaml spells out by hand. So `SKILL_MODEL_NAME` and `OPENAI_MODEL` aren't two settings — one field,
+yaml spells out by hand. So `SKILL_MODEL_NAME` and `OPENAI_MODEL` aren't two settings: one field,
 `SKILL_MODEL_*` wins. Two names exist so you can send distillation somewhere other than whatever
 else already reads `OPENAI_*`; if you don't care, set only `OPENAI_*`.
 
 Set neither and you get that class's own fallbacks, `gpt-4o` at `https://api.openai.com/v1/responses`.
-Those are inherited defaults, not suggestions — the [Results](../../src/webwright/skill_factory/README.md#-results)
+Those are inherited defaults, not suggestions. The [Results](../../src/webwright/skill_factory/README.md#-results)
 ran on a much newer model. Name the model you want.
 
-**The agent's model reads none of these vars** — nothing outside `llm.py` does. On a custom
+**The agent's model reads none of these vars**; nothing outside `llm.py` does. On a custom
 gateway set both doors, or your solves go to `api.openai.com` while everything else uses your
 gateway. `build` warns when only one is set.
 
