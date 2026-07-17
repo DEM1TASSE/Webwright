@@ -215,7 +215,7 @@ Distillation is stochastic. On the same set of runs, about **40% of draws pass v
 
 
 
-A rejection only costs another distillation, which is much cheaper than solving again. `build` keeps the trajectories in `build_outputs/`, so you can retry without rerunning the tasks: nothing landed, so those runs stay out of the `library/.learned.json` ledger and `learn` picks them up again. Once a skill does land, its runs are marked learned and skipped next time — including a `reference` one, which lands without passing verification.
+A rejection only costs another distillation, which is much cheaper than solving the tasks again. `build` keeps the trajectories in `build_outputs/`, so you can retry without rerunning them. Failed runs are not added to `library/.learned.json`, so `learn` will pick them up again. Once a skill passes verification, its runs are marked as learned and skipped on future builds.
 
 
 
@@ -333,7 +333,7 @@ Here are some known rough edges, and directions we might take them.
 
 | doc | what's in it |
 |---|---|
-| [docs/skill_factory/manual.md](../../../docs/skill_factory/manual.md) | manual mode: you declare the template, params and admission yourself — for benchmarks (pipe your evaluator's verdict in as the gate), logged-in sites, or when an LLM shouldn't be guessing your template |
+| [docs/skill_factory/manual.md](../../../docs/skill_factory/manual.md) | manual mode: you declare the template, params, and admission yourself. Use it for benchmarks (pipe your evaluator's verdict in as the gate), logged-in sites, or cases where an LLM shouldn't be guessing your template |
 | [docs/skill_factory/reference.md](../../../docs/skill_factory/reference.md) | verification & grades, every flag and env var, component map, backend |
 | [examples/README.md](examples/README.md) | the checked-in skill and the example inputs |
 
