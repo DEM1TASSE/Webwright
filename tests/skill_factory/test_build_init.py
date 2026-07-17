@@ -240,6 +240,20 @@ def test_init_will_not_clobber_an_existing_spec(monkeypatch):
         assert out.read_text(encoding="utf-8") == "# my filled-in values"
 
 
+def test_the_readme_spec_shows_every_key_init_writes():
+    """The README's skill.yaml is the only spec a reader ever sees, so a key missing from it is a
+    knob they never learn they have — they'd think it was CLI-only. This drifted twice, silently:
+    once when --draws was added, once when --verify-rounds was. Nothing pinned the docs to the
+    code, so pin them."""
+    readme = Path(__file__).resolve().parents[2] / "src" / "webwright" / "skill_factory" / "README.md"
+    text = readme.read_text(encoding="utf-8")
+    start = text.index("build:", text.index("# skill.yaml"))
+    shown = set(yaml.safe_load(text[start:text.index("```", start)])["build"])
+    written = set(yaml.safe_load(I._yaml_skeleton(
+        "x {p}", ["p"], "https://a.example", 1, drifts=True, reason="r"))["build"])
+    assert shown == written, f"README shows {sorted(shown)}, init writes {sorted(written)}"
+
+
 def test_the_spec_init_writes_is_exactly_what_build_reads(monkeypatch):
     """A key init writes that build ignores is a lie; a key build reads that init omits is a knob
     the user never learns they have. Adding --draws broke the second half — pin both directions."""

@@ -142,12 +142,14 @@ instances:            # ____ is yours to fill: your values are the ground truth
   - {product: "____"}
   - {product: "____"}
 
-build:
+build:                # every key here is also a CLI flag; the flag wins
   # this answer drifts (prices move on their own), so replay only checks the shape —
   # strict would reject a working skill for reporting today's truth
   verify: shape
-  draws: 2 # 你要进行几次独立的聚合测试
+  draws: 2            # fresh attempts: bin the candidate, distil a new one from the same runs
+  verify_rounds: 2    # repair rounds inside one attempt: feed it its failures, try again
   on_fail: reject     # reject = executable or nothing | reference = keep it as a prior
+  chunk: 25           # runs per grouping call
 ```
 
 `init` proposes the structure — the template, the site, and the verify mode that fits your task —
