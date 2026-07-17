@@ -38,85 +38,90 @@ library. The flights skill in the [Quickstart](quickstart.md), by contrast, reru
 standalone, which is what `executable` buys.
 
 ## All parameters
-
-The main path is three commands: `init` a need → `build` a spec → or `learn` runs you already
-have. `update` and `skill_use` below are the manual / integration surface, not the day-to-day
-path.
-
-### `python -m webwright.skill_factory init "<need>"`
-
+ 
+The commands fall into two modes (see [Manual mode](manual.md) for when to use which). **Quick
+mode** covers `init`, `build`, and `learn`: it infers the template and parameters and gates each
+solve for you. **Manual mode** is `update`: you hand it a manifest and state all of that yourself.
+`skill_use` belongs to neither; it's the call the agent makes at solve time to query the library.
+ 
+### Quick mode
+ 
+#### `python -m webwright.skill_factory init "<need>"`
+ 
 | flag | default | meaning |
 |---|---|---|
 | `-o`, `--out` | `skill.yaml` | where to write the drafted spec |
 | `--rows` | 3 | how many blank instance rows to leave for you to fill (these become the `instances:` in the spec) |
-
+ 
 One LLM call. Drafts the template, the `start_url` (a guess, check it), and the verify mode it
 judges the task needs. Never the values.
-
-### `python -m webwright.skill_factory build <spec.yaml>`
-
+ 
+#### `python -m webwright.skill_factory build <spec.yaml>`
+ 
 Solves the spec's instances, then hands them to `learn`. Everything in the spec's `build:` block
 can be overridden here; machine-specific things are flags only, so the spec stays committable.
-
+ 
 | flag | default | meaning |
 |---|---|---|
 | `--library` | `library` | library directory to grow |
-| `-c`, `--config` | — | webwright model config for the AGENT (repeatable). It reads a yaml, **not** the env vars |
+| `-c`, `--config` | (none) | webwright model config for the AGENT (repeatable). It reads a yaml, **not** the env vars |
 | `--jobs` | 1 | solve N instances at once; more than you have means all of them. N > 1 sends each solve to `build_outputs/solve_NN.log` and ticks progress every 30 s. The ceiling is the site, not the flag: too many browsers from one IP gets you throttled, which reads as your solves failing. 3–5 is safe. Only solving parallelises; `learn` is serial |
 | `--outputs` | `<spec dir>/build_outputs` | where solves are written; also what you point `learn` at to retry |
 | `--dry-run` | off | print the plan (substituted tasks, policy, what would be solved) and stop |
 | `--yes` | off | skip the confirmation before spending agent time |
 | `--verify`, `--verify-rounds`, `--draws`, `--on-fail`, `--chunk`, `--golds` | from the spec's `build:` block, else `learn`'s defaults | override the spec |
-
-### `python -m webwright.skill_factory learn <runs_dir>`
-
+ 
+#### `python -m webwright.skill_factory learn <runs_dir>`
+ 
 | flag | default | meaning |
 |---|---|---|
 | `--library` | `library` | library directory to grow |
-| `--golds` | — | JSON `{task_id: gold_answer}` → gold gate instead of self_verify |
+| `--golds` | (none) | JSON `{task_id: gold_answer}` → gold gate instead of self_verify |
 | `--chunk` | 25 | runs per LLM grouping call |
 | `--dry-run` | off | print the grouping plan, change nothing |
 | `--verify` | `strict` | replay bar: `strict` = reproduce recorded answers, `shape` = non-empty + schema-shaped (live data), `off` = skip |
 | `--verify-rounds` | 2 | repair rounds **within one candidate**: its failures are fed back and it is re-distilled |
 | `--draws` | 2 | **independent** candidates before giving up. A draw can simply come out brittle, and a fresh one often lands where repairing the bad one won't. Stops at the first that verifies |
 | `--on-fail` | `reject` | failed verification: `reject` (runs stay retryable) or `reference` (lands as a labeled prior; never overwrites an existing skill) |
-
-### Manual / integration path
-
+ 
+### Manual mode
+ 
 #### `python -m webwright.skill_factory.update`
-
+ 
 The manifest-driven path (see [manual.md](manual.md)). Use it when you're assembling batches by
 hand rather than from a spec.
-
+ 
 | flag | default | meaning |
 |---|---|---|
 | `--manifest` | required | `{template, runs:[{dir, admit(bool, REQUIRED), params, verdict, site, output_schema, answer?, credentials?}]}` |
 | `--library` | required | library directory |
 | `--verify` / `--verify-rounds` / `--draws` / `--on-fail` | `off` / 2 / 2 / `reject` | as above. `--verify` is `off` by default here because benchmark sites may need credentials; `--verify-rounds` and `--draws` only take effect once you turn `--verify` on |
-
+ 
+### Solve time
+ 
 #### `python -m webwright.tools.skill_use`
-
-The call the agent makes to query the library at solve time.
-
+ 
+The call the agent makes to query the library while solving a task.
+ 
 | flag | meaning |
 |---|---|
 | `--task` | the task text to match against the library |
 | `--library` | library directory (or env `SKILL_LIBRARY_ROOT`) |
 | `--output` | also write the JSON verdict to this file |
-
+ 
 ### Environment variables
-
+ 
 **There are two models here, and they're configured differently.** This trips everyone up once,
 including us, so it's worth the sentence:
-
+ 
 | | who runs it | what it does | how you point it somewhere |
 |---|---|---|---|
 | **the module's model** | `init`, `learn`, `build`'s learn half, `skill_use` | groups runs, distils skills, answers "can this skill help?" | **env vars**, the `OPENAI_*` below |
 | **the agent's model** | the solves inside `build`, and any Webwright run | drives the browser | **a yaml**, `-c model.yaml`. It does **not** read these env vars |
-
+ 
 So on a custom gateway you set it in **both** places, or the solves quietly go to `api.openai.com`
 while everything else uses your gateway. `build` warns when you've done one and not the other.
-
+ 
 | var | read by | meaning |
 |---|---|---|
 | `OPENAI_API_KEY` | every LLM call, both models | the key |
@@ -126,11 +131,11 @@ while everything else uses your gateway. `build` warns when you've done one and 
 | `SKILL_LIBRARY_ROOT` | `skill_use` | default for `--library`, so the agent doesn't need the path in its prompt |
 | `WORKSPACE_DIR` | every generated skill | where a skill writes `agent_response.json`, its log and screenshots. Defaults to the cwd, which is why the docs `cd` to a scratch dir before running one |
 | `MODEL_CFG` | `examples/quickstart.sh` only | which yaml that script passes as the agent's model. `build` takes `-c` instead |
-
+ 
 ## Components
-
+ 
 The module's files and what each one does, for anyone reading or extending the code.
-
+ 
 | file | role |
 |---|---|
 | `library.py`  | `Skill` + `Library(root)`: on-disk skills (`<id>/skill.py` + `meta.json`) |
@@ -140,7 +145,7 @@ The module's files and what each one does, for anyone reading or extending the c
 | `update.py`   | `evolve(traces, library)`: grow on the existing library (add / adapt-refine / keep); `_refine` parameterizes and decomposes into primitives, incrementally improving an existing skill |
 | `llm.py`      | `configure_llm(model)` + `llm()`: **backend-agnostic** via Webwright's `Model` abstraction; a bare CLI builds the model from `SKILL_MODEL_NAME`/`SKILL_MODEL_ENDPOINT` (or `OPENAI_*`) env, no hardcoded endpoint/key |
 | `prompt.py`   | `with_skill_hint(prompt, task, library)`: non-invasive task-prompt hint (manual reuse path) |
-
+ 
 **Backend.** Backend-agnostic. Either call `configure_llm(model_config_or_Model)` once in-process,
 or set `SKILL_MODEL_NAME` / `SKILL_MODEL_ENDPOINT` (falling back to `OPENAI_*`) so a bare tool
 invocation uses the same backend as the running agent. No gateway or key is hardcoded.
