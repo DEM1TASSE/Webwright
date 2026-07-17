@@ -25,17 +25,18 @@ Whichever level the output gate ran at becomes the skill's **grade**:
 | trust | proved | **known** not to reproduce its answers | unknown |
 | refining | incremental refines must pass **regression replay** (`replays.json`); a verified skill is never overwritten by an unverified refine | refined freely | refined freely |
 
-`unverified` (`--verify off`) skips replay entirely. Use it when a skill can't be replayed, because
-the data has drifted or the page moved, but you want to keep it anyway. It's an escape hatch, not a
-grade to aim for; normal runs land `executable` or `reference`.
+`unverified` (`--verify off`) skips replay entirely. Use it when the replay *can't* run: a
+benchmark site whose login needs credentials the library can't store, say. Not for drifting data,
+which is what `shape` is for, and not for a page that moved, where a failing replay is the news.
+It's an escape hatch, not a grade to aim for; normal runs land `executable` or `reference`.
 
 Why code even at `reference` grade, versus a natural-language note: the selectors, URLs and param
 shapes are verbatim-copyable into the agent's next script, individual primitives often still run
-when the whole skill doesn't, and a reference skill is one repair away from executable. And
-`reference` pulls its weight in practice, the WebArena numbers in
-[Results](../../src/webwright/skill_factory/README.md#-results) were produced by a reference-grade
-library. The flights skill in the [Quickstart](quickstart.md), by contrast, reruns an unseen route
-standalone, which is what `executable` buys.
+when the whole skill doesn't, and a reference skill is one repair away from executable. And a
+prior alone pulls its weight: the WebArena numbers in
+[Results](../../src/webwright/skill_factory/README.md#-results) come from a library the agent read
+exactly this way. The flights skill in the [Quickstart](quickstart.md), by contrast, reruns an
+unseen route standalone, which is what `executable` buys.
 
 ## All parameters
  
@@ -103,35 +104,50 @@ hand rather than from a spec.
  
 The call the agent makes to query the library while solving a task.
  
-| flag | meaning |
-|---|---|
-| `--task` | the task text to match against the library |
-| `--library` | library directory (or env `SKILL_LIBRARY_ROOT`) |
-| `--output` | also write the JSON verdict to this file |
+| flag | default | meaning |
+|---|---|---|
+| `--task` | required | the task text to match against the library |
+| `--library` | `$SKILL_LIBRARY_ROOT`, else `library` | library directory to query |
+| `--output` | (none) | also write the JSON verdict here; it goes to stdout either way |
  
 ### Environment variables
- 
-**There are two models here, and they're configured differently.** This trips everyone up once,
-including us, so it's worth the sentence:
- 
-| | who runs it | what it does | how you point it somewhere |
-|---|---|---|---|
-| **the module's model** | `init`, `learn`, `build`'s learn half, `skill_use` | groups runs, distils skills, answers "can this skill help?" | **env vars**, the `OPENAI_*` below |
-| **the agent's model** | the solves inside `build`, and any Webwright run | drives the browser | **a yaml**, `-c model.yaml`. It does **not** read these env vars |
- 
-So on a custom gateway you set it in **both** places, or the solves quietly go to `api.openai.com`
-while everything else uses your gateway. `build` warns when you've done one and not the other.
- 
+
+#### Two models, two doors
+
+`build` is `solve × N`, then `learn`. Each half runs a different model:
+
+| | the agent's model | the module's model |
+|---|---|---|
+| what it does | **opens the browser**: looks at the page, picks the next click, and again, ~50 times per solve | **never opens a browser**: reads the finished transcripts and writes the skill's python |
+| who calls it | the solves in `build`; any Webwright run | `learn`, plus `init` (drafts your spec) and `skill_use` ("can this skill help?") |
+| which model | `model_name:` in a yaml you pass as `-c model.yaml` | `SKILL_MODEL_NAME`, else `OPENAI_MODEL`, else `gpt-4o` |
+| what URL | `openai_endpoint:` in that yaml | `SKILL_MODEL_ENDPOINT`, else `OPENAI_ENDPOINT`, else `https://api.openai.com/v1/responses` |
+
+Same class underneath (`models/openai_model.py`); `llm.py` just builds from env the config the
+yaml spells out by hand. So `SKILL_MODEL_NAME` and `OPENAI_MODEL` aren't two settings — one field,
+`SKILL_MODEL_*` wins. Two names exist so you can send distillation somewhere other than whatever
+else already reads `OPENAI_*`; if you don't care, set only `OPENAI_*`.
+
+**The agent's model reads none of these vars** — nothing outside `llm.py` does. On a custom
+gateway set both doors, or your solves go to `api.openai.com` while everything else uses your
+gateway. `build` warns when only one is set.
+
 | var | read by | meaning |
 |---|---|---|
-| `OPENAI_API_KEY` | every LLM call, both models | the key |
-| `OPENAI_ENDPOINT` | the module's model (`llm.py`) | custom gateway. **The FULL request URL**, e.g. `https://gateway.example/api/responses`, not `.../api`. A base path fails |
-| `OPENAI_MODEL` | the module's model | model name for the module's calls |
-| `SKILL_MODEL_ENDPOINT` / `SKILL_MODEL_NAME` / `SKILL_MODEL_CLASS` / `SKILL_MODEL_TIMEOUT` | the module's model | the same four settings, but only for this module; use them to send distillation somewhere other than the agent. Fall back to `OPENAI_*`. Class defaults to `openai`, timeout to 600 s (a 16k-token distillation is slow) |
+| `OPENAI_API_KEY` | **both models** | the key, and the one genuinely shared var |
+| `OPENAI_ENDPOINT` | the module's model | custom gateway. **The FULL request URL**, e.g. `https://gateway.example/api/responses`, not `.../api`. A base path fails |
+| `OPENAI_MODEL` | the module's model | which model the module's calls use |
+| `SKILL_MODEL_ENDPOINT`<br>`SKILL_MODEL_NAME` | the module's model | the same two settings, higher priority (above) |
+| `SKILL_MODEL_CLASS` | the module's model | a non-OpenAI backend. Defaults to `openai` |
+| `SKILL_MODEL_TIMEOUT` | the module's model | seconds per call. Defaults to 600: distilling a skill emits ~16k tokens, and the model's own 120 s default cuts it off mid-file |
 | `SKILL_LIBRARY_ROOT` | `skill_use` | default for `--library`, so the agent doesn't need the path in its prompt |
 | `WORKSPACE_DIR` | every generated skill | where a skill writes `agent_response.json`, its log and screenshots. Defaults to the cwd, which is why the docs `cd` to a scratch dir before running one |
 | `MODEL_CFG` | `examples/quickstart.sh` only | which yaml that script passes as the agent's model. `build` takes `-c` instead |
- 
+
+Using the module as a library rather than a CLI? `configure_llm(model)` hands it a model object
+directly and every var above is ignored: that's how a running agent gives the module its own
+backend, with no gateway or key hardcoded anywhere.
+
 ## Components
  
 The module's files and what each one does, for anyone reading or extending the code.
@@ -145,7 +161,3 @@ The module's files and what each one does, for anyone reading or extending the c
 | `update.py`   | `evolve(traces, library)`: grow on the existing library (add / adapt-refine / keep); `_refine` parameterizes and decomposes into primitives, incrementally improving an existing skill |
 | `llm.py`      | `configure_llm(model)` + `llm()`: **backend-agnostic** via Webwright's `Model` abstraction; a bare CLI builds the model from `SKILL_MODEL_NAME`/`SKILL_MODEL_ENDPOINT` (or `OPENAI_*`) env, no hardcoded endpoint/key |
 | `prompt.py`   | `with_skill_hint(prompt, task, library)`: non-invasive task-prompt hint (manual reuse path) |
- 
-**Backend.** Backend-agnostic. Either call `configure_llm(model_config_or_Model)` once in-process,
-or set `SKILL_MODEL_NAME` / `SKILL_MODEL_ENDPOINT` (falling back to `OPENAI_*`) so a bare tool
-invocation uses the same backend as the running agent. No gateway or key is hardcoded.
