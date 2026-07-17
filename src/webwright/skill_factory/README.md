@@ -212,6 +212,9 @@ build:                # every key here is also a CLI flag; the flag wins
 ```bash
 python -m webwright.skill_factory build skill.yaml --library ./library --jobs 3
 #                                                       where it lands ↑    ↑ solve 3 at a time
+#   on a gateway, add:  -c base.yaml -c $HOME/my_gateway.yaml
+#   (the agent reads that yaml, never your env vars — and -c replaces the defaults, so keep
+#    base.yaml. build warns before it spends anything if you forget.)
 
 # no spec of your own yet? the one behind the checked-in library is sitting next to you in
 # examples/, and --dry-run only prints the plan — no key, no browser:
