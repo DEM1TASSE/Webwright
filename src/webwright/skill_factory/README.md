@@ -115,6 +115,17 @@ cd src/webwright/skill_factory/examples
 
 It also prints the ten fixed steps it executed and the location of the saved screenshots. The steps are encoded in the skill, not chosen by a model. The run directory contains the full trajectory. Each run uses a fresh temporary directory by default. Set `QUICKSTART_WORKDIR=./run1` to keep the results.
 
+> **This skill was distilled on Linux, against Google Flights as it looked then, and that's all
+> `strict` replay proved.** It's plain Playwright driving a live site it doesn't control, so a
+> different OS or a page Google has since changed can break it — on macOS it fails at the airport
+> field, for instance, because the field-clearing shortcut it learned (`Control+A`) is select-all
+> only on Linux/Windows. That fragility is the point of the research, not a bug in your setup: a
+> replay-verified skill reproduces its *training* run, which is not the same as generalizing.
+>
+> When the standalone run won't work, the agent still can: `./quickstart.sh ask` and `solve` carry
+> the skill as a prior the model reads and adapts around the difference. Keep that solve and
+> `learn` folds it back in, so the next standalone run has your platform covered too.
+
 **What that just saved.**
 
 |            | from scratch<br><sub>no library</sub> | the agent, with the library<br><sub>`quickstart.sh solve`</sub> | the skill, standalone<br><sub>what you just ran</sub> |
