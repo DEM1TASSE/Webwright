@@ -69,11 +69,15 @@ can be overridden here; machine-specific things are flags only, so the spec stay
 |---|---|---|
 | `--library` | `library` | library directory to grow |
 | `-c`, `--config` | (none) | webwright model config for the AGENT (repeatable). It reads a yaml, **not** the env vars |
-| `--jobs` | 1 | solve N instances at once; more than you have means all of them. N > 1 sends each solve to `build_outputs/solve_NN.log` and ticks progress every 30 s. The ceiling is the site, not the flag: too many browsers from one IP gets you throttled, which reads as your solves failing. 3–5 is safe. Only solving parallelises; `learn` is serial |
+| `--jobs` | 1 | solve N instances at once (solving only; `learn` is serial). More than you have means all of them |
 | `--outputs` | `<spec dir>/build_outputs` | where solves are written; also what you point `learn` at to retry |
 | `--dry-run` | off | print the plan (substituted tasks, policy, what would be solved) and stop |
 | `--yes` | off | skip the confirmation before spending agent time |
 | `--verify`, `--verify-rounds`, `--draws`, `--on-fail`, `--chunk`, `--golds` | from the spec's `build:` block, else `learn`'s defaults | override the spec |
+
+On `--jobs`: the ceiling is the site, not the flag. Too many browsers from one IP gets you
+throttled, which reads as your solves failing; 3 to 5 is safe. With N > 1 each solve goes to
+`build_outputs/solve_NN.log` and progress ticks every 30 s.
  
 #### `python -m webwright.skill_factory learn <runs_dir>`
  
@@ -123,13 +127,17 @@ The call the agent makes to query the library while solving a task.
 |---|---|---|
 | what it does | **opens the browser**: looks at the page, picks the next click, and again, ~50 times per solve | **never opens a browser**: reads the finished transcripts and writes the skill's python |
 | who calls it | the solves in `build`; any Webwright run | `learn`, plus `init` (drafts your spec) and `skill_use` ("can this skill help?") |
-| which model | `model_name:` in a yaml you pass as `-c model.yaml` | `SKILL_MODEL_NAME`, else `OPENAI_MODEL`, else `gpt-4o` |
-| what URL | `openai_endpoint:` in that yaml | `SKILL_MODEL_ENDPOINT`, else `OPENAI_ENDPOINT`, else `https://api.openai.com/v1/responses` |
+| which model | `model_name:` in a yaml you pass as `-c model.yaml` | `SKILL_MODEL_NAME`, else `OPENAI_MODEL`, else the class's fallback |
+| what URL | `openai_endpoint:` in that yaml | `SKILL_MODEL_ENDPOINT`, else `OPENAI_ENDPOINT`, else the class's fallback |
 
 Same class underneath (`models/openai_model.py`); `llm.py` just builds from env the config the
 yaml spells out by hand. So `SKILL_MODEL_NAME` and `OPENAI_MODEL` aren't two settings — one field,
 `SKILL_MODEL_*` wins. Two names exist so you can send distillation somewhere other than whatever
 else already reads `OPENAI_*`; if you don't care, set only `OPENAI_*`.
+
+Set neither and you get that class's own fallbacks, `gpt-4o` at `https://api.openai.com/v1/responses`.
+Those are inherited defaults, not suggestions — the [Results](../../src/webwright/skill_factory/README.md#-results)
+ran on a much newer model. Name the model you want.
 
 **The agent's model reads none of these vars** — nothing outside `llm.py` does. On a custom
 gateway set both doors, or your solves go to `api.openai.com` while everything else uses your
@@ -140,7 +148,8 @@ gateway. `build` warns when only one is set.
 | `OPENAI_API_KEY` | **both models** | the key, and the one genuinely shared var |
 | `OPENAI_ENDPOINT` | the module's model | custom gateway. **The FULL request URL**, e.g. `https://gateway.example/api/responses`, not `.../api`. A base path fails |
 | `OPENAI_MODEL` | the module's model | which model the module's calls use |
-| `SKILL_MODEL_ENDPOINT`<br>`SKILL_MODEL_NAME` | the module's model | the same two settings, higher priority (above) |
+| `SKILL_MODEL_ENDPOINT` | the module's model | the same setting as `OPENAI_ENDPOINT`, higher priority (above) |
+| `SKILL_MODEL_NAME` | the module's model | the same setting as `OPENAI_MODEL`, higher priority (above) |
 | `SKILL_MODEL_CLASS` | the module's model | a non-OpenAI backend. Defaults to `openai` |
 | `SKILL_MODEL_TIMEOUT` | the module's model | seconds per call. Defaults to 600: distilling a skill emits ~16k tokens, and the model's own 120 s default cuts it off mid-file |
 | `SKILL_LIBRARY_ROOT` | `skill_use` | default for `--library`, so the agent doesn't need the path in its prompt |
