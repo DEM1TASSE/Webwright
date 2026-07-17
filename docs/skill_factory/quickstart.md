@@ -104,7 +104,8 @@ examples/solve_with_library.sh \
 
 </details>
 
-**What each way of running it actually costs** — task: find earliest non stop flight from SEA→DEN on [日期]:
+**What each way of running it actually costs** — task: earliest nonstop flight SEA→DEN on
+2026-08-15, a route the skill never trained on, answered three ways on this machine:
 
 |            | from scratch<br><sub>no library</sub> | the agent, with the library | the skill, standalone |
 |------------|--------------|------------------|----------------------|
@@ -127,20 +128,31 @@ version: **step savings scale with how much the agent doesn't already know.**
 The last column doesn't depend on any of that. **Every run after the library exists uses no model
 at all** — a schedule watcher in cron pays the agent exploration once, then ~40 s forever.
 
-This loop 已经提交和展示到： `examples/learned_library/`
+This loop, already run and checked in: `examples/learned_library/` (provenance in
+`examples/README.md`).
 
 ---
 
 ## 4. Do it for your own task
 
-You can 在你自己的任务上运行这个流程
+You can run this loop on your own task. Two ways in, depending on what you already have.
 
-1. learn
+### 4.1 — You have trajectories: `learn`
 
-2. init + build模式
+If you've been using Webwright anyway, the runs are already on disk: hand them straight to
+`learn`, no spec to write.
 
 ```bash
-# a task you keep repeating -> draft a spec
+python -m webwright.skill_factory learn outputs/ --library ./library
+```
+
+That's the day-to-day path.
+
+### 4.2 — You have a task, but no runs yet: `init` + `build`
+
+Describe it; `init` drafts the spec and leaves the values for you.
+
+```bash
 python -m webwright.skill_factory init "the earliest nonstop flight from A to B on a given date"
 ```
 
@@ -159,11 +171,11 @@ instances:            # give a few real instances (3+ makes a verifiable skill)
   - {origin_airport: "____", destination_airport: "____", travel_date: "____"}
 
 build:                # optional policy — CLI flags override these
-  # this answer should hold still (published flight schedules for a given future date typically
-  # remain the same tomorrow), so replay demands it back exactly
+  # this answer should hold still (published flight schedules for a given future date typically remain the same tomorrow), so replay demands it back exactly
   verify: strict     # strict (reproduce answers) | shape (drifting data) | off
-  verify_rounds: 2
-  on_fail: reject     # reject | reference
+  draws: 2            # independent distillation attempts — a draw can come out brittle
+  verify_rounds: 2    # repair rounds within one attempt
+  on_fail: reject     # reject = executable or nothing | reference = keep it as a prior
   chunk: 25
 ```
 
@@ -184,17 +196,6 @@ pays for what's missing. Solves are slow (10-30 min each) and independent, so `-
 blocks until the last one finishes, so if your shell or tooling enforces command timeouts, run it
 in the background. The [reference](reference.md#all-parameters) has the tuning and the rate-limit
 caveat.
-
-### Already have runs? Skip the solving
-
-If you've been using Webwright anyway, the trajectories are already on disk — hand them straight
-to `learn`, no spec to write:
-
-```bash
-python -m webwright.skill_factory learn outputs/ --library ./library
-```
-
-That's the day-to-day path. The rest of this section is for a task you *haven't* solved yet.
 
 ### Vary the parameters, not just the count
 
