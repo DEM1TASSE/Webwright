@@ -301,6 +301,29 @@ def _refine(traces: list[Trace], library: Library, verify: str = "off",
     return [sid]
 
 
+def _memorized_answer(trace: "Trace") -> bool:
+    """True when a solve's script carries its whole answer as a literal: it recognised the answer
+    rather than working it out.
+
+    The input gate only sees the answer, and a lookup's answer is right, so it sails through. But
+    it is poisonous material: distillation is told never to copy an instance's values, so it has
+    to invent an extractor the trace never contained — and the batch then fails replay on that
+    instance, forever, however many draws you spend. Real case: a solve that ended in
+    `RESULT = ["UA 729", "United", "12:10 AM"]` and `if "UA 729" in text: return "UA 729"`.
+
+    Deliberately narrow. "The answer appears in the code" fires on every clean solve too — an
+    airline name belongs in a vocabulary, a time in an assertion (measured: 3 of 3 of ours). What
+    a working solve does not have is *every field at once*, verbatim (measured: 0 of 5 that
+    distilled; 1 of 1 that couldn't).
+    """
+    ans = trace.answer
+    fields = [str(v) for v in (ans if isinstance(ans, list) else [ans]) if str(v).strip()]
+    if len(fields) < 2:          # one field is not evidence: "United" is a word, not a lookup
+        return False
+    code = trace.code or ""
+    return all(f in code for f in fields)
+
+
 def evolve(traces: list[Trace], library: Library, verify: str = "off",
            rounds: int = 2, on_fail: str = "reject", draws: int = 1) -> dict:
     """Unified update: evolve the EXISTING library, deciding per trace's usage (use/adapt/skip) how
@@ -315,9 +338,20 @@ def evolve(traces: list[Trace], library: Library, verify: str = "off",
 
     Only consumes gate-passed (correct=True) traces (pollution protection). Returns a changelog.
     """
-    good = [t for t in traces if t.correct]
+    good, lookups, wrong = [], [], 0
+    for t in traces:
+        if not t.correct:
+            wrong += 1
+        elif _memorized_answer(t):
+            lookups.append(t)
+        else:
+            good.append(t)
+    if lookups:
+        print(f"  ! dropped {len(lookups)} gate-passed solve(s) whose script contains its whole "
+              f"answer verbatim — they recognise the answer instead of extracting it, so there is "
+              f"no method in them to distil", flush=True)
     changelog = {"use": [], "adapt_refined": [], "added": [], "reference": [], "rejected": [],
-                 "dropped_wrong": len(traces) - len(good)}
+                 "dropped_wrong": wrong, "dropped_lookup": len(lookups)}
     existing_templates = {s.meta.get("template"): s.skill_id for s in library.list()}
 
     # group by template (same-family solves are distilled/sedimented together)

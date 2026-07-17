@@ -288,3 +288,47 @@ def test_norm_keeps_folding_type_jitter():
     """The behaviour it had before: a solve answers in strings, a skill in numbers."""
     from webwright.skill_factory.update import _norm
     assert _norm([5]) == _norm(["5"])
+
+
+# ---------------------------------------------------------------- material: lookups aren't methods
+
+def _trace(code, answer):
+    from webwright.skill_factory.update import Trace
+    return Trace(template="t", code=code, answer=answer, meta={})
+
+
+def test_a_solve_that_recognises_its_answer_is_not_material():
+    """The case that cost a whole build: the script ended in
+        RESULT = ["UA 729", "United", "12:10 AM"]
+        if "UA 729" in text: return "UA 729"
+    Its answer is right, so the input gate passes it. But there is no method in it, and
+    distillation — told never to copy instance values — has to invent one, so every draw fails
+    replay on that instance."""
+    from webwright.skill_factory.update import _memorized_answer
+    code = 'RESULT = ["UA 729", "United", "12:10 AM"]\nif "UA 729" in t: return "UA 729"'
+    assert _memorized_answer(_trace(code, ["UA 729", "United", "12:10 AM"]))
+
+
+def test_a_working_solve_may_mention_its_answer_without_being_a_lookup():
+    """Measured on all three shipped trajectories: an airline name is a vocabulary entry, a time
+    lands in an assertion. "The answer appears in the code" would drop 3 of 3 good solves — the
+    signal is every field at once, verbatim."""
+    from webwright.skill_factory.update import _memorized_answer
+    code = 'KNOWN_AIRLINES = ["United", "Alaska", "JetBlue"]\nnum = extract_from_tfs(tfs)'
+    assert not _memorized_answer(_trace(code, ["UA 729", "United", "12:10 AM"]))
+
+
+def test_one_field_is_never_evidence():
+    """A single-field answer that appears in the code proves nothing — "United" is a word."""
+    from webwright.skill_factory.update import _memorized_answer
+    assert not _memorized_answer(_trace('AIRLINES = ["United"]', ["United"]))
+
+
+def test_evolve_drops_a_lookup_and_says_so(capsys):
+    """A drop nobody sees is a mystery; the changelog and the log both name it."""
+    with tempfile.TemporaryDirectory() as d:
+        lookup = U.Trace("T1", 'RESULT = ["UA 729", "United"]', verdict="skip", correct=True,
+                         answer=["UA 729", "United"])
+        log = U.evolve([lookup], Library(d))
+    assert log["dropped_lookup"] == 1 and log["added"] == []
+    assert "recognise the answer" in capsys.readouterr().out
