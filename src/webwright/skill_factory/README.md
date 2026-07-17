@@ -152,9 +152,7 @@ build:                # every key here is also a CLI flag; the flag wins
   chunk: 25           # runs per grouping call
 ```
 
-`init` proposes the structure — the template, the site, and the verify mode that fits your task —
-and never the values: a value it invented would quietly train the skill on an answer nobody
-checked. Fill the `____`s, then:
+`init` proposes the task template, site, and verification mode. It does not invent instance values, since they would become unchecked training inputs. Fill in the `____` fields, then run:
 
 ```bash
 python -m webwright.skill_factory build skill.yaml --library ./library --jobs 3
@@ -164,14 +162,9 @@ python -m webwright.skill_factory build skill.yaml --library ./library --jobs 3
 python -m webwright.skill_factory build examples/flights.skill.yaml --library ./library --dry-run
 ```
 
-`build` = solve × N + learn. It prints the tasks it's about to solve and asks first (`--dry-run`
-shows the plan and stops), and an instance that already has an answer is never re-solved. `N` is
-any number, default 1; the ceiling isn't the flag but the site — too many browsers from one IP
-gets you throttled. 3-5 is a safe start.
+`build` runs `solve` for each instance, then calls `learn`. It prints the planned tasks and asks before starting. `--dry-run` prints the plan and exits. An instance that already has an answer is not solved again. `--jobs N` sets the number of parallel solves and defaults to 1. The practical limit is the target site. Too many browsers from one IP may trigger throttling. Start with 3 to 5.
 
-> If your answer moves on its own (a price, a ranking), the shape check can tell a broken skill
-> from a working one, but not a right answer from a wrong one. Supply `--golds`, or plan to gate
-> it with a judge (see Limitations).
+> For changing answers such as prices or rankings, shape verification can detect a broken skill but cannot verify that the answer is correct. Provide `--golds` or use a judge, as described in Limitations.
 
 <details>
 <summary><b>The same loop by hand, without the wrapper</b> — what <code>build</code> is doing for you</summary>
@@ -210,32 +203,49 @@ examples/solve_with_library.sh \
 
 </details>
 
-#### What to expect
-
-Distillation is stochastic, so **a first attempt is not a guarantee**. Measured on the same set
-of runs: **~40% of draws verify on the first try**. That's why `--draws` defaults to 2 (an
-independent fresh attempt, not a repair of the brittle one) — and why a rejection is cheap to
-recover from: `build` leaves its solves in `build_outputs/`, so pointing `learn` at that folder
-(3.1) re-distils them without re-solving. Just run it again.
-
-A rejected skill costs you the distillation, never the solves: the runs are kept out of
-`library/.learned.json` and stay retryable. If it rejects, that's the gate doing its job —
-nothing unproven lands. It is not a sign you configured something wrong.
-
 <details>
-<summary><b>Getting a skill that lands</b> — the two habits that decide it</summary>
+
+<summary><b>What to expect from skill distillation</b></summary>
+
 <br>
 
-**Vary the parameters, not just the count.** Distillation lifts a parameter from the differences
-it *observes*, so a value identical in every instance may get baked in. Two instances that vary
-everything you care about beat five that share a date.
 
-**Read the rejection — the two kinds want opposite things.**
 
-| what you see | what it means | what to do |
-|---|---|---|
-| the diff is only in a value that moves (`$0.01` → `$5.99`), other instances reproduced exactly | the **verify mode** is wrong for this task, the skill is fine | `--verify shape` |
-| a crash (`Could not choose ...`), or an answer off in the wrong place | the distilled skill really is broken | **re-run `learn`**: a fresh draw often lands, and the last candidate is kept at `library/.rejected_<id>.py` for a post-mortem |
+Distillation is stochastic. On the same set of runs, about **40% of draws pass verification on the first attempt**, so `--draws` defaults to 2. Each draw creates a fresh candidate.
+
+
+
+A rejection only costs another distillation, which is much cheaper than solving again. `build` keeps the trajectories in `build_outputs/`, so you can retry without rerunning the tasks. A skill is added to `library/.learned.json` only after it passes verification.
+
+
+
+If repeated draws fail, inspect the failure:
+
+
+
+* **The skill crashes.** Try another draw. If it keeps failing, inspect `library/.rejected_<id>.py`, which contains the last candidate and its traceback.
+
+* **The skill returns a valid answer that differs from the recorded answer.** The recorded answer may be wrong. Without `--golds`, the original agent answer was not independently checked. Remove that run or provide the correct answer for its `task_id`:
+
+
+
+  ```bash
+
+  --golds '{"<task_id>": "<right answer>"}'
+
+  ```
+
+
+
+  This verifies that run against the supplied answer while leaving the others on `self_verify`.
+
+* **Only a changing value differs**, such as a price or count. Strict replay does not fit the task. Use `--verify shape`.
+
+
+
+If you do not need a standalone executable skill, use `--on-fail reference`. The skill is kept with `grade: reference`, so the agent can reuse its selectors, URLs, and parameter structure, but it is not trusted to run independently.
+
+
 
 </details>
 
