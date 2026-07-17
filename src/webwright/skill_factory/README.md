@@ -51,6 +51,18 @@ Both are additive; the Quick Start below runs them.
 
 ## 🚀 Quick Start
 
+Set up once — the module ships inside Webwright, so you clone that:
+
+```bash
+git clone https://github.com/microsoft/Webwright.git && cd Webwright
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e . && playwright install chromium
+```
+
+Keep the venv activated. The scripts below call `python`, which on a stock Linux box exists only
+inside one — outside, you get `python: command not found` on the first command. Step 1 needs no API
+key; everything after it does.
+
 ### 1. Run a learned skill
 
 Task: *what is the earliest nonstop flight from A to B on this date?*, on the
