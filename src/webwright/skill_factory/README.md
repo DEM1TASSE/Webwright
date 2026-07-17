@@ -60,8 +60,27 @@ pip install -e . && playwright install chromium
 ```
 
 Keep the venv activated. The scripts below call `python`, which on a stock Linux box exists only
-inside one — outside, you get `python: command not found` on the first command. Step 1 needs no API
-key; everything after it does.
+inside one — outside, you get `python: command not found` on the first command.
+
+Then point it at a model. Step 1 needs none; everything after it does:
+
+```bash
+export OPENAI_API_KEY=...
+```
+
+<details>
+<summary><b>On a custom OpenAI-compatible gateway</b></summary>
+<br>
+
+```bash
+export OPENAI_ENDPOINT=... OPENAI_MODEL=...   # for learn / init / skill_use
+export MODEL_CFG=/abs/path/to/model.yaml      # for the AGENT in solve / build
+```
+
+The endpoint is the full `.../responses` URL, not a base path. The agent reads its model from a
+yaml, not from these env vars: copy `examples/model_gateway.example.yaml` and point `MODEL_CFG` at
+it (or pass `-c` to `build`).
+</details>
 
 ### 1. Run a learned skill
 
@@ -101,7 +120,6 @@ The last column runs the learned skill directly. **Once the skill exists, every 
 The same task family, now with the agent in the loop. Needs an API key:
 
 ```bash
-export OPENAI_API_KEY=...
 ./quickstart.sh ask     # ~10 s, one LLM call: "can the library help here?" -> use / adapt / skip
 ./quickstart.sh solve   # ~5 min, a full agent solve of an unseen route, reusing the skill
 ```
@@ -258,20 +276,6 @@ If you do not need a standalone executable skill, use `--on-fail reference`. The
 
 
 
-</details>
-
-<details>
-<summary><b>On a custom OpenAI-compatible gateway</b></summary>
-<br>
-
-```bash
-export OPENAI_ENDPOINT=... OPENAI_MODEL=...   # for learn / init / skill_use
-export MODEL_CFG=/abs/path/to/model.yaml      # for the AGENT in solve / build
-```
-
-The endpoint is the full `.../responses` URL, not a base path. The agent reads its model from a
-yaml, not from these env vars: copy `examples/model_gateway.example.yaml` and point `MODEL_CFG` at
-it (or pass `-c` to `build`).
 </details>
 
 ## 📊 Results
