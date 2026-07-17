@@ -215,7 +215,7 @@ Distillation is stochastic. On the same set of runs, about **40% of draws pass v
 
 
 
-A rejection only costs another distillation, which is much cheaper than solving again. `build` keeps the trajectories in `build_outputs/`, so you can retry without rerunning the tasks. A skill is added to `library/.learned.json` only after it passes verification.
+A rejection only costs another distillation, which is much cheaper than solving again. `build` keeps the trajectories in `build_outputs/`, so you can retry without rerunning the tasks: nothing landed, so those runs stay out of the `library/.learned.json` ledger and `learn` picks them up again. Once a skill does land, its runs are marked learned and skipped next time — including a `reference` one, which lands without passing verification.
 
 
 
@@ -230,9 +230,8 @@ If repeated draws fail, inspect the failure:
 
 
   ```bash
-
-  --golds '{"<task_id>": "<right answer>"}'
-
+  python -m webwright.skill_factory learn build_outputs/ --library ./library \
+    --golds '{"<task_id>": "<right answer>"}'
   ```
 
 
@@ -243,7 +242,7 @@ If repeated draws fail, inspect the failure:
 
 
 
-If you do not need a standalone executable skill, use `--on-fail reference`. The skill is kept with `grade: reference`, so the agent can reuse its selectors, URLs, and parameter structure, but it is not trusted to run independently.
+If you do not need a standalone executable skill, use `--on-fail reference`. The skill is kept with `grade: reference`, so the agent can reuse its selectors, URLs, and parameter structure, but it is not trusted to run independently. It is a one-way door for that template: the skill now exists and its runs are ledgered, so a later `learn` skips those runs and won't replace it. To go again for an `executable` one, delete the skill *and* its runs' entries from `library/.learned.json` — dropping the skill alone leaves the runs marked learned, and `learn` will find nothing to do.
 
 
 
