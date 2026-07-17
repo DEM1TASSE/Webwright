@@ -2,14 +2,14 @@
 
 [← back to the module README](../../src/webwright/skill_factory/README.md)
 
-Four sections, in the order you'd meet them:
+Three sections, the same three as the [README](../../src/webwright/skill_factory/README.md#-quick-start),
+at tutorial length:
 
 1. **[Run the checked-in skill](#1-run-the-checked-in-skill)** — no model, no key, ~40 s.
 2. **[Reuse it with the agent](#2-reuse-the-skill-with-the-agent)** — `ask` / `solve`, needs a key.
-3. **[Watch the library get built](#3-watch-the-library-get-built-from-nothing)** — the Google
-   Flights example, from nothing, ~40 min.
-4. **[Do it for your own task](#4-do-it-for-your-own-task)** — `init` → fill → `build`, or
-   `learn` if you already have runs. **This is the part that's yours.**
+3. **[Do it for your own task](#3-do-it-for-your-own-task)** — `learn` if you already have runs,
+   or `init` → fill → `build` if you don't, with the Google Flights example worked end to end.
+   **This is the part that's yours.**
 
 ---
 
@@ -50,10 +50,74 @@ surface.
 
 `solve` is the agent actually doing the task with it.
 
-## 3. Watch the library get built from nothing
+## 3. Do it for your own task
 
-The spec that produced the checked-in library ships with it. `--dry-run` prints the plan and
-spends nothing:
+You can run this loop on your own task. Two ways in, depending on what you already have.
+
+### 3.1 — You have trajectories: `learn`
+
+If you've been using Webwright anyway, the runs are already on disk: hand them straight to
+`learn`, no spec to write.
+
+```bash
+python -m webwright.skill_factory learn outputs/ --library ./library
+```
+
+That's the day-to-day path.
+
+### 3.2 — You have a task, but no runs yet: `init` + `build`
+
+Describe it; `init` drafts the spec and leaves the values for you.
+
+```bash
+python -m webwright.skill_factory init "the earliest nonstop flight from A to B on a given date"
+```
+
+`init` makes one model call and writes `skill.yaml` — this is its real output, verbatim:
+
+```yaml
+# Draft skill spec — fill the ____ values (your ground truth), then: build skill.yaml
+# The {holes} in `task` are the parameters; each is a column below.
+
+task: Find the earliest nonstop flight from {origin_airport} to {destination_airport} on {travel_date} and return the departure time, arrival time, airline, and flight number.
+start_url: https://www.google.com/travel/flights    # guessed — check it opens the right page
+
+instances:            # give a few real instances (3+ makes a verifiable skill)
+  - {origin_airport: "____", destination_airport: "____", travel_date: "____"}
+  - {origin_airport: "____", destination_airport: "____", travel_date: "____"}
+  - {origin_airport: "____", destination_airport: "____", travel_date: "____"}
+
+build:                # optional policy — CLI flags override these
+  # this answer should hold still (published flight schedules for a given future date typically remain the same tomorrow), so replay demands it back exactly
+  verify: strict     # strict (reproduce answers) | shape (drifting data) | off
+  draws: 2            # independent distillation attempts — a draw can come out brittle
+  verify_rounds: 2    # repair rounds within one attempt
+  on_fail: reject     # reject = executable or nothing | reference = keep it as a prior
+  chunk: 25
+```
+
+**It proposes the structure and leaves the values blank on purpose.** The template, the site and
+the verify mode are guesses you can overrule; the values are your ground truth, and a value the
+model invented would quietly train the skill on an answer nobody checked. Fill the `____`s, look
+at the guessed `start_url`, then:
+
+```bash
+python -m webwright.skill_factory build skill.yaml --library ./library --jobs 3   # 3 at once
+```
+
+`build` = **solve × N + learn**. It fills the template with each instance, prints the tasks it's
+about to solve and asks before spending agent time (`--dry-run` shows the plan and stops,
+`--yes` skips the prompt), solves them, and hands the batch to `learn`. **An instance that
+already produced an answer is never re-solved** — if a run dies halfway, re-running `build` only
+pays for what's missing. Solves are slow (10-30 min each) and independent, so `--jobs N` runs N at a time. `build` still
+blocks until the last one finishes, so if your shell or tooling enforces command timeouts, run it
+in the background. The [reference](reference.md#all-parameters) has the tuning and the rate-limit
+caveat.
+
+### The same loop, on our task
+
+That's the loop. Here it is on the example task, driven by the spec that produced the checked-in
+library. `--dry-run` prints the plan and spends nothing:
 
 ```bash
 cd src/webwright/skill_factory/examples
@@ -130,72 +194,6 @@ at all** — a schedule watcher in cron pays the agent exploration once, then ~4
 
 This loop, already run and checked in: `examples/learned_library/` (provenance in
 `examples/README.md`).
-
----
-
-## 4. Do it for your own task
-
-You can run this loop on your own task. Two ways in, depending on what you already have.
-
-### 4.1 — You have trajectories: `learn`
-
-If you've been using Webwright anyway, the runs are already on disk: hand them straight to
-`learn`, no spec to write.
-
-```bash
-python -m webwright.skill_factory learn outputs/ --library ./library
-```
-
-That's the day-to-day path.
-
-### 4.2 — You have a task, but no runs yet: `init` + `build`
-
-Describe it; `init` drafts the spec and leaves the values for you.
-
-```bash
-python -m webwright.skill_factory init "the earliest nonstop flight from A to B on a given date"
-```
-
-`init` makes one model call and writes `skill.yaml` — this is its real output, verbatim:
-
-```yaml
-# Draft skill spec — fill the ____ values (your ground truth), then: build skill.yaml
-# The {holes} in `task` are the parameters; each is a column below.
-
-task: Find the earliest nonstop flight from {origin_airport} to {destination_airport} on {travel_date} and return the departure time, arrival time, airline, and flight number.
-start_url: https://www.google.com/travel/flights    # guessed — check it opens the right page
-
-instances:            # give a few real instances (3+ makes a verifiable skill)
-  - {origin_airport: "____", destination_airport: "____", travel_date: "____"}
-  - {origin_airport: "____", destination_airport: "____", travel_date: "____"}
-  - {origin_airport: "____", destination_airport: "____", travel_date: "____"}
-
-build:                # optional policy — CLI flags override these
-  # this answer should hold still (published flight schedules for a given future date typically remain the same tomorrow), so replay demands it back exactly
-  verify: strict     # strict (reproduce answers) | shape (drifting data) | off
-  draws: 2            # independent distillation attempts — a draw can come out brittle
-  verify_rounds: 2    # repair rounds within one attempt
-  on_fail: reject     # reject = executable or nothing | reference = keep it as a prior
-  chunk: 25
-```
-
-**It proposes the structure and leaves the values blank on purpose.** The template, the site and
-the verify mode are guesses you can overrule; the values are your ground truth, and a value the
-model invented would quietly train the skill on an answer nobody checked. Fill the `____`s, look
-at the guessed `start_url`, then:
-
-```bash
-python -m webwright.skill_factory build skill.yaml --library ./library --jobs 3   # 3 at once
-```
-
-`build` = **solve × N + learn**. It fills the template with each instance, prints the tasks it's
-about to solve and asks before spending agent time (`--dry-run` shows the plan and stops,
-`--yes` skips the prompt), solves them, and hands the batch to `learn`. **An instance that
-already produced an answer is never re-solved** — if a run dies halfway, re-running `build` only
-pays for what's missing. Solves are slow (10-30 min each) and independent, so `--jobs N` runs N at a time. `build` still
-blocks until the last one finishes, so if your shell or tooling enforces command timeouts, run it
-in the background. The [reference](reference.md#all-parameters) has the tuning and the rate-limit
-caveat.
 
 ### Vary the parameters, not just the count
 
