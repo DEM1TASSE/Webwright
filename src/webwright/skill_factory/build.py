@@ -89,6 +89,28 @@ def _pick(cli, spec_val, default):
     return default
 
 
+def _agent_cfg(cfg: list[str]) -> list[str]:
+    """Point the AGENT at the same backend the env vars name.
+
+    The agent's model comes from a yaml and never reads OPENAI_*, so exporting a gateway and
+    running `build` used to send the module to your gateway and every solve to api.openai.com —
+    401s after you'd already said yes. An explicit -c is the whole answer when you pass one.
+    Otherwise, if you named a gateway, say it on the command line for you: the CLI takes inline
+    `model.key=value` specs, so nothing has to be written to a file. They replace the CLI's
+    defaults rather than adding to them, hence DEFAULT_CONFIGS (imported, not copied) coming
+    along.
+    """
+    if cfg:
+        return cfg
+    over = [f"model.{key}={val}" for key, val in
+            (("openai_endpoint", os.environ.get("OPENAI_ENDPOINT")),
+             ("model_name", os.environ.get("OPENAI_MODEL"))) if val]
+    if not over:
+        return cfg
+    from webwright.run.cli import DEFAULT_CONFIGS
+    return list(DEFAULT_CONFIGS) + over
+
+
 def build(spec_path: str, library: str, cfg: list[str], *, verify=None, verify_rounds=None,
           on_fail=None, chunk=None, golds=None, outputs_dir=None, dry_run=False,
           assume_yes=False, jobs=1, draws=None) -> int:
@@ -124,14 +146,9 @@ def build(spec_path: str, library: str, cfg: list[str], *, verify=None, verify_r
 
     to_solve = [c for c in concrete if not _already_solved(outputs, c[0])]
 
-    # Before the prompt AND before --dry-run returns: this is the only moment the warning can
-    # still change what you do. It used to fire after you'd already said yes, so the first news
-    # of a half-configured gateway was three solves' worth of 401s.
-    if to_solve and cfg == [] and os.environ.get("OPENAI_ENDPOINT"):
-        print("!! OPENAI_ENDPOINT is set but no -c model config was passed. The AGENT reads a yaml,\n"
-              "!! not env vars, and will hit api.openai.com.\n"
-              "!! Pass: -c base.yaml -c your_model.yaml   (-c REPLACES the defaults, so keep\n"
-              "!! base.yaml; openai_endpoint must be the FULL .../responses URL)", file=sys.stderr)
+    if to_solve:
+        cfg = _agent_cfg(cfg)
+        print(f"agent cfg: {' '.join(cfg) if cfg else 'webwright defaults (api.openai.com)'}\n")
 
     if dry_run:
         print("\n--dry-run: nothing solved, nothing learned.")

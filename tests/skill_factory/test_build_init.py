@@ -269,7 +269,7 @@ def test_the_spec_init_writes_is_exactly_what_build_reads(monkeypatch):
     assert written == read, f"init writes {sorted(written)}, build reads {sorted(read)}"
 
 
-# ---------------------------------------------------------------- build: the gateway warning
+# ---------------------------------------------------------------- build: the agent's backend
 
 def _gw_spec(tmp: Path) -> Path:
     p = tmp / "skill.yaml"
@@ -279,46 +279,59 @@ def _gw_spec(tmp: Path) -> Path:
     return p
 
 
-def test_a_half_configured_gateway_is_reported_by_dry_run(monkeypatch, capsys):
-    """--dry-run is the free look before you spend agent time, so it has to be the place you
-    find out the agent will ignore your gateway. The warning used to sit below dry-run's own
-    return, i.e. the cheap path was the silent one."""
+def test_a_named_gateway_reaches_the_agent_without_being_asked(monkeypatch):
+    """The trap this closes: the agent's model is a yaml and never reads OPENAI_*, so exporting a
+    gateway used to send the module there and every solve to api.openai.com."""
     monkeypatch.setenv("OPENAI_ENDPOINT", "https://gw.example/api/responses")
-    with tempfile.TemporaryDirectory() as d:
-        B.build(str(_gw_spec(Path(d))), str(Path(d) / "lib"), [], dry_run=True)
-    assert "api.openai.com" in capsys.readouterr().err
+    monkeypatch.setenv("OPENAI_MODEL", "some-model")
+    got = B._agent_cfg([])
+    assert "model.openai_endpoint=https://gw.example/api/responses" in got
+    assert "model.model_name=some-model" in got
 
 
-def test_the_gateway_warning_says_to_keep_base_yaml(monkeypatch, capsys):
-    """-c replaces the default configs (cli.py: `config_spec or DEFAULT_CONFIGS`), so advice to
-    pass only your own yaml silently drops base.yaml."""
+def test_the_cli_defaults_come_along_because_c_replaces_them(monkeypatch):
+    """-c is `config_spec or DEFAULT_CONFIGS` (cli.py), not an addition — overrides alone would
+    drop base.yaml. And they're imported, not copied, so they can't drift."""
+    from webwright.run.cli import DEFAULT_CONFIGS
     monkeypatch.setenv("OPENAI_ENDPOINT", "https://gw.example/api/responses")
-    with tempfile.TemporaryDirectory() as d:
-        B.build(str(_gw_spec(Path(d))), str(Path(d) / "lib"), [], dry_run=True)
-    assert "-c base.yaml -c" in capsys.readouterr().err
+    got = B._agent_cfg([])
+    assert got[:len(DEFAULT_CONFIGS)] == list(DEFAULT_CONFIGS)
 
 
-def test_the_warning_fires_before_the_confirmation_prompt(monkeypatch, capsys):
-    """A warning you read after saying yes is not a warning. Answer 'n' at the prompt: the
-    warning must already be out."""
+def test_an_explicit_config_is_left_alone(monkeypatch):
+    """You said what you wanted; the env doesn't get a vote."""
     monkeypatch.setenv("OPENAI_ENDPOINT", "https://gw.example/api/responses")
-    monkeypatch.setattr(B.sys.stdin, "isatty", lambda: True)
-    monkeypatch.setattr("builtins.input", lambda *_: "n")
-    with tempfile.TemporaryDirectory() as d:
-        assert B.build(str(_gw_spec(Path(d))), str(Path(d) / "lib"), []) == 1   # aborted
-    assert "api.openai.com" in capsys.readouterr().err
+    assert B._agent_cfg(["base.yaml", "mine.yaml"]) == ["base.yaml", "mine.yaml"]
 
 
-def test_no_warning_when_a_config_was_passed(monkeypatch, capsys):
-    monkeypatch.setenv("OPENAI_ENDPOINT", "https://gw.example/api/responses")
-    with tempfile.TemporaryDirectory() as d:
-        B.build(str(_gw_spec(Path(d))), str(Path(d) / "lib"), ["base.yaml", "mine.yaml"],
-                dry_run=True)
-    assert "api.openai.com" not in capsys.readouterr().err
-
-
-def test_no_warning_without_a_gateway(monkeypatch, capsys):
+def test_no_gateway_means_no_opinion(monkeypatch):
+    """Nothing named, nothing invented: the CLI's own defaults still apply."""
     monkeypatch.delenv("OPENAI_ENDPOINT", raising=False)
+    monkeypatch.delenv("OPENAI_MODEL", raising=False)
+    assert B._agent_cfg([]) == []
+
+
+def test_the_gateway_actually_reaches_the_solve(monkeypatch):
+    """The unit above is only worth something if build hands it to the subprocess."""
+    seen = {}
+    monkeypatch.setenv("OPENAI_ENDPOINT", "https://gw.example/api/responses")
+    with tempfile.TemporaryDirectory() as d:
+        tmp = Path(d)
+
+        def fake_solve(core_task, start_url, library, out, task_id, cfg, log_path=None):
+            seen["cfg"] = cfg
+            _run_dir(Path(out), f"{task_id}_2026", core_task)
+            return 0
+
+        monkeypatch.setattr(B, "_solve", fake_solve)
+        monkeypatch.setattr(B, "learn", lambda *a, **k: None)
+        B.build(str(_gw_spec(tmp)), str(tmp / "lib"), [], assume_yes=True)
+    assert "model.openai_endpoint=https://gw.example/api/responses" in seen["cfg"]
+
+
+def test_dry_run_shows_which_backend_the_solves_would_use(monkeypatch, capsys):
+    """--dry-run is the free look before spending agent time; the backend is part of the plan."""
+    monkeypatch.setenv("OPENAI_ENDPOINT", "https://gw.example/api/responses")
     with tempfile.TemporaryDirectory() as d:
         B.build(str(_gw_spec(Path(d))), str(Path(d) / "lib"), [], dry_run=True)
-    assert "api.openai.com" not in capsys.readouterr().err
+    assert "gw.example" in capsys.readouterr().out

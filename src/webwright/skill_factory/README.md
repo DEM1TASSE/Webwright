@@ -99,12 +99,12 @@ one won't resolve:
 
 ```bash
 export MODEL_CFG=$HOME/my_gateway.yaml   # quickstart.sh reads this
-python -m webwright.skill_factory build skill.yaml --library ./library \
-  -c base.yaml -c $HOME/my_gateway.yaml  # -c REPLACES the defaults, so keep base.yaml
 ```
 
-Do one and not the other and your solves go to `api.openai.com` while everything else uses your
-gateway. `build` and `quickstart.sh solve` warn when they catch you half-configured.
+`build` needs none of that: it reads the two env vars above and passes them to the agent for you,
+printing the config it used. The yaml is for `quickstart.sh`, and for the day you want the agent
+on a different model than the one distilling your skills — then pass it as `-c base.yaml -c
+$HOME/my_gateway.yaml` (`-c` replaces the defaults, so keep `base.yaml`).
 </details>
 
 ### 1. Run a learned skill
@@ -212,9 +212,8 @@ build:                # every key here is also a CLI flag; the flag wins
 ```bash
 python -m webwright.skill_factory build skill.yaml --library ./library --jobs 3
 #                                                       where it lands ↑    ↑ solve 3 at a time
-#   on a gateway, add:  -c base.yaml -c $HOME/my_gateway.yaml
-#   (the agent reads that yaml, never your env vars — and -c replaces the defaults, so keep
-#    base.yaml. build warns before it spends anything if you forget.)
+#   on a gateway: nothing extra — build points the agent at your OPENAI_ENDPOINT / OPENAI_MODEL
+#   and prints the config it used. Pass -c only to give the agent a *different* model.
 
 # no spec of your own yet? the one behind the checked-in library is sitting next to you in
 # examples/, and --dry-run only prints the plan — no key, no browser:
