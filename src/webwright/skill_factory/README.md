@@ -60,12 +60,15 @@ No model, no API key, about 40 seconds. The whole pitch in one command:
 
 ```bash
 cd src/webwright/skill_factory/examples
-./quickstart.sh                            # the checked-in skill drives the live site
-./quickstart.sh demo LAX ORD 2026-09-01    # ...on your own route
+./quickstart.sh                            # = demo SEA DEN <today+30>: the skill drives the live site
+./quickstart.sh demo LAX ORD 2026-09-01    # ...on your own route (codes + YYYY-MM-DD)
 ```
 
-It prints the ten fixed steps it took and where it saved its screenshots. No model chose those
-steps; they're the skill's code.
+`demo` is the default mode, and with no route it flies SEA→DEN thirty days out — so it prints the
+date it picked, and your flight is whatever that day's schedule says. It also prints the ten fixed
+steps it took and where it saved its screenshots: no model chose those steps, they're the skill's
+code, and the run directory holds the whole trajectory if you want to check it (a fresh temp dir
+each time, or set `QUICKSTART_WORKDIR=./run1` to keep it).
 
 **What that just saved.** The same question — SEA→DEN, a route the skill was never trained on —
 answered three ways on this machine:
@@ -76,8 +79,9 @@ answered three ways on this machine:
 | wall clock | 23.5 min     | **~4 min**          | **~40 s**            |
 | LLM calls  | 55           | **12**              | **0**                |
 
-All three returned `["WN 4697", "Southwest", "6:50 AM"]`, and so did an independent model-free
-probe of the page — so this is three routes to one answer, not one answer agreeing with itself.
+All three asked for 2026-08-15 and returned `["WN 4697", "Southwest", "6:50 AM"]`, and so did an
+independent model-free probe of the page — three routes to one answer, not one answer agreeing
+with itself. (A pinned date, unlike the rolling default above: it's a measurement.)
 
 Two things to read off it. The middle column is reuse working as intended: the agent asked the
 library, got `use`, and stopped exploring — 50 steps to 11. But that gap is a property of the
@@ -169,6 +173,9 @@ checked. Fill the `____`s, then:
 ```bash
 python -m webwright.skill_factory build skill.yaml --library ./library --jobs 3
 #                                                       where it lands ↑    ↑ solve 3 at a time
+
+# no spec of your own yet? the one behind the checked-in library ships too:
+python -m webwright.skill_factory build examples/flights.skill.yaml --library ./library --dry-run
 ```
 
 `build` = solve × N + learn. It prints the tasks it's about to solve and asks first (`--dry-run`
@@ -179,6 +186,43 @@ gets you throttled. 3-5 is a safe start.
 > If your answer moves on its own (a price, a ranking), the shape check can tell a broken skill
 > from a working one, but not a right answer from a wrong one. Supply `--golds`, or plan to gate
 > it with a judge (see Limitations).
+
+<details>
+<summary><b>The same loop by hand, without the wrapper</b> — what <code>build</code> is doing for you</summary>
+
+<br>
+
+```bash
+cd src/webwright/skill_factory    # commands below run from the module directory
+
+# 1. SOLVE a few instances of the same task type (library is empty — these run from scratch)
+TASK='What is the earliest nonstop flight from %s to %s on 2026-08-15 (one-way)? Return the answer as a list: [flight_number, airline, departure_time], e.g. ["AS 336", "Alaska", "6:00 AM"].'
+while IFS='|' read -r FROM TO; do
+  examples/solve_with_library.sh \
+    "$(printf "$TASK" "$FROM" "$TO")" \
+    https://www.google.com/flights "$PWD/library" -o outputs -c base.yaml -c model_openai.yaml
+done <<'ROUTES'
+Seattle (SEA)|New York (JFK)
+San Francisco (SFO)|Boston (BOS)
+Los Angeles (LAX)|Chicago (ORD)
+ROUTES
+
+# 2. LEARN: distill everything you've solved into skills — no manifest, no fields to fill.
+#    --verify strict: the distilled skill must reproduce all three training answers standalone
+#    before it lands (a schedule is stable, so this is a fair bar).
+python -m webwright.skill_factory learn outputs/ --library ./library --verify strict --verify-rounds 3
+# -> groups the 3 runs into ONE template and lifts FIVE parameters:
+#    origin city/code, destination city/code, date
+#    library/what_is_the_earliest_nonstop_flight_from_.../{skill.py, meta.json, replays.json}
+
+# 3. USE the library: same wrapper, an UNSEEN route — the agent finds and reuses the skill
+examples/solve_with_library.sh \
+  "$(printf "$TASK" 'Seattle (SEA)' 'Denver (DEN)')" \
+  https://www.google.com/flights "$PWD/library" -o outputs -c base.yaml -c model_openai.yaml
+# outputs/<run>/skill_decision.json -> {"verdict": "use", "skill_id": "what_is_the_earliest_nonstop_..."}
+```
+
+</details>
 
 #### What to expect
 
@@ -193,6 +237,23 @@ A rejected skill costs you the distillation, never the solves: the runs are kept
 nothing unproven lands. It is not a sign you configured something wrong.
 
 <details>
+<summary><b>Getting a skill that lands</b> — the two habits that decide it</summary>
+<br>
+
+**Vary the parameters, not just the count.** Distillation lifts a parameter from the differences
+it *observes*, so a value identical in every instance may get baked in. Two instances that vary
+everything you care about beat five that share a date.
+
+**Read the rejection — the two kinds want opposite things.**
+
+| what you see | what it means | what to do |
+|---|---|---|
+| the diff is only in a value that moves (`$0.01` → `$5.99`), other instances reproduced exactly | the **verify mode** is wrong for this task, the skill is fine | `--verify shape` |
+| a crash (`Could not choose ...`), or an answer off in the wrong place | the distilled skill really is broken | **re-run `learn`**: a fresh draw often lands, and the last candidate is kept at `library/.rejected_<id>.py` for a post-mortem |
+
+</details>
+
+<details>
 <summary><b>On a custom OpenAI-compatible gateway</b></summary>
 <br>
 
@@ -205,9 +266,6 @@ The endpoint is the full `.../responses` URL, not a base path. The agent reads i
 yaml, not from these env vars: copy `examples/model_gateway.example.yaml` and point `MODEL_CFG` at
 it (or pass `-c` to `build`).
 </details>
-
-Full tutorial, with the loop spelled out, gateway setup, and running skills without the agent:
-**[docs/skill_factory/quickstart.md](../../../docs/skill_factory/quickstart.md)**
 
 ## 📊 Results
 
@@ -280,7 +338,6 @@ Here are some known rough edges, and directions we might take them.
 
 | doc | what's in it |
 |---|---|
-| [docs/skill_factory/quickstart.md](../../../docs/skill_factory/quickstart.md) | the complete tutorial: the flight-schedule loop, gateway knobs, standalone usage, measured costs |
 | [docs/skill_factory/manual.md](../../../docs/skill_factory/manual.md) | manual mode: you declare the template, params and admission yourself — for benchmarks (pipe your evaluator's verdict in as the gate), logged-in sites, or when an LLM shouldn't be guessing your template |
 | [docs/skill_factory/reference.md](../../../docs/skill_factory/reference.md) | verification & grades, every flag and env var, component map, backend |
 | [examples/README.md](examples/README.md) | the checked-in skill and the example inputs |

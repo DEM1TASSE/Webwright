@@ -39,7 +39,8 @@ shapes are verbatim-copyable into the agent's next script, individual primitives
 when the whole skill doesn't, and a reference skill is one repair away from executable. And a
 prior alone pulls its weight: the WebArena numbers in
 [Results](../../src/webwright/skill_factory/README.md#-results) come from a library the agent read
-exactly this way. The flights skill in the [Quickstart](quickstart.md), by contrast, reruns an
+exactly this way. The flights skill in the
+[Quick Start](../../src/webwright/skill_factory/README.md#-quick-start), by contrast, reruns an
 unseen route standalone, which is what `executable` buys.
 
 ## All parameters
