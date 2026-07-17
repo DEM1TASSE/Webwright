@@ -69,17 +69,42 @@ export OPENAI_API_KEY=...
 ```
 
 <details>
-<summary><b>On a custom OpenAI-compatible gateway</b></summary>
+<summary><b>On a custom OpenAI-compatible gateway</b> — two knobs, both needed</summary>
 <br>
 
+**The module's own calls** (`init`, `learn`, `skill_use`) read env vars:
+
 ```bash
-export OPENAI_ENDPOINT=... OPENAI_MODEL=...   # for learn / init / skill_use
-export MODEL_CFG=/abs/path/to/model.yaml      # for the AGENT in solve / build
+export OPENAI_ENDPOINT=https://your-gateway/api/responses   # the FULL request URL, not a base path
+export OPENAI_MODEL=your-model
 ```
 
-The endpoint is the full `.../responses` URL, not a base path. The agent reads its model from a
-yaml, not from these env vars: copy `examples/model_gateway.example.yaml` and point `MODEL_CFG` at
-it (or pass `-c` to `build`).
+**The agent** — the browser half of `solve` and `build` — reads a yaml and ignores those vars. Copy
+the template somewhere outside the repo, so your gateway can't ride along in a commit:
+
+```bash
+cp src/webwright/skill_factory/examples/model_gateway.example.yaml ~/my_gateway.yaml
+```
+
+Fill in the two lines that matter, with the same values you exported:
+
+```yaml
+model:
+  model_name: your-model
+  openai_endpoint: https://your-gateway/api/responses
+```
+
+Then point at it by **absolute** path — the scripts `cd` elsewhere before running, so a relative
+one won't resolve:
+
+```bash
+export MODEL_CFG=$HOME/my_gateway.yaml   # quickstart.sh reads this
+python -m webwright.skill_factory build skill.yaml --library ./library \
+  -c base.yaml -c $HOME/my_gateway.yaml  # -c REPLACES the defaults, so keep base.yaml
+```
+
+Do one and not the other and your solves go to `api.openai.com` while everything else uses your
+gateway. `build` and `quickstart.sh solve` warn when they catch you half-configured.
 </details>
 
 ### 1. Run a learned skill
