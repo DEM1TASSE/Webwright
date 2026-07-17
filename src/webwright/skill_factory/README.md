@@ -56,22 +56,19 @@ Both are additive; the Quick Start below runs them.
 Task: *what is the earliest nonstop flight from A to B on this date?*, on the
 live Google Flights.
 
-No model, no API key, about 40 seconds. The whole pitch in one command:
+No model, no API key, about 40 seconds:
 
 ```bash
 cd src/webwright/skill_factory/examples
-./quickstart.sh                            # = demo SEA DEN <today+30>: the skill drives the live site
+./quickstart.sh                            # SEA -> DEN, date = today + 30 days
 ./quickstart.sh demo LAX ORD 2026-09-01    # ...on your own route (codes + YYYY-MM-DD)
 ```
 
-`demo` is the default mode, and with no route it flies SEA→DEN thirty days out — so it prints the
-date it picked, and your flight is whatever that day's schedule says. It also prints the ten fixed
-steps it took and where it saved its screenshots: no model chose those steps, they're the skill's
-code, and the run directory holds the whole trajectory if you want to check it (a fresh temp dir
-each time, or set `QUICKSTART_WORKDIR=./run1` to keep it).
+`demo` is the default mode. If no route is provided, it searches SEA→DEN thirty days from today and prints the date it selected.
 
-**What that just saved.** The same question — SEA→DEN, a route the skill was never trained on —
-answered three ways on this machine:
+It also prints the ten fixed steps it executed and the location of the saved screenshots. The steps are encoded in the skill, not chosen by a model. The run directory contains the full trajectory. Each run uses a fresh temporary directory by default. Set `QUICKSTART_WORKDIR=./run1` to keep the results.
+
+**What that just saved.**
 
 |            | from scratch<br><sub>no library</sub> | the agent, with the library<br><sub>`quickstart.sh solve`</sub> | the skill, standalone<br><sub>what you just ran</sub> |
 |------------|--------------|---------------------|----------------------|
@@ -79,16 +76,11 @@ answered three ways on this machine:
 | wall clock | 23.5 min     | **~4 min**          | **~40 s**            |
 | LLM calls  | 55           | **12**              | **0**                |
 
-All three asked for 2026-08-15 and returned `["WN 4697", "Southwest", "6:50 AM"]`, and so did an
-independent model-free probe of the page — three routes to one answer, not one answer agreeing
-with itself. (A pinned date, unlike the rolling default above: it's a measurement.)
+All three runs solved the same task, finding the earliest nonstop `SEA → DEN` flight on `2026-08-15`, and returned the same correct answer.
 
-Two things to read off it. The middle column is reuse working as intended: the agent asked the
-library, got `use`, and stopped exploring — 50 steps to 11. But that gap is a property of the
-task, not a promise; on a site the model already knows well it narrows, and the honest version of
-this is in [Results](#-results). The last column is the one that doesn't depend on any of that:
-**every run after the library exists uses no model at all.** A watcher in cron pays for the
-exploration once, then ~40 s forever.
+The middle column shows reuse working as intended. The agent queried the library, received `use`, and stopped exploring, reducing the run from 50 steps to 11.
+
+The last column runs the learned skill directly. **Once the skill exists, every run uses no model calls.** A cron watcher pays the exploration cost once, then runs in about 40 seconds each time.
 
 ---
 
@@ -102,21 +94,19 @@ export OPENAI_API_KEY=...
 ./quickstart.sh solve   # ~5 min, a full agent solve of an unseen route, reusing the skill
 ```
 
-- `demo` runs the skill directly
-- `ask` only *retrieves*: one round trip printing the JSON the agent is handed
-  (`verdict / skill_id / source_path / how_to_reuse`) — this is the integration surface, and it
-  costs a tenth of a solve to look at
-- `solve` is the agent actually doing a task with it
+* `demo` runs the skill directly.
+* `ask` queries the library once and prints the returned JSON: `verdict`, `skill_id`, `source_path`, and `how_to_reuse`. It decides whether to use a skill, which one to use, and how to use it.
+* `solve` runs the agent on the task using the retrieved skill.
 
 ---
 
 ### 3. Build your own skill
 
-Everything from here needs an API key and can fail — see [what to expect](#what-to-expect)
-first. Two ways in, depending on what you already have.
+Everything below requires an API key. There are two paths, depending on what you already have.
 
-**3.1 — You have trajectories.** Once you're using Webwright anyway, the runs are already on
-disk: hand them over, no spec to write. This is the day-to-day path.
+**3.1 — You have trajectories.**
+
+If you already use Webwright, your trajectories are on disk. Pass them directly to `learn`.
 
 ```bash
 python -m webwright.skill_factory learn outputs/ --library ./library
@@ -129,17 +119,11 @@ cd src/webwright/skill_factory/examples
 python -m webwright.skill_factory learn trajectories --library ./library --verify off
 ```
 
-~100 s: three runs → one template → five lifted parameters → one skill. **`--verify off` is what
-keeps this from expiring** — it skips the replay, so nothing opens a browser, nothing goes stale,
-nothing can be rejected. The trade is on the label: the skill lands `grade: unverified`, because
-nobody looked. You're seeing distillation, not the proof it runs.
+~100 s: three runs → one template → five lifted parameters → one skill.
 
-Drop the flag and the gate comes back, for as long as the fixture is live — those runs are pinned
-to a date, and [their README](examples/trajectories/README.md) says exactly when and how they go
-stale. For a skill that *has* been through the gate, the one in
-[`examples/learned_library/`](examples/learned_library/) carries `verified: true, grade:
-executable` — it's what step 1 runs. Everything here was produced with **gpt-5.4**, which is what
-we'd recommend.
+These trajectories use flights scheduled for August 15, 2026. We use `--verify off` to skip browser replay and keep the example stable if the schedule changes or the date passes. Before August 15, 2026, you can also try `--verify strict`. [The trajectory README](examples/trajectories/README.md) explains when the examples become stale.
+
+A verified skill built from these trajectories is included in [`examples/learned_library/`](examples/learned_library/). It has `verified: true` and `grade: executable`, and is the skill used in step 1. Everything here was produced with **gpt-5.4**, which we recommend.
 
 **3.2 — You have a task, but no runs yet.** Describe it; `init` drafts the spec and leaves the
 values for you.
@@ -162,7 +146,7 @@ build:
   # this answer drifts (prices move on their own), so replay only checks the shape —
   # strict would reject a working skill for reporting today's truth
   verify: shape
-  draws: 2
+  draws: 2 # 你要进行几次独立的聚合测试
   on_fail: reject     # reject = executable or nothing | reference = keep it as a prior
 ```
 
