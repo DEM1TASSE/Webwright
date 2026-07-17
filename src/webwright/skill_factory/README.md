@@ -213,8 +213,10 @@ build:                # every key here is also a CLI flag; the flag wins
 python -m webwright.skill_factory build skill.yaml --library ./library --jobs 3
 #                                                       where it lands ↑    ↑ solve 3 at a time
 
-# no spec of your own yet? the one behind the checked-in library ships too:
-python -m webwright.skill_factory build examples/flights.skill.yaml --library ./library --dry-run
+# no spec of your own yet? the one behind the checked-in library ships too (paths are
+# relative to the repo root, and --dry-run just prints the plan — no key, no browser):
+python -m webwright.skill_factory build src/webwright/skill_factory/examples/flights.skill.yaml \
+  --library ./library --dry-run
 ```
 
 `build` runs `solve` for each instance, then calls `learn`. It prints the planned tasks and asks before starting. `--dry-run` prints the plan and exits. An instance that already has an answer is not solved again. `--jobs N` sets the number of parallel solves and defaults to 1. The practical limit is the target site. Too many browsers from one IP may trigger throttling. Start with 3 to 5.
