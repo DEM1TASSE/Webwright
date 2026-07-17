@@ -38,7 +38,32 @@ def _model() -> Any:
         cfg["model_name"] = name
     if endpoint:
         cfg["openai_endpoint"] = endpoint
-    return get_model(cfg)
+    model = get_model(cfg)
+    if not name:
+        _warn_unnamed_model(model)
+    return model
+
+
+_WARNED = False
+
+
+def _warn_unnamed_model(model: Any) -> None:
+    """Say out loud which model we fell back to when nobody named one.
+
+    The model class ships its own default (an old one, at the time of writing), and every skill in
+    the library is written by this model — quietly distilling on whatever the class happens to
+    default to is not a decision anyone should make by accident. stderr, not stdout: skill_use's
+    stdout is JSON an agent parses.
+    """
+    global _WARNED
+    if _WARNED:
+        return
+    _WARNED = True
+    import sys
+    fallback = getattr(getattr(model, "config", None), "model_name", None) or "its built-in default"
+    print(f"skill_factory: no model named, so the module's LLM calls fall back to {fallback}. "
+          f"Set SKILL_MODEL_NAME (or OPENAI_MODEL) to choose — every skill in your library is "
+          f"written by this model.", file=sys.stderr)
 
 
 def llm(system: str, user: str, *, model: Any = None, max_tokens: int | None = None, **_: Any) -> str:

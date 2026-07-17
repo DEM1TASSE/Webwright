@@ -137,9 +137,10 @@ yaml spells out by hand. So `SKILL_MODEL_NAME` and `OPENAI_MODEL` aren't two set
 `SKILL_MODEL_*` wins. Two names exist so you can send distillation somewhere other than whatever
 else already reads `OPENAI_*`; if you don't care, set only `OPENAI_*`.
 
-Set neither and you get that class's own fallbacks, `gpt-4o` at `https://api.openai.com/v1/responses`.
-Those are inherited defaults, not suggestions. The [Results](../../src/webwright/skill_factory/README.md#-results)
-ran on a much newer model. Name the model you want.
+Set neither and you get that class's own fallbacks, `gpt-4o` at `https://api.openai.com/v1/responses`,
+and a line on stderr saying so. Those are inherited defaults, not suggestions: the
+[Results](../../src/webwright/skill_factory/README.md#-results) ran on a much newer model, and
+every skill in your library is written by whichever one you leave it on. Name it.
 
 **The agent's model reads none of these vars**; nothing outside `llm.py` does. On a custom
 gateway set both doors, or your solves go to `api.openai.com` while everything else uses your
