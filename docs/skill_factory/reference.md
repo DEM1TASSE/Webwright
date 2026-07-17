@@ -24,18 +24,12 @@ RESULT = ["UA 729", "United", "12:10 AM"]
 if "UA 729" in text: return "UA 729"
 ```
 
-That solve recognised its answer instead of working it out. The input gate can't see it — the
-answer is right, and the answer is all it looks at. Distillation, told never to copy an
-instance's values, then has to invent an extractor the trace never had, fails replay on that
-instance, and takes the batch down with it however many draws you spend. So a solve whose script
-contains **every field of its answer verbatim** is dropped before distilling, counted as
-`dropped_lookup` beside `dropped_wrong`: one counts answers the gate rejected, the other counts
-answers it accepted from scripts that never earned them.
-
-Every field *at once* is the test, and the narrowness is the point: "the answer appears in the
-code" fires on working solves too — an airline name is a vocabulary entry, a time lands in an
-assertion. It flags all three of the shipped trajectories. Measured across six real solves, the
-verbatim-everything test flags none of the five that distilled and the one that couldn't.
+It recognised its answer instead of working it out, and the input gate can't see that: the answer
+is right, and the answer is all it looks at. Distillation may not copy instance values, so it
+must invent an extractor the trace never had — and then fails replay on that instance, however
+many draws you spend. So a solve whose script contains **every field of its answer verbatim** is
+dropped before distilling, counted as `dropped_lookup`. (Every field *at once* — "the answer
+appears in the code" flags working solves too, where an airline name is a vocabulary entry.)
 
 Whichever level the output gate ran at becomes the skill's **grade**:
 
