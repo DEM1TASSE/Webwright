@@ -53,9 +53,18 @@ def _extract_code(txt: str) -> str:
 
 
 def _norm(v):
-    """Scalar-normalize for replay comparison: 5 == "5" (type jitter between a solve's
-    string answer and a skill's numeric one is not a logic error; WebArena's own
-    evaluator normalizes the same way)."""
+    """Scalar-normalize for replay comparison: jitter in how an answer is *written* is not a
+    logic error, so it must not fail a skill that found the same fact. WebArena's own evaluator
+    normalizes the same way.
+
+      5 == "5"            a solve answers in strings, a skill in numbers
+      "AS 26" == "AS26"   the page prints AS26; an agent writing the label spaced it out, and a
+                          skill reading the page faithfully could never reproduce the space
+      "Alaska" == "alaska"
+
+    What survives: a different flight, a different number, a missing field. That is what strict
+    is for — the same answer, not the same bytes.
+    """
     if isinstance(v, list):
         return [_norm(x) for x in v]
     if isinstance(v, dict):
@@ -64,12 +73,14 @@ def _norm(v):
         return v
     if isinstance(v, (int, float)):
         return str(v)
+    if isinstance(v, str):
+        return re.sub(r"\s+", "", v).casefold()
     return v
 
 
 def _replay(code: str, traces: list["Trace"], strict: bool = False) -> list[str]:
     """Run the candidate skill on each source trace's OWN taskspec (no model in the loop).
-    PASS = exact answer match; in non-strict mode a non-empty, schema-shaped answer also
+    PASS = the same answer (see _norm: spacing, case and int/str jitter folded); in non-strict mode a non-empty, schema-shaped answer also
     passes (live sites drift between solve time and replay time — prices, listings).
     Catches what distillation can break: crashes, timeouts, empty/misshapen output."""
     import os

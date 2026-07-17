@@ -52,7 +52,7 @@ def _yaml_skeleton(task: str, params: list[str], start_url: str, rows: int,
     why = (f"# this answer drifts ({reason}), so replay only checks the shape —\n"
            f"  # strict would reject a working skill for reporting today's truth\n  "
            if drifts else
-           f"# this answer should hold still ({reason}), so replay demands it back exactly\n  ")
+           f"# this answer should hold still ({reason}), so replay demands the same answer back\n  ")
     return (
         f"# Draft skill spec — fill the ____ values (your ground truth), then: build skill.yaml\n"
         f"# The {{holes}} in `task` are the parameters; each is a column below.\n\n"

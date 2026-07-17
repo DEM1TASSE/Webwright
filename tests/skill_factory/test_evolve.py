@@ -257,3 +257,34 @@ def test_every_skill_carries_a_grade_and_the_three_states_are_distinct():
     untested = refine("off", "reject", GOOD)             # no replay at all
     assert untested["grade"] == "unverified", "never tested is not the same as tested and failed"
     assert untested["verified"] is False
+
+
+# ---------------------------------------------------------------- replay comparison: _norm
+
+def test_norm_folds_how_an_answer_is_written_not_what_it_says():
+    """Real case that cost three solves: the page prints AS26, the agent wrote the label as
+    "AS 26", and strict then rejected every skill that read the page correctly — no draw could
+    ever have passed. Spacing is not a logic error."""
+    from webwright.skill_factory.update import _norm
+    assert _norm(["AS26", "Alaska", "7:00 AM"]) == _norm(["AS 26", "Alaska", "7:00 AM"])
+    assert _norm(["AS26", "Alaska", "7:00 AM"]) == _norm(["AS26", "alaska", "7:00AM"])
+
+
+def test_norm_still_fails_a_different_answer():
+    """The folding must not buy leniency: strict is the same *answer*, not the same bytes."""
+    from webwright.skill_factory.update import _norm
+    assert _norm(["AS26", "Alaska", "7:00 AM"]) != _norm(["AS27", "Alaska", "7:00 AM"])
+    assert _norm(["AS26", "Alaska", "7:00 AM"]) != _norm(["AS26", "Alaska", "8:00 AM"])
+
+
+def test_norm_still_catches_a_mangled_field():
+    """The draw that prompted this returned "\\b 434" for "B6 434" — a regex-escape bug that
+    normalization must not launder into a pass."""
+    from webwright.skill_factory.update import _norm
+    assert _norm(["B6 434", "JetBlue", "6:00 AM"]) != _norm(["\b 434", "JetBlue", "6:00 AM"])
+
+
+def test_norm_keeps_folding_type_jitter():
+    """The behaviour it had before: a solve answers in strings, a skill in numbers."""
+    from webwright.skill_factory.update import _norm
+    assert _norm([5]) == _norm(["5"])

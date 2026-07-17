@@ -11,7 +11,7 @@ three levels:
 | gate | what it asks | levels (strict → loose) | what it decides |
 |---|---|---|---|
 | **input** | is this solve's answer trustworthy? | `gold` (match a known answer) → `self_verify` (shape + non-empty + the agent's own "I succeeded"; passes wrong-but-plausible answers, so use `gold` when correctness matters) → `none` | whether a solve becomes **material** for a skill |
-| **output** | can the skill reproduce the answer with no model? | `strict` (reproduce the recorded answer) → `shape` (non-empty + schema-shaped, for drifting answers) → `off` (no replay) | the skill's **grade**, below |
+| **output** | can the skill reproduce the answer with no model? | `strict` (give back the recorded answer, ignoring spacing and case) → `shape` (non-empty + schema-shaped, for drifting answers) → `off` (no replay) | the skill's **grade**, below |
 
 The output gate spends two nested budgets, `--draws` independent candidates each repaired up to
 `--verify-rounds` rounds; if none reproduce the recorded answers, nothing lands.
@@ -89,7 +89,7 @@ throttled, which reads as your solves failing; 3 to 5 is safe. With N > 1 each s
 | `--golds` | (none) | JSON `{task_id: gold_answer}` → gold gate instead of self_verify |
 | `--chunk` | 25 | runs per LLM grouping call |
 | `--dry-run` | off | print the grouping plan, change nothing |
-| `--verify` | `strict` | replay bar: `strict` = reproduce recorded answers, `shape` = non-empty + schema-shaped (live data), `off` = skip |
+| `--verify` | `strict` | replay bar: `strict` = give the recorded answers back (spacing and case folded, so a label typed `AS 26` for a page that prints `AS26` can't sink a working skill), `shape` = non-empty + schema-shaped (live data), `off` = skip |
 | `--verify-rounds` | 2 | repair rounds **within one candidate**: its failures are fed back and it is re-distilled |
 | `--draws` | 2 | **independent** candidates before giving up. A draw can simply come out brittle, and a fresh one often lands where repairing the bad one won't. Stops at the first that verifies |
 | `--on-fail` | `reject` | failed verification: `reject` (runs stay retryable) or `reference` (lands as a labeled prior; never overwrites an existing skill) |
