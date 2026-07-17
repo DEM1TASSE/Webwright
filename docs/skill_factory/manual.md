@@ -2,60 +2,37 @@
 
 [← back to the module README](../../src/webwright/skill_factory/README.md)
 
-> ### Which one do you want?
->
-> `build` / `learn` and `update` differ in **who decides**, not in how old they are.
->
-> | | `build` / `learn` | `update --manifest` (this doc) |
-> |---|---|---|
-> | the template | an LLM infers it by grouping your runs | **you write the exact string** |
-> | the parameters | an LLM extracts them | **you declare them per run** |
-> | is this solve correct? | the gate decides: `--golds` (exact match by task_id) or `self_verify` (shape + the agent's own SUCCESS report) | **you say so** — `admit` is required per run, and it can come from anywhere |
-> | ADD or REFINE? | derived: refine if the template already exists | **you say so** (`verdict`) |
-> | which runs | everything under one folder | **you list the directories** |
-> | credentials | ✗ not passed — a replay can't log in | ✓ `credentials` per run |
->
-> **Use `build`/`learn`** for your own work: it's the whole point, and the inference is usually
-> right. **Reach for `update`** when one of these bites:
->
-> - **You're running a benchmark and already know the answers.** This is the canonical case. The
->   harness has its own evaluator, so you don't want *our* gate guessing — you pipe its verdict
->   straight in as `admit`. That is exactly how this repo's WebArena numbers were produced:
->   `gold_eval()` scored each solve, and its result became `admit` in the manifest.
-> - **Correctness isn't an exact string match.** `--golds` compares answers with `==`. A human
->   review, a judge model, partial credit — none of that fits in a golds file, but all of it fits
->   in a boolean you set yourself.
-> - **The site needs a login.** `learn` doesn't carry credentials into the replay, so a skill for
->   a logged-in site can't verify. The manifest does.
-> - **You don't want an LLM guessing your template or parameters.** Grouping can split one
->   template in two, or lift the wrong parameters. Here you state them.
->
-> The examples below use a **WebArena gitlab** task rather than the flights one the rest of the
-> docs use, and that's deliberate: gitlab is self-hosted (so it needs a login) and comes with a
-> gold evaluator — it hits two of the four cases above at once. Flights hits none of them, which
-> is exactly why the Quick Start builds it with `learn` instead.
->
-> **These examples don't run as written.** [WebArena](https://github.com/web-arena-x/webarena) is
-> a set of self-hosted Docker sites, so `http://gitlab.example.com` and the credentials are
-> stand-ins for **your** instance — point them at your own host and accounts once it's up.
-> Everything else transfers unchanged.
->
-> One default to know: `update` defaults to **`--verify off`** while `learn` defaults to
-> `strict`, so a skill lands with `grade: unverified` unless you ask for a replay — pass
-> `--verify strict` (or `shape`). See
-> [verification and grades](reference.md#verification-and-grades).
+## When to use this mode
 
-The library grows **offline** from batches of solved tasks, and is consumed **at solve time** by
-the agent. Tasks are provided **manually** today — you pick which tasks to solve and batch. The
-current focus is **same-template generalization**, so feed several instances of the SAME template
-(3+ instances with different parameter values works well): `refine` aligns them, and exactly what
-differs between instances becomes the skill's parameters — more instances, wider generalization.
-(Planned: bootstrap — automatically expand one seed task into multiple instances.)
+There are two ways to grow the library, and they're one pipeline seen at two levels. **Quick mode**
+(`init` / `build` / `learn`) is the convenience layer: it infers the template, extracts
+parameters, and gates each solve for you, and it's the right default. **Manual mode** (`update`,
+this doc) exposes the same machinery directly, so you write the template, declare the parameters,
+and set each solve's verdict yourself. Reach for it in three cases: a benchmark with known answers
+(pipe your evaluator's verdict in as `admit`, how this repo's WebArena numbers were made),
+correctness beyond an exact string match (a judge, human review, partial credit), or a site behind
+a login (the manifest carries credentials into replay; `learn` doesn't). The split is pragmatic
+rather than fundamental, so these manual-only knobs could surface in `build` later.
 
-### 1. Solve a few instances of a template (normal Webwright runs)
+| | quick mode (`build` / `learn`) | manual mode (`update`) |
+|---|---|---|
+| the template | an LLM infers it by grouping your runs | **you write the exact string** |
+| the parameters | an LLM extracts them | **you declare them per run** |
+| is this solve correct? | `--golds` (exact match) or `self_verify` | **you say so** (`admit`, required per run) |
+| ADD or REFINE? | derived: refine if the template exists | **you say so** (`verdict`) |
+| which runs | everything under one folder | **you list the directories** |
+| credentials | left out, so a replay stays logged out | **`credentials` per run, carried into replay** |
 
-**Important:** stock Webwright does NOT write the answer to a machine-readable file by itself —
-tell the agent to, by appending an output instruction to the task (the gate in step 2 reads it):
+The examples use a **WebArena GitLab** task. Because GitLab is both self-hosted and evaluated against a gold answer, it covers two of these cases at once. The examples are meant to represent [your own WebArena instance](https://github.com/web-arena-x/webarena): `http://gitlab.example.com` and the credentials are placeholders for your actual host and accounts.
+
+The library grows offline from batches of solved tasks and is consumed at solve time by the agent.
+Feed several instances of the same template (3+ with different values works well): `refine` aligns
+them, and what differs between instances becomes the skill's parameters.
+
+### 1. Solve a few instances of a template
+
+Stock Webwright doesn't write the answer to a machine-readable file on its own. Append an output
+instruction to the task so it does (the manifest in step 2 reads it):
 
 ```bash
 ANSWER_SPEC='Additionally, write the final answer into $WORKSPACE_DIR/agent_response.json
@@ -67,18 +44,13 @@ python -m webwright.run.cli main \
   -c base.yaml -c model_openai.yaml
 ```
 
-> Custom OpenAI-compatible gateway? Copy `model_openai.yaml`, change `openai_endpoint`
-> (and `model_name`), and stack your copy instead.
+Each run leaves a directory with `final_script.py` and `agent_response.json`. Repeat for 2–3 more
+instances with different values (another user / repo / date).
 
-Each run leaves a directory containing `final_script.py` (the executable solve) and — because of
-the instruction above — `agent_response.json` (the answer). Repeat for 2–3 more instances of the
-same template with different values (another user / repo / date). If you skip the output
-instruction, fill each manifest run's `answer` field by hand in step 2 instead.
+### 2. Judge each solve, write the manifest
 
-### 2. Gate the solves, write the manifest
-
-Judge each run (`gate(result, method="gold")` against a known answer, or `method="self_verify"`
-without one) and write one manifest per batch:
+Score each run with your own evaluator and put the verdict in `admit`. The manifest is just the
+list of runs:
 
 ```jsonc
 // batch.json
@@ -87,79 +59,65 @@ without one) and write one manifest per batch:
   "runs": [
     {
       "dir": "outputs/t132_a_20260703_120000",   // run dir; final_script.py is read from it
-      "admit": true,                             // gate verdict — false rows NEVER enter the library
+      "admit": true,                             // your evaluator's verdict; false rows never enter
       "params": {"user": "kilian", "repo": "a11yproject", "date": "3/1/2023"},
-      "verdict": "skip",                         // how the run used the library: skip = solved from
-                                                 // scratch; use / adapt = reused a skill
-                                                 // (adapt triggers refine-back into the skill)
+      "verdict": "skip",
       "site": "gitlab",
-      "output_schema": {"type": "number"}        // required shape of retrieved_data
-      // "answer": optional — read from the run dir's agent_response.json when omitted
+      "output_schema": {"type": "number"}
     },
-    { "dir": "outputs/t132_b_20260703_121500", "admit": true,
+    { "dir": "outputs/t132_b_20260703_121500", "admit": false,
       "params": {"user": "gao", "repo": "2019", "date": "4/6/2023"},
       "verdict": "skip", "site": "gitlab", "output_schema": {"type": "number"} }
   ]
 }
 ```
 
-Field by field:
+Assembling it programmatically from a gold set is shown end-to-end in step 6.
 
 | field | required | meaning |
 |---|---|---|
-| `template` | yes | the template sentence with `{{param}}` placeholders. **Skills are keyed by it**: a manifest whose template already has a skill refines that skill in place; a new template adds a new skill. Use the same string across batches of the same template. |
+| `template` | yes | the template with `{{param}}` placeholders. **Skills are keyed by it**: a matching template refines the existing skill in place; a new one adds a skill. |
 | `runs[].dir` | yes | a Webwright run directory; `final_script.py` is read from it |
-| `runs[].admit` | yes | the gate verdict; `false` rows are dropped and never enter the library |
-| `runs[].params` | yes | this instance's concrete values — `refine` aligns the runs and exposes exactly these differing values as the skill's arguments (this is what powers generalization) |
-| `runs[].verdict` | no (default `skip`) | how this run used the library: `skip` = solved from scratch; `use` = reused a skill as-is; `adapt` = reused + fixed the last step (**`adapt` is what triggers refining the fix back into the skill**) |
+| `runs[].admit` | yes | your verdict; `false` rows never enter the library |
+| `runs[].params` | yes | this instance's values; `refine` exposes exactly what differs across runs as the skill's arguments |
+| `runs[].verdict` | no (`skip`) | how the run used the library: `skip` = from scratch, `use` = reused as-is, `adapt` = reused + fixed the last step (**`adapt` triggers refining that fix back in**) |
 | `runs[].site` | no | site tag stored in the skill's meta (helps retrieval) |
 | `runs[].output_schema` | no | required shape of `retrieved_data`, e.g. `{"type": "number"}` |
-| `runs[].answer` | no | this run's answer; read from the run dir's `agent_response.json` when omitted |
+| `runs[].answer` | no | read from the run dir's `agent_response.json` when omitted |
+| `runs[].credentials` | no | login for the replay of a gated site (step 5); never written into the skill or `replays.json` |
 
 ### 3. Build / evolve the library
 
 ```bash
-export OPENAI_API_KEY=...                        # backend key (never stored by the module)
-# optional — defaults to OPENAI_MODEL / OPENAI_ENDPOINT:
-export SKILL_MODEL_NAME=gpt-5.4 SKILL_MODEL_ENDPOINT=https://api.openai.com/v1/responses
-python -m webwright.skill_factory.update --manifest batch.json --library ./library
+export OPENAI_API_KEY=...
+python -m webwright.skill_factory.update --manifest batch.json --library ./library --verify strict
 ```
 
-Prints a changelog: `{"added": [...], "adapt_refined": [...], "use": [...], "dropped_wrong": n}`.
-Re-run with later batches any time — a new template **adds** a skill, new solves for an existing
-template **refine it in place** (keeps its working functions), templates with no new traces are
-left untouched. Batches may mix templates.
+`update` defaults to `--verify off` (a skill would land `unverified`), so pass `--verify strict`
+or `shape` to have it graded. Prints a changelog:
+`{"added": [...], "adapt_refined": [...], "use": [...], "dropped_wrong": n}`. Re-run with later
+batches any time; batches may mix templates.
 
 ### 4. Reuse at solve time
+
+> With `build`/`learn` the agent queries the library on its own and you can skip this. It's the
+> manual wiring for driving Webwright runs yourself.
 
 ```python
 from webwright.skill_factory import with_skill_hint
 prompt = with_skill_hint(prompt, task=task_text, library="/abs/path/to/library")
+# then: python -m webwright.run.cli main -t "$prompt" ...
 ```
 
-```bash
-python -m webwright.run.cli main -t "$prompt" ...
-```
+The agent runs `skill_use`, gets `{verdict, skill_id, source_path, how_to_reuse}`, reads the
+source, and reuses it. `with_skill_hint` resolves `./library` to an absolute path so the agent
+finds it from its workspace; `--library` beats the `SKILL_LIBRARY_ROOT` env var, so use one or the
+other.
 
-The hint tells the agent to query the library first; the agent runs the `skill_use` tool, gets
-`{verdict, skill_id, source_path, how_to_reuse}`, reads the skill source, and reuses it
-(use = as-is with new parameter values, adapt = reuse the core + change the last step,
-skip = solve from scratch).
+### 5. Run a skill directly, and logged-in sites
 
-Two path gotchas, both loud now but worth knowing:
-
-- **The library path ends up in a command that runs inside the agent's workspace** —
-  `with_skill_hint` resolves it to an absolute path for exactly that reason. If the tool is ever
-  pointed at a missing/empty library anyway, it answers `skip` with an explicit
-  `"warning": "library empty at <abspath>"` instead of failing silently.
-- **Precedence:** the hint bakes `--library` into the command, and `--library` beats the
-  `SKILL_LIBRARY_ROOT` env var (the env var is only the tool's default when `--library` is
-  omitted). Use one or the other, not both.
-
-### 5. Run a skill directly (optional)
-
-Every skill is also a standalone script: it reads a `taskspec.json` (parameters at run time) and
-writes `agent_response.json`:
+Every skill is also a standalone script: it reads a `taskspec.json` and writes
+`agent_response.json`:
 
 ```bash
 cat > taskspec.json <<'EOF'
@@ -169,65 +127,47 @@ cat > taskspec.json <<'EOF'
  "output_schema": {"type": "number"}}
 EOF
 python library/how_many_commits_did_user_make_to_repo_on_date/skill.py taskspec.json
-cat agent_response.json
 ```
 
-`credentials` is the field `learn` has no way to fill, and it's why a logged-in site needs this
-path: the skill logs in with what the taskspec hands it, so replay-verification can actually run.
-Put them in the manifest per run (`"credentials": {...}`) and the replay gets them too — they are
-never written into the skill or into `replays.json`, so the library stays shareable.
+`credentials` is the field `learn` can't fill, and it's why a logged-in site needs this path: the
+skill logs in with what the taskspec (or the manifest, per run) hands it, so replay can run. They
+never touch the skill or `replays.json`, so the library stays shareable.
 
-### 6. The whole pipeline in one go (a batch of tasks)
-
-Steps 1–3 driven by a single task file. `tasks.json` — one entry per instance of the template
-(`gold` is optional; with it the gate compares answers, without it it falls back to `self_verify`):
-
-```json
-[
-  {"id": "t132_a", "task": "How many commits did kilian make to a11yproject on 3/1/2023?",
-   "params": {"user": "kilian", "repo": "a11yproject", "date": "3/1/2023"}, "gold": 1},
-  {"id": "t132_b", "task": "How many commits did gao make to 2019 on 4/6/2023?",
-   "params": {"user": "gao", "repo": "2019", "date": "4/6/2023"}, "gold": 0}
-]
-```
+### 6. The whole pipeline in one go
 
 ```bash
 START_URL=http://gitlab.example.com
-
-# 1) solve every instance (sequential; add xargs -P N or & to parallelize)
-#    ANSWER_SPEC (from step 1 above) makes the agent write agent_response.json — the gate reads it
 ANSWER_SPEC='Additionally, write the final answer into $WORKSPACE_DIR/agent_response.json
 as {"retrieved_data": <the answer, as a JSON list>}.'
+
+# 1) solve every instance (add xargs -P N or & to parallelize)
 jq -c '.[]' tasks.json | while read -r row; do
   python -m webwright.run.cli main -t "$(jq -r .task <<<"$row") $ANSWER_SPEC" \
     --task-id "$(jq -r .id <<<"$row")" --start-url "$START_URL" -o outputs \
     -c base.yaml -c model_openai.yaml
 done
 
-# 2) gate each run + assemble the manifest
+# 2) score each run with YOUR evaluator + assemble the manifest
 python - <<'PY'
 import json, glob
-from webwright.skill_factory import gate
+from your_harness import gold_eval          # your benchmark's own evaluator
 
 TEMPLATE = "How many commits did {{user}} make to {{repo}} on {{date}}?"
 SCHEMA = {"type": "number"}
 runs = []
-for t in json.load(open("tasks.json")):
-    d = sorted(glob.glob(f"outputs/{t['id']}_*"))[-1]        # newest run dir of this task
+for t in json.load(open("tasks.json")):                     # {id, task, params, gold} per row
+    d = sorted(glob.glob(f"outputs/{t['id']}_*"))[-1]
     answer = json.load(open(f"{d}/agent_response.json"))["retrieved_data"]
-    g = gate(answer, gold=t.get("gold"), output_schema=SCHEMA)   # gold if present, else self_verify
-    runs.append({"dir": d, "admit": g.admit, "params": t["params"], "verdict": "skip",
-                 "site": "gitlab", "output_schema": SCHEMA})
+    runs.append({"dir": d, "admit": gold_eval(answer, t["gold"]), "params": t["params"],
+                 "verdict": "skip", "site": "gitlab", "output_schema": SCHEMA})
 json.dump({"template": TEMPLATE, "runs": runs}, open("batch.json", "w"), indent=2)
 print(sum(r["admit"] for r in runs), "of", len(runs), "admitted")
 PY
 
-# 3) evolve the library
-python -m webwright.skill_factory.update --manifest batch.json --library ./library
+# 3) evolve the library (strict replay so skills land executable)
+python -m webwright.skill_factory.update --manifest batch.json --library ./library --verify strict
 
-# 4) solve NEW instances of the template WITH the library: prepend the skill hint
-#    (the hint is what tells the agent to query; with_skill_hint resolves ./library
-#     to an absolute path against YOUR cwd, so the agent finds it from its workspace)
+# 4) solve a NEW instance WITH the library
 TASK="How many commits did byte make to empathy-prompts on 4/2/2023?"
 PROMPT=$(python -c 'import sys; from webwright.skill_factory import with_skill_hint
 print(with_skill_hint(sys.argv[1], task=sys.argv[1], library="./library"))' "$TASK")
@@ -235,7 +175,5 @@ python -m webwright.run.cli main -t "$PROMPT" \
   --task-id t132_new --start-url "$START_URL" -o outputs -c base.yaml -c model_openai.yaml
 ```
 
-Repeat 1–3 whenever a new batch of solves lands — the library evolves in place (new templates are
-added, existing skills are refined, untouched skills stay as they are). This is exactly the loop
-our WebArena evaluation runs (train → gate → update → held-out reuse).
-
+Repeat 1–3 as new solves land; the library evolves in place. This is exactly the loop our WebArena
+evaluation runs (train → gate → update → held-out reuse).
