@@ -11,10 +11,6 @@ Four sections, in the order you'd meet them:
 4. **[Do it for your own task](#4-do-it-for-your-own-task)** — `init` → fill → `build`, or
    `learn` if you already have runs. **This is the part that's yours.**
 
-Solves are long (10-30 min each). If your shell or tooling enforces command timeouts, run them
-in the background — `--jobs` shortens the wall clock but the command still blocks until the last
-one finishes.
-
 ---
 
 ## 1. Run the checked-in skill
@@ -25,16 +21,12 @@ cd src/webwright/skill_factory/examples
 ./quickstart.sh demo LAX ORD 2026-09-01    # your own route (codes + YYYY-MM-DD)
 ```
 
-It prints the ten fixed steps it took — no model chose them, they're the skill's code — and
-where it saved its screenshots, so "this is a program, not a model improvising" is something
-you can check rather than take on faith.
+It prints the ten fixed steps and where it saved its screenshots. No model chose those steps;
+they're the skill's code, and you can check that rather than take it on faith.
 
 The example is *earliest nonstop flight* on Google Flights (the site from Webwright's own
-README). That task was chosen carefully, and the reason matters more than the example:
-a flight **schedule** is a fact the page states plainly, it doesn't move on its own, and it
-reads the same on your machine as on ours. That's what lets the skill be replay-verified
-(`--verify strict`) and reused standalone with a straight face. The **fare** on the same page
-would fail all three. See [choosing a task](#choosing-a-task-that-can-be-verified).
+README). It was picked to be verifiable, not to be pretty, and that reasoning matters more than
+the example: [choosing a task](#choosing-a-task-that-can-be-verified).
 
 ## 2. Reuse the skill with the agent
 
@@ -141,24 +133,18 @@ high-variance because the agent re-derives the strategy every time, and the skil
 fixed 10.
 
 How to read the middle column. The agent asked the library, got `use`, and stopped exploring:
-50 steps to 11. That gap is a property of *this* task, not a promise — Google Flights is fiddly
-enough that the agent flails without help, and on a site the model drives from memory the gap
-narrows or inverts (querying and reading a skill isn't free). The honest general version:
-**step savings scale with how much the agent doesn't already know.**
+50 steps to 11. That gap is a property of *this* task, not a promise. Google Flights is fiddly
+enough that the agent flails without help; on a site the model already drives from memory, the
+gap narrows or inverts, because querying and reading a skill isn't free. The honest general
+version: **step savings scale with how much the agent doesn't already know.**
 
 The last column doesn't depend on any of that. **Every run after the library exists uses no model
 at all** — a schedule watcher in cron pays the agent exploration once, then ~40 s forever.
 
-**Verification, honestly:** because a schedule is a fixed, client-independent fact, this
-family earns `--verify strict` — the distilled skill had to reproduce all three training
-answers standalone before it landed (`meta.json`: `verified: true, grade: executable`). And
-the standalone answer above, `["UA 2601", "United", "5:00 AM"]`, is byte-identical to what an
+**Verification, honestly:** the standalone answer above is byte-identical to what an
 **independent** model-free probe reads off the page (`experiments/tools/earliest_nonstop_probe.py`
-in the research repo) — two different code paths, one answer, so the check is real and not
-self-confirming. This is the property the task selection buys you: pick a task whose truth the
-page *states* and that doesn't drift by client, and admission becomes real verification without
-hand-written golds. (For families whose answer genuinely changes between solve and replay —
-live prices, inventory — use `--verify shape` instead, and pass `--golds` when you have them.)
+in the research repo). Two code paths, one answer: the replay gate is checking something real, not
+confirming itself.
 
 Exactly this loop, already run and checked in: `examples/learned_library/` (provenance in
 `examples/README.md`).
@@ -210,29 +196,10 @@ python -m webwright.skill_factory build skill.yaml --library ./library --jobs 3 
 about to solve and asks before spending agent time (`--dry-run` shows the plan and stops,
 `--yes` skips the prompt), solves them, and hands the batch to `learn`. **An instance that
 already produced an answer is never re-solved** — if a run dies halfway, re-running `build` only
-pays for what's missing. Solves are slow and independent, so `--jobs N` runs N at a time; the
-[reference](reference.md#all-parameters) has the tuning and the rate-limit caveat.
-
-#### When the answer moves on its own
-
-`init` also judges whether your answer **drifts**, and picks the verify mode to match. Ask it for
-something live and it says so in the spec it writes:
-
-```bash
-python -m webwright.skill_factory init "the latest release version of a GitHub repo, for any repo"
-```
-```yaml
-build:
-  # this answer drifts (new releases can be published), so replay only checks the shape —
-  # strict would reject a working skill for reporting today's truth
-  verify: shape
-```
-
-That's the difference `strict` can't paper over: a flight schedule for a fixed future date reads
-the same tomorrow, so demanding the recorded answer back is fair. A release version doesn't —
-`strict` would reject a perfectly good skill for correctly reporting a newer one. `shape` still
-catches a **broken** skill (empty or misshapen output); it just can't catch a **wrong** one. For
-that you need `--golds`.
+pays for what's missing. Solves are slow (10-30 min each) and independent, so `--jobs N` runs N at a time. `build` still
+blocks until the last one finishes, so if your shell or tooling enforces command timeouts, run it
+in the background. The [reference](reference.md#all-parameters) has the tuning and the rate-limit
+caveat.
 
 ### Already have runs? Skip the solving
 
@@ -247,9 +214,9 @@ That's the day-to-day path. The rest of this section is for a task you *haven't*
 
 ### Vary the parameters, not just the count
 
-Distillation lifts a parameter from the differences it **observes**, so a value that's identical
-in every instance has no evidence behind it and may get baked in. Two instances that vary
-everything you care about beat five that share a date.
+Distillation lifts a parameter from the differences it **observes**, so a value identical in
+every instance may get baked in. Two instances that vary everything you care about beat five that
+share a date.
 
 ### Choosing a task that can be verified
 
@@ -259,8 +226,9 @@ Four questions, learned the hard way. The example passes all four; "the cheapest
    anchor on what the site declares (a Cheapest tab's own label, a sort control); it can't
    anchor on your judgement.
 2. **Does the answer hold still?** — if it drifts on its own (prices, stock, rankings), `strict`
-   will reject a working skill for reporting today's truth. Use `shape`. `init` now guesses this
-   for you and writes the reason in the spec.
+   will reject a working skill for reporting today's truth. Use `shape`: it still catches a
+   **broken** skill (empty or misshapen output), but never a **wrong** one — for that you need
+   `--golds`. `init` guesses this for you and writes the reason into the spec.
 3. **Can each field be extracted reliably?** — truth being well-defined isn't enough. A flight
    number is stated plainly and *still* sits glued to the aircraft type (`Airbus A321neo` `UA 729`)
    next to look-alike tokens, so it's the field distillation gets wrong; the airline and the
