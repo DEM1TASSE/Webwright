@@ -55,18 +55,20 @@ Both integrations are additive. The Quick Start below demonstrates the complete 
 
 ## 🚀 Quick Start
 
-Set up once — the module ships inside Webwright, so you clone that:
+Set it up once. The module ships with Webwright, so clone the repository and install it locally:
 
 ```bash
-git clone https://github.com/microsoft/Webwright.git && cd Webwright
-python3 -m venv .venv && source .venv/bin/activate
-pip install -e . && playwright install chromium
+git clone https://github.com/microsoft/Webwright.git
+cd Webwright
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .
+playwright install chromium
 ```
 
-Keep the venv activated. The scripts below call `python`, which on a stock Linux box exists only
-inside one — outside, you get `python: command not found` on the first command.
+Keep the virtual environment activated. The scripts below invoke `python`, which may not exist on a stock Linux installation outside the virtual environment; otherwise, the first command will fail with `python: command not found`.
 
-Then point it at a model. Step 1 needs none; everything after it does:
+Then configure a model. Step 1 does not require one, but every subsequent step does:
 
 ```bash
 export OPENAI_API_KEY=...
