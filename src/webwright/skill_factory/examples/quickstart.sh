@@ -30,6 +30,9 @@ else
   CFG=(-c base.yaml -c model_openai.yaml)
   [ -n "${OPENAI_ENDPOINT:-}" ] && CFG+=(-c "model.openai_endpoint=$OPENAI_ENDPOINT")
   [ -n "${OPENAI_MODEL:-}" ]    && CFG+=(-c "model.model_name=$OPENAI_MODEL")
+  # base.yaml caps the agent at 4000 output tokens; reusing a large skill needs more, or the
+  # agent's script is truncated mid-write and the run loops. The gateway yaml set 16000; match it.
+  CFG+=(-c "model.max_output_tokens=${SKILL_AGENT_MAX_TOKENS:-16000}")
 fi
 
 need_key() { : "${OPENAI_API_KEY:?export OPENAI_API_KEY first (on a gateway also OPENAI_ENDPOINT / OPENAI_MODEL)}"; }

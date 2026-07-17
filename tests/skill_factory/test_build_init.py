@@ -304,6 +304,21 @@ def test_an_explicit_config_is_left_alone(monkeypatch):
     assert B._agent_cfg(["base.yaml", "mine.yaml"]) == ["base.yaml", "mine.yaml"]
 
 
+def test_the_env_path_carries_a_usable_output_budget(monkeypatch):
+    """The env path stands in for a model yaml, which set max_output_tokens: 16000. base.yaml's
+    4000 truncates the agent mid-script when it reuses a big skill, and the run loops re-emitting
+    it. Forwarding endpoint/model but not the budget — the bug this pins — quietly quartered it."""
+    monkeypatch.delenv("SKILL_AGENT_MAX_TOKENS", raising=False)
+    monkeypatch.setenv("OPENAI_ENDPOINT", "https://gw.example/api/responses")
+    assert "model.max_output_tokens=16000" in B._agent_cfg([])
+
+
+def test_the_output_budget_is_overridable(monkeypatch):
+    monkeypatch.setenv("OPENAI_ENDPOINT", "https://gw.example/api/responses")
+    monkeypatch.setenv("SKILL_AGENT_MAX_TOKENS", "32000")
+    assert "model.max_output_tokens=32000" in B._agent_cfg([])
+
+
 def test_no_gateway_means_no_opinion(monkeypatch):
     """Nothing named, nothing invented: the CLI's own defaults still apply."""
     monkeypatch.delenv("OPENAI_ENDPOINT", raising=False)

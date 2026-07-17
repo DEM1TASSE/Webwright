@@ -98,7 +98,10 @@ def _agent_cfg(cfg: list[str]) -> list[str]:
     Otherwise, if you named a gateway, say it on the command line for you: the CLI takes inline
     `model.key=value` specs, so nothing has to be written to a file. They replace the CLI's
     defaults rather than adding to them, hence DEFAULT_CONFIGS (imported, not copied) coming
-    along.
+    along — and max_output_tokens with it, because this path stands in for a hand-written model
+    yaml (examples/model_gateway.example.yaml sets 16000) and base.yaml's 4000 truncates the
+    agent mid-script when it reuses a large skill: the write never completes and the run loops.
+    Override with SKILL_AGENT_MAX_TOKENS.
     """
     if cfg:
         return cfg
@@ -107,6 +110,7 @@ def _agent_cfg(cfg: list[str]) -> list[str]:
              ("model_name", os.environ.get("OPENAI_MODEL"))) if val]
     if not over:
         return cfg
+    over.append(f"model.max_output_tokens={os.environ.get('SKILL_AGENT_MAX_TOKENS', '16000')}")
     from webwright.run.cli import DEFAULT_CONFIGS
     return list(DEFAULT_CONFIGS) + over
 
