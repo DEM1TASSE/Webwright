@@ -267,3 +267,58 @@ def test_the_spec_init_writes_is_exactly_what_build_reads(monkeypatch):
 
     read = set(re.findall(r'policy\.get\("([a-z_]+)"\)', inspect.getsource(B)))
     assert written == read, f"init writes {sorted(written)}, build reads {sorted(read)}"
+
+
+# ---------------------------------------------------------------- build: the gateway warning
+
+def _gw_spec(tmp: Path) -> Path:
+    p = tmp / "skill.yaml"
+    p.write_text(yaml.safe_dump({"task": "cheapest {product} on Acme",
+                                 "start_url": "https://acme.example",
+                                 "instances": [{"product": "widget"}]}), encoding="utf-8")
+    return p
+
+
+def test_a_half_configured_gateway_is_reported_by_dry_run(monkeypatch, capsys):
+    """--dry-run is the free look before you spend agent time, so it has to be the place you
+    find out the agent will ignore your gateway. The warning used to sit below dry-run's own
+    return, i.e. the cheap path was the silent one."""
+    monkeypatch.setenv("OPENAI_ENDPOINT", "https://gw.example/api/responses")
+    with tempfile.TemporaryDirectory() as d:
+        B.build(str(_gw_spec(Path(d))), str(Path(d) / "lib"), [], dry_run=True)
+    assert "api.openai.com" in capsys.readouterr().err
+
+
+def test_the_gateway_warning_says_to_keep_base_yaml(monkeypatch, capsys):
+    """-c replaces the default configs (cli.py: `config_spec or DEFAULT_CONFIGS`), so advice to
+    pass only your own yaml silently drops base.yaml."""
+    monkeypatch.setenv("OPENAI_ENDPOINT", "https://gw.example/api/responses")
+    with tempfile.TemporaryDirectory() as d:
+        B.build(str(_gw_spec(Path(d))), str(Path(d) / "lib"), [], dry_run=True)
+    assert "-c base.yaml -c" in capsys.readouterr().err
+
+
+def test_the_warning_fires_before_the_confirmation_prompt(monkeypatch, capsys):
+    """A warning you read after saying yes is not a warning. Answer 'n' at the prompt: the
+    warning must already be out."""
+    monkeypatch.setenv("OPENAI_ENDPOINT", "https://gw.example/api/responses")
+    monkeypatch.setattr(B.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda *_: "n")
+    with tempfile.TemporaryDirectory() as d:
+        assert B.build(str(_gw_spec(Path(d))), str(Path(d) / "lib"), []) == 1   # aborted
+    assert "api.openai.com" in capsys.readouterr().err
+
+
+def test_no_warning_when_a_config_was_passed(monkeypatch, capsys):
+    monkeypatch.setenv("OPENAI_ENDPOINT", "https://gw.example/api/responses")
+    with tempfile.TemporaryDirectory() as d:
+        B.build(str(_gw_spec(Path(d))), str(Path(d) / "lib"), ["base.yaml", "mine.yaml"],
+                dry_run=True)
+    assert "api.openai.com" not in capsys.readouterr().err
+
+
+def test_no_warning_without_a_gateway(monkeypatch, capsys):
+    monkeypatch.delenv("OPENAI_ENDPOINT", raising=False)
+    with tempfile.TemporaryDirectory() as d:
+        B.build(str(_gw_spec(Path(d))), str(Path(d) / "lib"), [], dry_run=True)
+    assert "api.openai.com" not in capsys.readouterr().err

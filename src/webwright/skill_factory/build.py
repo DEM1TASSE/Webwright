@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -121,11 +122,21 @@ def build(spec_path: str, library: str, cfg: list[str], *, verify=None, verify_r
         state = "already solved (will reuse)" if _already_solved(outputs, ct) else "will solve"
         print(f"  [{i}] {state}: {ct[:110]}")
 
+    to_solve = [c for c in concrete if not _already_solved(outputs, c[0])]
+
+    # Before the prompt AND before --dry-run returns: this is the only moment the warning can
+    # still change what you do. It used to fire after you'd already said yes, so the first news
+    # of a half-configured gateway was three solves' worth of 401s.
+    if to_solve and cfg == [] and os.environ.get("OPENAI_ENDPOINT"):
+        print("!! OPENAI_ENDPOINT is set but no -c model config was passed. The AGENT reads a yaml,\n"
+              "!! not env vars, and will hit api.openai.com.\n"
+              "!! Pass: -c base.yaml -c your_model.yaml   (-c REPLACES the defaults, so keep\n"
+              "!! base.yaml; openai_endpoint must be the FULL .../responses URL)", file=sys.stderr)
+
     if dry_run:
         print("\n--dry-run: nothing solved, nothing learned.")
         return 0
 
-    to_solve = [c for c in concrete if not _already_solved(outputs, c[0])]
     if to_solve and not assume_yes:
         if not sys.stdin.isatty():
             raise SystemExit("\nbuild: solving costs real agent time. Re-run with --yes to proceed "
@@ -133,11 +144,6 @@ def build(spec_path: str, library: str, cfg: list[str], *, verify=None, verify_r
         ans = input(f"\nSolve {len(to_solve)} instance(s) with the agent? [y/N] ").strip().lower()
         if ans not in ("y", "yes"):
             print("aborted."); return 1
-
-    if to_solve and cfg == [] and __import__("os").environ.get("OPENAI_ENDPOINT"):
-        print("!! OPENAI_ENDPOINT is set but no -c model config was passed. The AGENT reads a yaml,\n"
-              "!! not env vars, and will hit api.openai.com. Pass -c your_model.yaml (FULL "
-              ".../responses endpoint).", file=sys.stderr)
 
     solved = len(concrete) - len(to_solve)   # the resumed ones
     failed = []
