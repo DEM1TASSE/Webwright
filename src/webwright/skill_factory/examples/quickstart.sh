@@ -11,28 +11,29 @@
 # 3 solves -> learn, but parallel, resumable, and it shows you the plan first:
 #   python -m webwright.skill_factory build flights.skill.yaml --library ./library --jobs 3
 #
-# Custom / OpenAI-compatible gateway? Two knobs, both needed:
-#   export OPENAI_ENDPOINT=... OPENAI_MODEL=...   (for learn / skill_use)
-#   export MODEL_CFG=/path/to/your_model.yaml     (for the agent in solve/build — copy
-#     model_openai.yaml and set openai_endpoint/model_name; env vars do NOT reach it)
+# Custom / OpenAI-compatible gateway? One knob:
+#   export OPENAI_ENDPOINT=... OPENAI_MODEL=...   (everything here, agent included)
+#   MODEL_CFG=/abs/model.yaml is optional, for putting the AGENT on a different model.
 set -euo pipefail
 SELF="$(readlink -f "$0")"
 cd "$(dirname "$SELF")"
 DATE=$(date -d "+30 days" +%Y-%m-%d 2>/dev/null || date -v+30d +%Y-%m-%d)
 WORK="${QUICKSTART_WORKDIR:-$(mktemp -d /tmp/skills_quickstart.XXXX)}"
 LIB="$PWD/learned_library"
-CFG=(-c base.yaml -c "${MODEL_CFG:-model_openai.yaml}")
+# The AGENT's model comes from a yaml and never reads OPENAI_*, so a gateway you exported would
+# send `ask` there and this script's solves to api.openai.com. Pass your env along as inline
+# `-c model.key=value` overrides instead — same thing build does, no yaml for you to write.
+# MODEL_CFG still wins, for the day the agent wants a different model than the distiller.
+if [ -n "${MODEL_CFG:-}" ]; then
+  CFG=(-c base.yaml -c "$MODEL_CFG")
+else
+  CFG=(-c base.yaml -c model_openai.yaml)
+  [ -n "${OPENAI_ENDPOINT:-}" ] && CFG+=(-c "model.openai_endpoint=$OPENAI_ENDPOINT")
+  [ -n "${OPENAI_MODEL:-}" ]    && CFG+=(-c "model.model_name=$OPENAI_MODEL")
+fi
 
 need_key() { : "${OPENAI_API_KEY:?export OPENAI_API_KEY first (on a gateway also OPENAI_ENDPOINT / OPENAI_MODEL)}"; }
 
-warn_gateway_agent() {  # solve: the AGENT reads its yaml, not the env vars
-  if [ -n "${OPENAI_ENDPOINT:-}" ] && [ -z "${MODEL_CFG:-}" ]; then
-    echo "!! OPENAI_ENDPOINT is set but MODEL_CFG is not." >&2
-    echo "!! learn/ask will use your gateway, but the AGENT in this mode reads a yaml" >&2
-    echo "!! and will hit api.openai.com. Copy model_gateway.example.yaml, fill in your" >&2
-    echo "!! endpoint (the FULL .../responses URL), then: export MODEL_CFG=/abs/path.yaml" >&2
-  fi
-}
 
 flight_task() { # $1 "City (CODE)"  $2 "City (CODE)"
   echo "What is the earliest nonstop flight from $1 to $2 on $DATE (one-way)? Return the answer as a list: [flight_number, airline, departure_time], e.g. [\"AS 336\", \"Alaska\", \"6:00 AM\"]."
@@ -78,7 +79,6 @@ ask)
   ;;
 solve)
   need_key
-  warn_gateway_agent
   echo "== one agent solve on SEA->DEN on $DATE, an UNSEEN route, reusing the checked-in skill =="
   ./solve_with_library.sh "$(flight_task 'Seattle (SEA)' 'Denver (DEN)')" \
     https://www.google.com/flights "$LIB" -o "$WORK/outputs" --task-id qs_solve "${CFG[@]}"
