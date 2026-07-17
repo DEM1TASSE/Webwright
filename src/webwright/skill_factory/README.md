@@ -1,5 +1,5 @@
 
-# Web Skill Factory
+# Web Skill Factory: Evolving Reusable, Verified, Code-Native Skills for Web Agents
 
 **Most agent skills are context the model refers to. Ours are programs.**
  
@@ -9,7 +9,11 @@ run without a model and compose into the next task instead of re-exploring the s
 
 ## 🎥 Demo
 
-https://github.com/user-attachments/assets/3f93fac4-bb93-4ea5-8b45-280ed1334feb
+
+
+https://github.com/user-attachments/assets/a6cb7d8e-2411-4d14-b85e-4255ccb1ae81
+
+
 
 
 ## ✨ Highlights
@@ -40,14 +44,14 @@ https://github.com/user-attachments/assets/3f93fac4-bb93-4ea5-8b45-280ed1334feb
 solve → gate → group by template → distill → replay-verify → library → next solve reuses
 ```
 
-At solve time the agent asks the library once and gets `use` / `adapt` / `skip` — its stated
-intent for the skill, after which it has the source and reuses it as the task needs. Reuse never
-blocks solving. Two touch points into Webwright, no agent-loop changes:
+At solve time, the agent queries the library once and receives one of three recommendations: `use`, `adapt`, or `skip`. This recommendation expresses how the agent intends to use the retrieved skill. The agent then receives the skill’s source code and can reuse or modify it as needed while solving the task. Skill reuse never blocks the agent from continuing on its own.
 
-- **reuse**, at solve time: the `skill_use` tool — the agent invokes it from bash like any other
-- **growth**, afterwards: the `skill_factory` CLI — `init` / `build` / `learn` / `update`
+The system adds two integration points to WebWright without changing the agent loop:
 
-Both are additive; the Quick Start below runs them.
+* **Reuse at solve time:** the `skill_use` tool, which the agent invokes from Bash like any other tool.
+* **Library growth after solving:** the `skill_factory` CLI, through `init`, `build`, `learn`, and `update`.
+
+Both integrations are additive. The Quick Start below demonstrates the complete workflow.
 
 ## 🚀 Quick Start
 
@@ -69,42 +73,27 @@ export OPENAI_API_KEY=...
 ```
 
 <details>
-<summary><b>On a custom OpenAI-compatible gateway</b> — two knobs, both needed</summary>
+<summary><b>Using a custom OpenAI-compatible gateway</b></summary>
 <br>
 
-**The module's own calls** (`init`, `learn`, `skill_use`) read env vars:
+Export two environment variables—that is the entire setup:
 
 ```bash
-export OPENAI_ENDPOINT=https://your-gateway/api/responses   # the FULL request URL, not a base path
+export OPENAI_ENDPOINT=https://your-gateway/api/responses   # Full request URL, not a base URL
 export OPENAI_MODEL=your-model
 ```
 
-**The agent** — the browser half of `solve` and `build` — reads a yaml and ignores those vars. Copy
-the template somewhere outside the repo, so your gateway can't ride along in a commit:
+`init`, `learn`, `skill_use`, `build`, and `quickstart.sh` all respect these variables.
 
-```bash
-cp src/webwright/skill_factory/examples/model_gateway.example.yaml ~/my_gateway.yaml
-```
+This also applies to the browser agent, even though its model configuration comes from YAML and cannot read environment variables directly. `build` and `quickstart.sh` translate the environment variables into the appropriate agent configuration, and `build` prints the final configuration it used.
 
-Fill in the two lines that matter, with the same values you exported:
+You only need a custom YAML file when you want the browser agent to use a different model from the one used for skill distillation. Copy the template, set `model_name` and `openai_endpoint`, then either:
 
-```yaml
-model:
-  model_name: your-model
-  openai_endpoint: https://your-gateway/api/responses
-```
+* Export `MODEL_CFG=$HOME/my_gateway.yaml` when using `quickstart.sh`; or
+* Pass `-c base.yaml -c $HOME/my_gateway.yaml` to `build`.
 
-Then point at it by **absolute** path — the scripts `cd` elsewhere before running, so a relative
-one won't resolve:
+Because `-c` replaces the default configuration files, make sure to include `base.yaml`.
 
-```bash
-export MODEL_CFG=$HOME/my_gateway.yaml   # quickstart.sh reads this
-```
-
-`build` needs none of that: it reads the two env vars above and passes them to the agent for you,
-printing the config it used. The yaml is for `quickstart.sh`, and for the day you want the agent
-on a different model than the one distilling your skills — then pass it as `-c base.yaml -c
-$HOME/my_gateway.yaml` (`-c` replaces the defaults, so keep `base.yaml`).
 </details>
 
 ### 1. Run a learned skill
@@ -384,11 +373,11 @@ Here are some known rough edges, and directions we might take them.
 ## 📝 Citation
 
 ```bibtex
-@misc{web_skill_factory,
+@misc{webskillfactory,
   title  = {Web Skill Factory: Evolving Reusable, Verified, Code-Native Skills for Web Agents},
-  author = {Demi Ruohan Wang, Yadong Lu},
+  author = {Wang, Demi Ruohan and Lu, Yadong},
   year   = {2026},
-  note   = {Built on Webwright},
-  url    = {https://github.com/microsoft/Webwright}
+  note   = {Built on WebWright},
+  url    = {TBD}
 }
 ```
