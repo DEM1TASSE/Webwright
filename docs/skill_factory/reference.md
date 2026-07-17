@@ -25,10 +25,13 @@ Whichever level the output gate ran at becomes the skill's **grade**:
 | trust | proved | **known** not to reproduce its answers | unknown |
 | refining | incremental refines must pass **regression replay** (`replays.json`); a verified skill is never overwritten by an unverified refine | refined freely | refined freely |
 
-`unverified` (`--verify off`) skips replay entirely. Use it when the replay *can't* run: a
-benchmark site whose login needs credentials the library can't store, say. Not for drifting data,
-which is what `shape` is for, and not for a page that moved, where a failing replay is the news.
-It's an escape hatch, not a grade to aim for; normal runs land `executable` or `reference`.
+`unverified` (`--verify off`) skips replay entirely. Use it when no replay could be fair: the site
+needs credentials the library can't store, or the training instances themselves have expired — the
+date has passed, the listing is gone — so the skill comes back with nothing and even `shape`
+rejects it (an empty answer fails the gate) for something that isn't the skill's fault. Drifting
+*values* are not that case; `shape` replays those and compares loosely. Nor is a page that moved,
+where a failed replay is real news and `reference` records it. It's an escape hatch, not a grade
+to aim for; normal runs land `executable` or `reference`.
 
 Why code even at `reference` grade, versus a natural-language note: the selectors, URLs and param
 shapes are verbatim-copyable into the agent's next script, individual primitives often still run
