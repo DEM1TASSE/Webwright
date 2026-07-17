@@ -15,23 +15,25 @@ Four sections, in the order you'd meet them:
 
 ## 1. Run the checked-in skill
 
+Task: *earliest nonstop flight* on Google Flights (the site from Webwright's own README)
+
 ```bash
 cd src/webwright/skill_factory/examples
-./quickstart.sh                            # SEA->DEN, ~40 s, no model, no API key
+./quickstart.sh                            # SEA->DEN, date=today+30, ~40 s, no model, no API key
+#   == ... earliest nonstop SEA->DEN on 2026-08-16 ...      <- it tells you the date it picked
+#   -> answer shape: [flight number, airline, departure time]
 ./quickstart.sh demo LAX ORD 2026-09-01    # your own route (codes + YYYY-MM-DD)
 ```
 
-It prints the ten fixed steps and where it saved its screenshots. No model chose those steps;
-they're the skill's code, and you can check that rather than take it on faith.
+The output contract is a three-item list: [flight number, airline, departure time]. The values depend on the current flight schedule.
 
-The example is *earliest nonstop flight* on Google Flights (the site from Webwright's own
-README). It was picked to be verifiable, not to be pretty, and that reasoning matters more than
-the example: [choosing a task](#choosing-a-task-that-can-be-verified).
+With no arguments, the script searches for a SEA-to-DEN flight 30 days from the day it is run, so the date changes daily. You can compare the result with your own Google Flights search.
+
+The script also prints all ten fixed execution steps and the location of the saved screenshots. No model selects these steps; they are fully encoded in the skill.
+
+Each run directory contains the complete trajectory, including skill_log.txt and one screenshot per step, so you can check it by yourself. By default, each run uses a fresh temporary directory. Set QUICKSTART_WORKDIR=./run1 to save the output somewhere persistent.
 
 ## 2. Reuse the skill with the agent
-
-The library already has the skill; this is the agent using it. Same route as step 1, so the
-numbers are comparable.
 
 ```bash
 export OPENAI_API_KEY=...
@@ -39,9 +41,14 @@ export OPENAI_API_KEY=...
 ./quickstart.sh solve    # ~5 min — a full agent solve of SEA->DEN, reusing the skill
 ```
 
-`demo` (above) runs the skill itself. `ask` only **retrieves** — one round trip printing the JSON
-the agent is handed (`verdict / skill_id / source_path / how_to_reuse`), which is the integration
-surface, at a tenth of a solve's cost. `solve` is the agent actually doing the task with it.
+`demo` (above) runs the skill standalone, no agent in sight.
+
+`ask` is the agent deciding whether
+to use a skill at all, and which one; it only **retrieves**, one round trip printing the JSON the
+agent is handed (`verdict / skill_id / source_path / how_to_reuse`), which is the integration
+surface.
+
+`solve` is the agent actually doing the task with it.
 
 ## 3. Watch the library get built from nothing
 
@@ -97,28 +104,7 @@ examples/solve_with_library.sh \
 
 </details>
 
-The library is also usable **without the agent** — this is the whole point of code skills:
-
-```bash
-# ask it whether it can help a task (the same call the agent makes — one LLM round trip)
-python -m webwright.tools.skill_use \
-  --task "earliest nonstop flight from Seattle (SEA) to Denver (DEN) on 2026-08-15" \
-  --library ./library
-
-# or run the learned skill directly — no model in the loop, ~40 seconds
-SKILL=$(ls "$PWD"/library/what_is_the_earliest_nonstop_flight_*/skill.py)
-cd "$(mktemp -d)"    # scratch dir: the skill writes its artifacts to the cwd
-cat > taskspec.json <<'EOF'
-{"params": {"origin_city": "Seattle", "origin_code": "SEA", "destination_city": "Denver",
-            "destination_code": "DEN", "date": "2026-08-15"},
- "output_schema": {"type": "array", "items": {"type": "string"}}}
-EOF
-python "$SKILL" taskspec.json
-# -> {"retrieved_data": ["UA 2601", "United", "5:00 AM"]}   (schedule may shift by season)
-```
-
-**What each way of running it actually costs** — one question, SEA→DEN, a route the skill never
-trained on, answered three ways on this machine:
+**What each way of running it actually costs** — task: find earliest non stop flight from SEA→DEN on [日期]:
 
 |            | from scratch<br><sub>no library</sub> | the agent, with the library | the skill, standalone |
 |------------|--------------|------------------|----------------------|
@@ -141,19 +127,17 @@ version: **step savings scale with how much the agent doesn't already know.**
 The last column doesn't depend on any of that. **Every run after the library exists uses no model
 at all** — a schedule watcher in cron pays the agent exploration once, then ~40 s forever.
 
-**Verification, honestly:** the standalone answer above is byte-identical to what an
-**independent** model-free probe reads off the page (`experiments/tools/earliest_nonstop_probe.py`
-in the research repo). Two code paths, one answer: the replay gate is checking something real, not
-confirming itself.
-
-Exactly this loop, already run and checked in: `examples/learned_library/` (provenance in
-`examples/README.md`).
+This loop 已经提交和展示到： `examples/learned_library/`
 
 ---
 
 ## 4. Do it for your own task
 
-The example above is ours. This is the part that's yours.
+You can 在你自己的任务上运行这个流程
+
+1. learn
+
+2. init + build模式
 
 ```bash
 # a task you keep repeating -> draft a spec
