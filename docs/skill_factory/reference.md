@@ -16,6 +16,27 @@ three levels:
 The output gate spends two nested budgets, `--draws` independent candidates each repaired up to
 `--verify-rounds` rounds; if none reproduce the recorded answers, nothing lands.
 
+**Both gates judge answers. One check judges the method.** A solve can hold a right answer and
+still be nothing to build on:
+
+```python
+RESULT = ["UA 729", "United", "12:10 AM"]
+if "UA 729" in text: return "UA 729"
+```
+
+That solve recognised its answer instead of working it out. The input gate can't see it — the
+answer is right, and the answer is all it looks at. Distillation, told never to copy an
+instance's values, then has to invent an extractor the trace never had, fails replay on that
+instance, and takes the batch down with it however many draws you spend. So a solve whose script
+contains **every field of its answer verbatim** is dropped before distilling, counted as
+`dropped_lookup` beside `dropped_wrong`: one counts answers the gate rejected, the other counts
+answers it accepted from scripts that never earned them.
+
+Every field *at once* is the test, and the narrowness is the point: "the answer appears in the
+code" fires on working solves too — an airline name is a vocabulary entry, a time lands in an
+assertion. It flags all three of the shipped trajectories. Measured across six real solves, the
+verbatim-everything test flags none of the five that distilled and the one that couldn't.
+
 Whichever level the output gate ran at becomes the skill's **grade**:
 
 | | `executable` | `reference` (`--on-fail reference`) | `unverified` (`--verify off`) |
