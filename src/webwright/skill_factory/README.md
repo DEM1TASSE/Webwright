@@ -18,7 +18,7 @@ https://github.com/user-attachments/assets/a6cb7d8e-2411-4d14-b85e-4255ccb1ae81
 
 ## ✨ Highlights
  
-- 🏃 **Runs standalone, no model.** A learned skill is just code. It re-executes in ~40 s with zero tokens, so you can cron it to run every day, instead of having a model re-read a note and redo the work every time.
+- 🏃 **Runs standalone, no model.** A learned skill is just code. It re-executes in ~40 s with zero tokens, so you can schedule it to run every day, instead of having a model re-read a note and redo the work every time.
 - 🛠️ **Has a real software-engineering surface.** Because skills are code, they inherit code's tools and properties for free: inheritance, polymorphism, encapsulation, tests, versioning, and history. A skill is executable and verifiable, not prose the model has to interpret.
 - ✅ **Verified twice before it lands.** First an input gate: a solve only becomes material if it got the task right, so a wrong answer never feeds a skill. Then the distilled skill must replay its own answers standalone, with no model, so a broken skill can't slip in and poison the library.
 - 🌱 **Gets stronger the more you use it.** New solves widen a skill in place, self-evolving as you go. Regression-replay keeps old coverage from breaking, so a skill that's already been verified is never damaged by a later change.
@@ -33,31 +33,29 @@ https://github.com/user-attachments/assets/a6cb7d8e-2411-4d14-b85e-4255ccb1ae81
 | **produced by** | a person writes and publishes it; you install it | edits to one document, driven by past runs | a person or agent writes one per site | **distilling several solves of the same task template** |
 | **parameters come from** | whoever wrote it | none | the author declares them | **the differences actually observed between your solves** |
 | **verified?** | no | one gate: scores higher on a held-out split | one gate: checked when it's first written, plus live tests | **two gates: a wrong answer never feeds a skill, *and* the skill must reproduce its own answers standalone, no model** |
-| agent can **adapt** it | read-only | read-only | it edits the source only to repair the shared adapter when it breaks — never to fit the task in front of it | **yes, per task: the source is in hand, to copy or to rework as the task needs — the library is left alone** |
-| **grows from your runs** | no, it's whatever its author last wrote | yes, but what grows is a document for a frozen agent, not a program | no; a broken adapter is patched back to what it did, and nothing accumulates from your runs | **yes: each new solve widens it in place, regression-replayed so old coverage can't break** |
+| agent can **adapt** it | read-only | read-only | when it breaks: you fork it locally and repair it back to what it did | **at solve time, per task: the agent has the source and reshapes it for the task in hand; the library copy is untouched** |
+| **grows from your runs** | no, it's whatever its author last wrote | yes, but what grows is a document for a frozen agent, not a program | no, it grows by authoring and maintenance | **yes: each new solve widens it in place, regression-replayed so old coverage can't break** |
 
 ## 🗺️ How it works
 
 ![components, the loop, and what a skill is](../../../assets/skill_factory_pipeline.png)
-
-```
-solve → gate → group by template → distill → replay-verify → library → next solve reuses
-```
-
-At solve time, the agent queries the library once and receives one of three recommendations: `use`, `adapt`, or `skip`. This recommendation expresses how the agent intends to use the retrieved skill. The agent then receives the skill’s source code and can reuse or modify it as needed while solving the task. Skill reuse never blocks the agent from continuing on its own.
-
-After solving, the library grows from the runs you already have. Solves that differ only in parameter values are grouped into a single task template. The solutions in that group are then aligned: what is identical across them becomes the reusable skeleton, what differs is lifted into parameters, and the expensive core is factored into named primitives under a thin task layer. The result is one parameterized program per template.
-
-Two gates decide what is allowed to land. Before distillation, a solve becomes material only if it got the task right, so a wrong answer never feeds a skill. After distillation, the candidate must replay its own training taskspecs standalone, with no model, and reproduce their answers. A candidate that fails replay is rejected, or kept as a readable reference that is not trusted to run.
-
-When the library already covers a template, its skill is improved in place rather than rebuilt. New solves widen it, and every answer it has previously reproduced is replayed alongside them, so a later batch cannot break coverage that already worked.
 
 The system adds two integration points to WebWright without changing the agent loop:
 
 * **Reuse at solve time:** the `skill_use` tool, which the agent invokes from Bash like any other tool.
 * **Library growth after solving:** the `skill_factory` CLI, through `init`, `build`, `learn`, and `update`.
 
-Both integrations are additive. The Quick Start below demonstrates the complete workflow.
+At solve time, the agent queries the library once and receives one of three recommendations: `use`, `adapt`, or `skip`. This recommendation expresses how the agent intends to use the retrieved skill. The agent then receives the skill’s source code and can reuse or modify it as needed while solving the task.
+
+Afterwards the library grows from the runs you already have. Solves of the same task template are
+aligned: what is identical becomes the skeleton, what differs is lifted into parameters, and the
+result is one parameterized program per task family. Two gates decide what lands, one before
+distillation (only correct solves become material) and one after (the candidate must replay its
+own answers standalone, with no model). When a template already exists, its skill is widened in
+place, with every previously reproduced answer replayed alongside, so a later batch can't break
+what already worked.
+
+The Quick Start below demonstrates the complete workflow.
 
 ## 🚀 Quick Start
 
@@ -71,8 +69,6 @@ source .venv/bin/activate
 pip install -e .
 playwright install chromium
 ```
-
-Keep the virtual environment activated. The scripts below invoke `python`, which may not exist on a stock Linux installation outside the virtual environment; otherwise, the first command will fail with `python: command not found`.
 
 Then configure a model. Step 1 does not require one, but every subsequent step does:
 
@@ -368,18 +364,14 @@ Here are some known rough edges, and directions we might take them.
   `use` can quietly rewrite half the code. A proper callable interface, where you import a skill
   and just pass it parameters, would make reuse a lot cleaner.
 
-- **Verification is only as reliable as the reference answer it checks against.** On real websites, where no gold label is available, the LLM may misinterpret the task or produce an incorrect reference answer, and self-verification may fail to detect that error. For dynamic answers such as prices or rankings, verification often falls back to checking only the output format or structure. This can catch a skill that is broken or fails to execute, but not one that executes successfully and returns the wrong result. Achieving true correctness in these settings requires a stronger, independent judge, such as a WebJudge-style model.
+- **Verification is only as reliable as the reference answer it checks against.** On real websites, where no gold label is available, the LLM may misinterpret the task or produce an incorrect reference answer, and self-verification may fail to detect that error. For dynamic answers such as prices or rankings, verification often falls back to checking only the output format or structure. This can catch a skill that is broken or fails to execute, but not one that executes successfully and returns the wrong result. Achieving true correctness in these settings requires a stronger, independent judge like WebJudge.
 
 - **Distillation is stochastic.** A given attempt may produce a fragile skill that fails even its own replay. The gate filters out these failures, and rerunning distillation a few times usually succeeds. However, each retry consumes additional tokens, so improving the reliability of executable skill generation—ideally succeeding on the first attempt—remains an important direction to explore.
 
-- **Aggregation only groups by the literal template.** Ask the same task two different ways and
-  you get two skills, each thinner than one merged one would be. Letting a model recognize when
-  two wordings mean the same task would fix it.
-
 - **The library needs upkeep, like any package registry.** After a skill lands, a site can shift
   under it with nothing re-checking, so it can quietly go stale and keep returning wrong answers.
-  Stale skills never retire, and near-duplicate ones never get merged. Health checks, a retirement
-  policy, and de-duplication are the obvious directions.
+  Stale skills never retire, and near-duplicate ones never get merged.
+  Natural next steps include automated health checks, a retirement policy, and de-  duplication.
 
 ## 📚 Documentation
 
