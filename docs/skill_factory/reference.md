@@ -182,6 +182,11 @@ backend, with no gateway or key hardcoded anywhere.
 ## Components
  
 The module's files and what each one does, for anyone reading or extending the code.
+
+The data flow between them, and the interface each one exposes:
+
+![data flow and interfaces](../../assets/skill_factory_interfaces.png)
+
  
 | file | role |
 |---|---|

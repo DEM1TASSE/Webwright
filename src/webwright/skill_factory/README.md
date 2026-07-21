@@ -38,7 +38,7 @@ https://github.com/user-attachments/assets/a6cb7d8e-2411-4d14-b85e-4255ccb1ae81
 
 ## 🗺️ How it works
 
-![data flow & interfaces](../../../assets/skill_factory_pipeline.png)
+![components, the loop, and what a skill is](../../../assets/skill_factory_pipeline.png)
 
 ```
 solve → gate → group by template → distill → replay-verify → library → next solve reuses
