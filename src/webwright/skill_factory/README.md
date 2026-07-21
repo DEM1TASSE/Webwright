@@ -92,7 +92,7 @@ export OPENAI_MODEL=your-model
 
 This also applies to the browser agent, even though its model configuration comes from YAML and cannot read environment variables directly. `build` and `quickstart.sh` translate the environment variables into the appropriate agent configuration, and `build` prints the final configuration it used.
 
-You only need a custom YAML file when you want the browser agent to use a different model from the one used for skill distillation. Copy the template, set `model_name` and `openai_endpoint`, then either:
+You only need a custom YAML file when you want the browser agent to use a different model from the one used for skill distillation. Copy [`examples/model_gateway.example.yaml`](examples/model_gateway.example.yaml), set `model_name` and `openai_endpoint`, then either:
 
 * Export `MODEL_CFG=$HOME/my_gateway.yaml` when using `quickstart.sh`; or
 * Pass `-c base.yaml -c $HOME/my_gateway.yaml` to `build`.
