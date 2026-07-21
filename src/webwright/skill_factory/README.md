@@ -49,11 +49,12 @@ At solve time, the agent queries the library once and receives one of three reco
 
 Afterwards the library grows from the runs you already have. Solves of the same task template are
 aligned: what is identical becomes the skeleton, what differs is lifted into parameters, and the
-result is one parameterized program per task family. Two gates decide what lands, one before
-distillation (only correct solves become material) and one after (the candidate must replay its
-own answers standalone, with no model). When a template already exists, its skill is widened in
-place, with every previously reproduced answer replayed alongside, so a later batch can't break
-what already worked.
+result is one parameterized program per task family. The expensive part, driving the site itself,
+is factored into named functions, so a later task on the same site can call them even when its
+final step differs. Two gates decide what lands, one before distillation (only correct solves
+become material) and one after (the candidate must replay its own answers standalone, with no
+model). When a template already exists, its skill is widened in place, with every previously
+reproduced answer replayed alongside, so a later batch can't break what already worked.
 
 The Quick Start below demonstrates the complete workflow.
 
@@ -80,7 +81,7 @@ export OPENAI_API_KEY=...
 <summary><b>Using a custom OpenAI-compatible gateway</b></summary>
 <br>
 
-Export two environment variables—that is the entire setup:
+Export two environment variables. That is the entire setup:
 
 ```bash
 export OPENAI_ENDPOINT=https://your-gateway/api/responses   # Full request URL, not a base URL
@@ -366,12 +367,12 @@ Here are some known rough edges, and directions we might take them.
 
 - **Verification is only as reliable as the reference answer it checks against.** On real websites, where no gold label is available, the LLM may misinterpret the task or produce an incorrect reference answer, and self-verification may fail to detect that error. For dynamic answers such as prices or rankings, verification often falls back to checking only the output format or structure. This can catch a skill that is broken or fails to execute, but not one that executes successfully and returns the wrong result. Achieving true correctness in these settings requires a stronger, independent judge like WebJudge.
 
-- **Distillation is stochastic.** A given attempt may produce a fragile skill that fails even its own replay. The gate filters out these failures, and rerunning distillation a few times usually succeeds. However, each retry consumes additional tokens, so improving the reliability of executable skill generation—ideally succeeding on the first attempt—remains an important direction to explore.
+- **Distillation is stochastic.** A given attempt may produce a fragile skill that fails even its own replay. The gate filters out these failures, and rerunning distillation a few times usually succeeds. However, each retry consumes additional tokens, so improving the reliability of executable skill generation, ideally succeeding on the first attempt, remains an important direction to explore.
 
 - **The library needs upkeep, like any package registry.** After a skill lands, a site can shift
   under it with nothing re-checking, so it can quietly go stale and keep returning wrong answers.
   Stale skills never retire, and near-duplicate ones never get merged.
-  Natural next steps include automated health checks, a retirement policy, and de-  duplication.
+  Natural next steps include automated health checks, a retirement policy, and de-duplication.
 
 ## 📚 Documentation
 
