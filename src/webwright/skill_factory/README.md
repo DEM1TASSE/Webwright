@@ -46,6 +46,12 @@ solve → gate → group by template → distill → replay-verify → library �
 
 At solve time, the agent queries the library once and receives one of three recommendations: `use`, `adapt`, or `skip`. This recommendation expresses how the agent intends to use the retrieved skill. The agent then receives the skill’s source code and can reuse or modify it as needed while solving the task. Skill reuse never blocks the agent from continuing on its own.
 
+After solving, the library grows from the runs you already have. Solves that differ only in parameter values are grouped into a single task template. The solutions in that group are then aligned: what is identical across them becomes the reusable skeleton, what differs is lifted into parameters, and the expensive core is factored into named primitives under a thin task layer. The result is one parameterized program per template.
+
+Two gates decide what is allowed to land. Before distillation, a solve becomes material only if it got the task right, so a wrong answer never feeds a skill. After distillation, the candidate must replay its own training taskspecs standalone, with no model, and reproduce their answers. A candidate that fails replay is rejected, or kept as a readable reference that is not trusted to run.
+
+When the library already covers a template, its skill is improved in place rather than rebuilt. New solves widen it, and every answer it has previously reproduced is replayed alongside them, so a later batch cannot break coverage that already worked.
+
 The system adds two integration points to WebWright without changing the agent loop:
 
 * **Reuse at solve time:** the `skill_use` tool, which the agent invokes from Bash like any other tool.
