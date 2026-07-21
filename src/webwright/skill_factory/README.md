@@ -47,14 +47,9 @@ The system adds two integration points to WebWright without changing the agent l
 
 At solve time, the agent queries the library once and receives one of three recommendations: `use`, `adapt`, or `skip`. This recommendation expresses how the agent intends to use the retrieved skill. The agent then receives the skill’s source code and can reuse or modify it as needed while solving the task.
 
-Afterwards the library grows from the runs you already have. Solves of the same task template are
-aligned: what is identical becomes the skeleton, what differs is lifted into parameters, and the
-result is one parameterized program per task family. The expensive part, driving the site itself,
-is factored into named functions, so a later task on the same site can call them even when its
-final step differs. Two gates decide what lands, one before distillation (only correct solves
-become material) and one after (the candidate must replay its own answers standalone, with no
-model). When a template already exists, its skill is widened in place, with every previously
-reproduced answer replayed alongside, so a later batch can't break what already worked.
+After solving, the library grows from the runs you already have. Solves of the same task template are aligned: what is identical becomes the skeleton, and what differs is lifted into parameters, giving one parameterized program per template. The expensive part, driving the site itself, is factored into named primitives (log in, run a search, read the results table) so a later task on the same site can call them even when its final step differs.
+
+Two gates decide what lands: before distillation, only correct solves become material; after it, the candidate must replay its own answers standalone, with no model. When a template already exists, its skill is widened in place, and every answer it previously reproduced is replayed alongside, so a later batch can't break what already worked.
 
 The Quick Start below demonstrates the complete workflow.
 
