@@ -24,6 +24,7 @@ Already got your favorite agents, and wonder how to make Claude Code, Codex, Her
 
 ## 📰 News
 
+- **2026-07-21** — Skill Factory: every solve leaves a script behind, distilled into reusable, verified, parameterized code skills that rerun standalone with no model (~40 s, zero tokens). On WebArena, reuse lifts held-out accuracy 55% → 70% (+15 pp). See [Skill Factory](#-skill-factory-turn-solved-tasks-into-runnable-code-skills).
 - **2026-05-11** — Support Task2UI mode: Webwright completes the task and renders task results into an HTML-based web app you can easily view and reuse.  
 - **2026-05-06** — Codex and Claude Code plugin manifests added; install via `/plugin install webwright@webwright`. OpenClaw and Hermes Agent integrations shipped; the same `skills/webwright/` folder now loads across Claude Code, Codex, OpenClaw, and Hermes.
 - **2026-05-04** — Initial public release: ~1.5k LoC, OpenAI / Anthropic / OpenRouter backends, Playwright environment.
@@ -162,6 +163,32 @@ back into the repo:
 python assets/task_showcase/app.py \
     --tasks-dir outputs/default/<run>/task_showcase/tasks
 ```
+
+---
+
+## 🧠 Skill Factory (turn solved tasks into runnable code skills)
+
+**Most agent skills are context the model reads. Ours are programs.**
+[`webwright.skill_factory`](src/webwright/skill_factory/) distills the script every solve leaves
+behind into a growing library of **reusable, verified, parameterized skills** — code you can run
+without a model and compose into the next task instead of re-exploring the site. Plugs in with
+**no change to the agent loop**:
+
+- **Reuse** — before a solve starts, the library is checked *out of the agent loop* (`recommend`):
+  `route` either runs a matching skill directly (no model) or injects it into the prompt as a prior
+  (`{verdict: run|adapt|skip, skill_id, source_path}`); the agent reuses the hint without ever
+  querying the library itself.
+- **Grow** — afterwards, `python -m webwright.skill_factory learn outputs/ --library ./library`
+  groups solves of the same template and distills one parameterized skill (`build` does solve→learn
+  in one shot; `update` is manual-manifest mode).
+
+**Verified twice before it lands:** an input gate keeps a wrong solve from ever feeding a skill, and
+the distilled skill must replay its own answers standalone — no model — so a broken skill can't
+poison the library. New solves widen a skill in place, regression-replayed so old coverage can't break.
+
+Once learned, a skill **runs standalone in ~40 s with zero tokens**. On WebArena (10 retrieve-type
+templates, 3 self-hosted sites, gpt-5.4) reuse lifts held-out accuracy **55% → 70% (+15 pp)** while
+cutting steps. See [`src/webwright/skill_factory/README.md`](src/webwright/skill_factory/README.md).
 
 ---
 
