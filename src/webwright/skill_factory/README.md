@@ -43,7 +43,7 @@ Two gates decide what lands: before distillation, only correct solves become mat
 <summary><b>How it compares to related work</b></summary>
 <br>
 
-|  | published `SKILL.md` | SkillOpt | OpenCLI | OpenSpace | **Web Skill Factory (Ours)** |
+|  | [published `SKILL.md`](https://github.com/anthropics/skills) | [SkillOpt](https://github.com/microsoft/SkillOpt) | [OpenCLI](https://github.com/jackwener/OpenCLI) | [OpenSpace](https://github.com/HKUDS/OpenSpace) | **Web Skill Factory (Ours)** |
 |---|---|---|---|---|---|
 | **what a skill is** | a document the model reads | a document the model reads | ready-made commands for website tasks, plus general tools for driving any page | a document (with optional helper files) the model reads and follows | **an executable program — no model to run it (the agent can still use it)** |
 | **how one skill covers different inputs** | the model interprets the author's written guidance for each input | the model adapts the optimized document to each input | a person or agent anticipates the variation and declares explicit arguments | the agent interprets the document for each input; larger differences may lead to fixed or derived documents | **verified runs of the same task template are aligned; their observed differences may become explicit parameters in one executable skill** |
