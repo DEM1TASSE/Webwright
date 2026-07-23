@@ -24,18 +24,6 @@ https://github.com/user-attachments/assets/a6cb7d8e-2411-4d14-b85e-4255ccb1ae81
 - 🌱 **Gets stronger the more you use it.** New solves widen a skill in place, self-evolving as you go. Regression-replay keeps old coverage from breaking, so a skill that's already been verified is never damaged by a later change.
 
 
-## How it compares
- 
-|  | published `SKILL.md` | SkillOpt | OpenCLI | OpenSpace | **Web Skill Factory (Ours)** |
-|---|---|---|---|---|---|
-| **what a skill is** | a document the model reads | a document the model reads | ready-made commands for a website, plus general tools to drive any page | a document (with optional helper files) an agent reads and follows | **a program that runs on its own — no model needed** |
-| **how it's created** | a person writes and publishes it; you install it | an agent repeatedly edits one document from past runs | a person or agent writes one per website | written by hand, or an agent turns a past run into a new document | **built automatically from a few runs of the same task** |
-| **how it handles variation** | whatever the author wrote in | no real parameters | the author declares the options | the agent works it out each time from the document | **inferred automatically from what differs between your runs** |
-| **how it's verified** | not verified | kept only if it scores higher on a test set | the author runs it for real and checks the output against saved expected results and against the live page | not proven correct — a new version is checked before it replaces the old, and earns trust only after it succeeds on real tasks (and loses it if it later fails) | **the program must re-run and reproduce its own recorded answers exactly, with no model — proof it is *consistent*, not that the answer is correct (for that, supply known answers)** |
-| **does it improve with use?** | no — it stays as written | one document keeps being rewritten | it accumulates knowledge about each site, but doesn't improve at your task on its own | it accumulates more documents and track records | **the same skill grows broader — each run adds another variation, so a narrow skill becomes general (old cases keep working)** |
-
-<sub>Verified against current `main` (2026-07-23). **OpenCLI** ([jackwener/OpenCLI](https://github.com/jackwener/OpenCLI)) has three surfaces — site adapters (`clis/<site>/<cmd>`), generic `browser` primitives, and a CLI/plugin hub for `gh`/`docker`/custom tools; adapter args are author-declared; `verify` runs against recorded, author-tightened fixtures and the workflow also checks values against the live page ([opencli-adapter-author](https://github.com/jackwener/OpenCLI/blob/main/skills/opencli-adapter-author/SKILL.md)); `autofix` repairs a local override and reports upstream only with approval ([opencli-autofix](https://github.com/jackwener/OpenCLI/blob/main/skills/opencli-autofix/SKILL.md)); site knowledge persists to `~/.opencli/sites/<site>/`. **OpenSpace** ([HKUDS/OpenSpace](https://github.com/HKUDS/OpenSpace)) evolves skills through FIX / DERIVED / CAPTURED; new skills are *provisional* until independent success makes them *trusted*, and can be demoted (`skill_engine/types.py`; README "Provisional first" / "Independent trust"); there is no inferred parameter schema.</sub>
-
 ## 🗺️ How it works
 
 ![components, the loop, and what a skill is](../../../assets/skill_factory_pipeline.png)
@@ -50,6 +38,22 @@ At solve time, the agent queries the library once and receives one of three reco
 After solving, the library grows from the runs you already have. Solves of the same task template are aligned: what is identical becomes the skeleton, and what differs is lifted into parameters, giving one parameterized program per template. The expensive part, driving the site itself, is factored into named primitives (log in, run a search, read the results table), so a later task on the same site can call them even when its final step differs.
 
 Two gates decide what lands: before distillation, only correct solves become material; after it, the candidate must replay its own answers standalone, with no model. When a template already exists, its skill is widened in place, and every answer it previously reproduced is replayed alongside, so a later batch can't break what already worked.
+
+<details>
+<summary><b>How it compares to related work</b></summary>
+<br>
+
+|  | published `SKILL.md` | SkillOpt | OpenCLI | OpenSpace | **Web Skill Factory (Ours)** |
+|---|---|---|---|---|---|
+| **what a skill is** | a document the model reads | a document the model reads | ready-made commands for website tasks, plus general tools for driving any page | a document, optionally with helper files, that an agent reads and follows | **a program that runs on its own — no model needed** |
+| **how it's created** | a person writes and publishes it; you install it | an optimizer model repeatedly edits one document using scored agent runs | a person or agent writes an adapter command for each website task | written by hand, or evolved by an agent by fixing an existing skill, deriving a specialized one, or capturing a validated part of a past run | **built automatically from a few runs of the same task — an LLM distills them into one program** |
+| **how it handles variation** | whatever the author described | no explicit runtime parameters — the document teaches the model how to handle variation | the adapter author explicitly declares its arguments and options | the agent interprets each case from the document and optional helpers | **parameters are inferred automatically from what differs between runs** |
+| **how it's verified** | no built-in verification requirement | a candidate replaces the current document only if it scores higher on a validation split | the author runs the command against the live site, checks its output against a saved fixture, and compares the values with the live page | not proven correct: candidates are validated before adoption; evolved skills start provisional, become trusted after independent successful use, and can be demoted after an attributable failure | **the program must reproduce its recorded answers exactly, with no model — a consistency check, not proof that the answers are correct; known answers can additionally check correctness** |
+| **what grows from your runs?** | nothing automatically — the document stays as published until someone edits it | one document improves, but the model still interprets and performs every task | site knowledge accumulates, but repeated solves do not automatically generalize a command | versions, evidence, and new skill documents accumulate, but an agent still interprets them at runtime | **one executable program becomes more general — each new solve can turn another observed difference into a parameter, while regression replay keeps every earlier case working** |
+
+*This is a friendly comparison based on our understanding of each project. If we've mischaracterized your project, please open an issue or PR — we'll fix it.*
+
+</details>
 
 The Quick Start below demonstrates the complete workflow.
 
