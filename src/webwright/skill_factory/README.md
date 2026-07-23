@@ -29,10 +29,10 @@ https://github.com/user-attachments/assets/a6cb7d8e-2411-4d14-b85e-4255ccb1ae81
 |  | published `SKILL.md`| SkillOpt | OpenCLI | **Web Skill Factory (Ours)** |
 |---|---|---|---|---|
 | a skill **is** | a document the model reads | a document the model reads | one CLI command per site capability | **a parameterized Python program that runs on its own, no model** |
-| **domain / whose need** | anything, but nothing runs | general agent tasks (ALFWorld, DocVQA, spreadsheets, math...) | web: a site's common capabilities, shared by all users | **web: the specific task *you* repeat, including private, cross-site, multi-step workflows no shared catalogue has** |
+| **domain / whose need** | anything, but nothing runs | general agent tasks (ALFWorld, DocVQA, spreadsheets, math...) | web: a shared catalogue of a site's capabilities | **web: the specific task *you* repeat — not a capability a shared catalogue would carry** |
 | **produced by** | a person writes and publishes it; you install it | edits to one document, driven by past runs | a person or agent writes one per site | **distilling several solves of the same task template** |
 | **parameters come from** | whoever wrote it | none | the author declares them | **the differences actually observed between your solves** |
-| **verified?** | no | one gate: scores higher on a held-out split | one gate: checked when it's first written, plus live tests | **two gates: a wrong answer never feeds a skill, *and* the skill must reproduce its own answers standalone, no model** |
+| **verified?** | no | one gate: scores higher on a held-out split | one gate: author-written fixtures checked at authoring time, plus unit tests | **two gates: a wrong solve never becomes material, *and* the skill must reproduce the answers from its own solves standalone, no model** |
 | agent can **adapt** it | read-only | read-only | you edit a local copy — modify it (`eject`) or repair it on break (`autofix`) — a maintained adapter file, not a per-task reshape | **at solve time, per task: the agent has the source and reshapes it for the task in hand; the library copy is untouched** |
 | **grows from your runs** | no, it's whatever its author last wrote | yes, but what grows is a document for a frozen agent, not a program | no, it grows by authoring and maintenance | **yes: each new solve widens it in place, regression-replayed so old coverage can't break** |
 
