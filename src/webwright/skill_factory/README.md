@@ -124,26 +124,11 @@ It prints the ten fixed steps it executed and the location of the saved screensh
 > just see the decision. Keep that solve and `learn` folds it back in, so the next standalone run
 > has your platform covered too.
 
-**What that just saved.**
-
-Once the skill exists, running it directly is the cheap path: the standalone run you just did finished in **~10 fixed steps, ~40 s, 0 LLM calls**. A cron watcher pays the exploration cost once, then repeats for free.
-
-Reuse pays even when the skill *doesn't* fit a task as-is and the agent has to adapt it — and there it buys steadiness, not just speed. Same shortest-duration `SEA → DEN` task, `gpt-5.4`, 5 solves **with** the library (`route` judged `adapt`) against 5 **without** it (empty library → the agent from scratch):
-
-|                     | from scratch<br><sub>shortest-duration</sub> | with the library<br><sub>agent adapts the skill</sub> | skill standalone<br><sub>a task it fits</sub> |
-|---------------------|:---:|:---:|:---:|
-| steps — mean of 5   | 26.0 | **21.8** | **10**, fixed |
-| steps — worst of 5  | 39   | **29**   | — |
-| final attempts      | 5.8  | **4.6**  | — |
-| correct             | 5/5  | 5/5      | ✓ |
-
-Reuse lowers the mean (21.8 vs 26), the spread (std 6.6 vs 8.2), and the worst case (29 vs 39) — even the *unluckiest* run with the library beats the unluckiest without it, so this isn't a lucky draw. The skill hands the agent an already-debugged path instead of leaving it to wander and retry. (The `self_reflection` evidence gate is skill-independent noise that keeps the absolute step counts high; it hides how large the saving is, not its direction.) The last column is a different, easier task — one the skill *fits* — to show the standalone floor: once a skill covers your task, every repeat runs with no model at all.
-
 ---
 
 ### 2. Bring the agent in
 
-The same task family, now with the agent in the loop. One command — `route` — decides and then acts. Needs an API key:
+Now a task the skill *doesn't* quite fit — which is exactly when the agent comes into the loop. We ask for the nonstop with the **shortest flight duration**, while the checked-in skill finds the **earliest departure**. That's nearly the same job — one different filter over the same results table — so the skill is a strong prior, but it can't be run as-is. `route` sees that, decides `adapt`, and hands the task to the agent with the skill to adapt around the difference. One command decides and then acts. Needs an API key:
 
 ```bash
 python -m webwright.skill_factory route \
@@ -152,9 +137,22 @@ python -m webwright.skill_factory route \
     --start-url https://www.google.com/flights -c <your_model.yaml>
 ```
 
-`route` searches the library, picks a skill, and decides `run` / `adapt` / `skip`, printing the decision (verdict, skill, why) before it acts. Then it carries the decision out: on `run` it executes the skill directly with no model; otherwise it launches the agent to adapt the skill, and a direct `run` that fails falls back to the agent too. The task above asks for the *shortest-duration* nonstop, which the checked-in skill (it finds the *earliest*) can't run as-is — so `route` returns `adapt` and hands it to the agent. Give it a task the skill fits and you'd see `run`, executed directly.
+`route` searches the library, picks a skill, and decides `run` / `adapt` / `skip`, printing the decision (verdict, skill, why) before it acts. Then it carries the decision out: on `run` it executes the skill directly with no model; otherwise it launches the agent to adapt the skill, and a direct `run` that fails falls back to the agent too. Here the shortest-duration task can't run the earliest-departure skill as-is, so `route` returns `adapt`. Give it a task the skill fits and you'd see `run`, executed directly.
 
 Drop `--start-url` to inspect only: `route` prints the decision (and still runs a directly-runnable skill), but doesn't launch the agent. That's the cheap way to see the choice before spending a solve.
+
+**What that just saved.** Reusing the skill helps even when the agent has to adapt it — and it buys steadiness, not just speed. Five solves **with** the library (`route` → `adapt`) against five **without** it (empty library → the agent from scratch), same shortest-duration `SEA → DEN` task, `gpt-5.4`:
+
+|                     | from scratch<br><sub>shortest-duration</sub> | with the library<br><sub>agent adapts the skill</sub> | skill standalone<br><sub>earliest nonstop departure</sub> |
+|---------------------|:---:|:---:|:---:|
+| steps — mean of 5   | 26.0 | **21.8** | **10**, fixed |
+| steps — worst of 5  | 39   | **29**   | — |
+| final attempts      | 5.8  | **4.6**  | — |
+| correct             | 5/5  | 5/5      | ✓ |
+
+Reuse lowers the mean (21.8 vs 26), the spread (std 6.6 vs 8.2), and the worst case (29 vs 39) — even the *unluckiest* run with the library beats the unluckiest without it, so this isn't a lucky draw. The skill hands the agent an already-debugged path instead of leaving it to wander and retry. (The `self_reflection` evidence gate is skill-independent noise that keeps the absolute step counts high; it hides how large the saving is, not its direction.)
+
+The last column is the skill running standalone on its *own* task — the **earliest nonstop departure** from §1, not the shortest-duration one the agent solved. Different question, nearly identical work: one filter changed over the same results table. So it's a fair floor for the same machinery — once a skill fits your task exactly, every repeat runs in a fixed handful of steps with no model at all.
 
 ---
 
