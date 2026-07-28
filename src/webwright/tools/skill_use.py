@@ -1,14 +1,16 @@
-"""skill_use — solve-time tool: query the skill library for a reusable skill for THIS task.
+"""skill_use — the skill-library query for THIS task: the `recommend` decision.
 
-Like self_reflection / image_qa, the agent invokes this from bash during solving:
+Resolved OUT of the agent's step loop — `route` and the prompt-hint injection call it before/around
+a solve, so the agent never spends its own steps querying the library. Also runnable as a CLI:
 
     python -m webwright.tools.skill_use --task "Get the latest release version of facebook/react" \
         --library "$WORKSPACE_DIR/../library"
 
-It retrieves the most relevant skill (relevance) and judges utility (use / adapt / skip), then
-prints a JSON recommendation telling the agent how to reuse it (and the path to read its source).
-The agent decides: reuse as-is (use), reuse the core and change only the last step (adapt), or
-solve from scratch (skip). Retrieval/judgement never block solving — on any error it prints skip.
+It retrieves the most relevant skill (relevance) and judges utility, then returns a JSON
+recommendation: verdict (run / adapt / skip), the chosen skill, how to reuse it, the filled params,
+and the path to its source. run = an executable skill that covers the task and whose slots all fill,
+so it runs directly; adapt = reuse the core and change what differs; skip = solve from scratch.
+Retrieval/judgement never block a solve — on any error it returns skip.
 """
 from __future__ import annotations
 

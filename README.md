@@ -174,9 +174,10 @@ behind into a growing library of **reusable, verified, parameterized skills** �
 without a model and compose into the next task instead of re-exploring the site. Plugs in with
 **no change to the agent loop**:
 
-- **Reuse** — at solve time the agent calls `python -m webwright.tools.skill_use --task "..." --library ...`
-  (like `self_reflection`/`image_qa`); it returns `{verdict: use|adapt|skip, skill_id, source_path}`,
-  then reads the source and reuses it as the task needs.
+- **Reuse** — before a solve starts, the library is checked *out of the agent loop* (`recommend`):
+  `route` either runs a matching skill directly (no model) or injects it into the prompt as a prior
+  (`{verdict: run|adapt|skip, skill_id, source_path}`); the agent reuses the hint without ever
+  querying the library itself.
 - **Grow** — afterwards, `python -m webwright.skill_factory learn outputs/ --library ./library`
   groups solves of the same template and distills one parameterized skill (`build` does solve→learn
   in one shot; `update` is manual-manifest mode).
