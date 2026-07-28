@@ -37,6 +37,8 @@ At solve time, the agent queries the library once and receives one of three reco
 
 You can also route a task *without* the agent in the loop. `route` (and the `recommend` call under it) searches the library, picks a skill, and returns `run`, `adapt`, or `skip`. On `run` — an executable skill that covers the task and whose parameters all fill — it executes the skill directly, no model, and only falls back to the agent if that run fails or comes back the wrong shape. On `adapt` it hands the task to the agent with the skill as a prior; on `skip` the agent starts fresh. So a match you can trust runs for free, and anything short of that still gets solved.
 
+These are one entry, not two stacked routers. `recommend(task, library)` is the pure decision: retrieve, judge, return the verdict (`run`/`adapt`/`skip`) and the filled parameters — and nothing more. `route` is the thin orchestrator wrapped around it: it acts on that verdict — run the skill, or launch the agent — and it's the one that owns the fallback. The deciding and the acting are split by responsibility, but it's a single call path. You don't call two routers.
+
 After solving, the library grows from the runs you already have. Solves of the same task template are aligned: what is identical becomes the skeleton, and what differs is lifted into parameters, giving one parameterized program per template. The expensive part, driving the site itself, is factored into named primitives (log in, run a search, read the results table), so a later task on the same site can call them even when its final step differs.
 
 Two gates decide what lands: before distillation, only correct solves become material; after it, the candidate must replay its own answers standalone, with no model. When a template already exists, its skill is widened in place, and every answer it previously reproduced is replayed alongside, so a later batch can't break what already worked.
@@ -132,17 +134,18 @@ It also prints the ten fixed steps it executed and the location of the saved scr
 
 **What that just saved.**
 
-|            | from scratch<br><sub>no library</sub> | the agent, with the library<br><sub>`quickstart.sh solve`</sub> | the skill, standalone<br><sub>what you just ran</sub> |
-|------------|--------------|---------------------|----------------------|
-| steps      | 50           | **11**              | **10**, fixed        |
-| wall clock | 23.5 min     | **~4 min**          | **~40 s**            |
-| LLM calls  | 55           | **12**              | **0**                |
+Once the skill exists, running it directly is the cheap path: the standalone run you just did finished in **~10 fixed steps, ~40 s, 0 LLM calls**. A cron watcher pays the exploration cost once, then repeats for free.
 
-All three runs solved the same task, finding the earliest nonstop `SEA → DEN` flight on `2026-08-15`, and returned the same correct answer.
+Reuse pays even when the skill *doesn't* fit a task as-is and the agent has to adapt it — and there it buys steadiness, not just speed. Same shortest-duration `SEA → DEN` task, `gpt-5.4`, 5 solves **with** the library (`route` judged `adapt`) against 5 **without** it (empty library → the agent from scratch):
 
-The middle column shows reuse working as intended. The agent queried the library, received `use`, and stopped exploring, reducing the run from 50 steps to 11.
+|                     | from scratch<br><sub>shortest-duration</sub> | with the library<br><sub>agent adapts the skill</sub> | skill standalone<br><sub>a task it fits</sub> |
+|---------------------|:---:|:---:|:---:|
+| steps — mean of 5   | 26.0 | **21.8** | **10**, fixed |
+| steps — worst of 5  | 39   | **29**   | — |
+| final attempts      | 5.8  | **4.6**  | — |
+| correct             | 5/5  | 5/5      | ✓ |
 
-The last column runs the learned skill directly. **Once the skill exists, every run uses no model calls.** A cron watcher pays the exploration cost once, then runs in about 40 seconds each time.
+Reuse lowers the mean (21.8 vs 26), the spread (std 6.6 vs 8.2), and the worst case (29 vs 39) — even the *unluckiest* run with the library beats the unluckiest without it, so this isn't a lucky draw. The skill hands the agent an already-debugged path instead of leaving it to wander and retry. (The `self_reflection` evidence gate is skill-independent noise that keeps the absolute step counts high; it hides how large the saving is, not its direction.) The last column is a different, easier task — one the skill *fits* — to show the standalone floor: once a skill covers your task, every repeat runs with no model at all.
 
 ---
 
@@ -163,31 +166,10 @@ The same task family, now with the agent in the loop. Needs an API key:
 
 ### 3. Build your own skill
 
-Everything below requires an API key. There are two paths, depending on what you already have.
+Everything below requires an API key. The normal path is `init` → `build`: describe the task, review the draft, and let `build` solve a few instances and learn a skill from them. If you *already* have finished Webwright runs on disk, `learn` is the shortcut — skip to 3.2.
 
-**3.1 — You have trajectories.**
-
-If you already use Webwright, your trajectories are on disk. Pass them directly to `learn`.
-
-```bash
-python -m webwright.skill_factory learn outputs/ --library ./library
-```
-
-Never run Webwright, so you have nothing to try it on? Three real solves ship with the repo:
-
-```bash
-cd src/webwright/skill_factory/examples
-python -m webwright.skill_factory learn trajectories --library ./library --verify off
-```
-
-~100 s: three runs → one template → five lifted parameters → one skill.
-
-These trajectories use flights scheduled for August 15, 2026. We use `--verify off` to skip browser replay and keep the example stable if the schedule changes or the date passes. Before August 15, 2026, you can also try `--verify strict`. [The trajectory README](examples/trajectories/README.md) explains when the examples become stale.
-
-A verified skill built from these trajectories is included in [`examples/learned_library/`](examples/learned_library/). It has `verified: true` and `grade: executable`, and is the skill used in step 1. Everything here was produced with **gpt-5.4**, which we recommend.
-
-**3.2 — You have a task, but no runs yet.** Describe it; `init` drafts the spec and leaves the
-values for you.
+**3.1 — You have a task.** Describe it; `init` drafts a spec you review, then `build` solves the
+instances and learns a verified skill.
 
 ```bash
 python -m webwright.skill_factory init "the cheapest <product> on Amazon, for any product"
@@ -198,10 +180,10 @@ python -m webwright.skill_factory init "the cheapest <product> on Amazon, for an
 task: Find the cheapest {product} on Amazon and return its brand and price.
 start_url: https://www.amazon.com/    # guessed — check it opens the right page
 
-instances:            # ____ is yours to fill: your values are the ground truth
-  - {product: "____"}
-  - {product: "____"}
-  - {product: "____"}
+instances:            # PROPOSED — real, varied guesses to review, edit, add or delete
+  - {product: "makeup remover"}
+  - {product: "USB-C cable"}
+  - {product: "instant coffee"}
 
 build:                # every key here is also a CLI flag; the flag wins
   # this answer drifts (prices move on their own), so replay only checks the shape —
@@ -213,7 +195,7 @@ build:                # every key here is also a CLI flag; the flag wins
   chunk: 25           # runs per grouping call
 ```
 
-`init` proposes the task template, site, and verification mode. It does not invent instance values, since they would become unchecked training inputs. Fill in the `____` fields, then run:
+`init` proposes the task template, site, verification mode, and a few real, varied instance values to start from. Review them — replace any that are wrong, since a bad value quietly trains the skill on the wrong answer — then run `build`. (For an account-scoped task, where the values are private to your login, `init` leaves the rows blank rather than invent them.)
 
 ```bash
 python -m webwright.skill_factory build skill.yaml --library ./library --jobs 3
@@ -266,6 +248,26 @@ examples/solve_with_library.sh \
 ```
 
 </details>
+
+**3.2 — You already have runs.** `learn` is the shortcut: it's exactly what `build` does after
+solving, so it skips straight to distilling. Point it at a folder of finished Webwright runs.
+
+```bash
+python -m webwright.skill_factory learn outputs/ --library ./library
+```
+
+Never run Webwright, so you have nothing to try it on? Three real solves ship with the repo:
+
+```bash
+cd src/webwright/skill_factory/examples
+python -m webwright.skill_factory learn trajectories --library ./library --verify off
+```
+
+~100 s: three runs → one template → five lifted parameters → one skill.
+
+These trajectories use flights scheduled for August 15, 2026. We use `--verify off` to skip browser replay and keep the example stable if the schedule changes or the date passes. Before August 15, 2026, you can also try `--verify strict`. [The trajectory README](examples/trajectories/README.md) explains when the examples become stale.
+
+A verified skill built from these trajectories is included in [`examples/learned_library/`](examples/learned_library/). It has `verified: true` and `grade: executable`, and is the skill used in step 1. Everything here was produced with **gpt-5.4**, which we recommend.
 
 <details>
 
@@ -342,7 +344,7 @@ which is what the eval runs), step savings scale with how much the agent doesn't
 on a familiar site the cost of querying the library and reading the skill can outweigh what it
 saves, so reuse pays off most on the hard tasks. From-scratch cost is also high-variance, and a
 skill pins the strategy down.
- 
+
 An `executable` skill skips that path entirely: it runs standalone, with no agent and no model
 in the loop, in a fixed handful of steps, so every repeat after the first is essentially free.
 (Results on this mode coming soon.)
@@ -367,6 +369,22 @@ Here are some known rough edges, and directions we might take them.
   and just pass it parameters, would make reuse a lot cleaner.
 
 - **Verification is only as reliable as the reference answer it checks against.** On real websites, where no gold label is available, the LLM may misinterpret the task or produce an incorrect reference answer, and self-verification may fail to detect that error. For dynamic answers such as prices or rankings, verification often falls back to checking only the output format or structure. This can catch a skill that is broken or fails to execute, but not one that executes successfully and returns the wrong result. Achieving true correctness in these settings requires a stronger, independent judge like WebJudge.
+
+- **A direct run can be right-shaped but wrong.** When `route` runs a skill directly, it only catches
+  *observable* failures — a crash, a timeout, empty output, the wrong shape. It can't catch a run that
+  returns a well-shaped but wrong answer, which usually traces back to a slot filled with another
+  plausible value (the date `8/15` filled as `8/5`, say). With no gold answer there's nothing
+  machine-checkable to flag it, so there's no after-the-fact fallback for this case. The only guard is
+  the *before*-run fit judgment — does the skill's template actually hold the task, is the filled value
+  appropriate — not an after-run check. How well that pre-run judgment holds up end-to-end isn't
+  measured yet; that needs many independently-runnable skills, and the library has only 2 executable
+  ones today. Until then the conservative move is to keep direct-run off by default, or turn it on only
+  for high-confidence matches.
+
+- **Where the fallback lives.** The fallback isn't in `recommend` — that stays a pure decision. It
+  sits one level up, in the orchestrator (`route`): a direct `run` that fails is downgraded in place to
+  an `adapt`, handing the skill's source to the agent, so it reuses the existing agent path instead of
+  a second mechanism.
 
 - **Distillation is stochastic.** A given attempt may produce a fragile skill that fails even its own replay. The gate filters out these failures, and rerunning distillation a few times usually succeeds. However, each retry consumes additional tokens, so improving the reliability of executable skill generation, ideally succeeding on the first attempt, remains an important direction to explore.
 

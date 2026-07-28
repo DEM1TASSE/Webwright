@@ -21,7 +21,7 @@ DATE=$(date -d "+30 days" +%Y-%m-%d 2>/dev/null || date -v+30d +%Y-%m-%d)
 WORK="${QUICKSTART_WORKDIR:-$(mktemp -d /tmp/skills_quickstart.XXXX)}"
 LIB="$PWD/learned_library"
 # The AGENT's model comes from a yaml and never reads OPENAI_*, so a gateway you exported would
-# send `ask` there and this script's solves to api.openai.com. Pass your env along as inline
+# send `route` there and this script's solves to api.openai.com. Pass your env along as inline
 # `-c model.key=value` overrides instead — same thing build does, no yaml for you to write.
 # MODEL_CFG still wins, for the day the agent wants a different model than the distiller.
 if [ -n "${MODEL_CFG:-}" ]; then

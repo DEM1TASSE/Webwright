@@ -5,7 +5,7 @@ verbatim `learn` output.
 
 ```
 examples/
-├── quickstart.sh          # one command, every parameter pre-filled (demo, ask, solve)
+├── quickstart.sh          # one command, every parameter pre-filled (run, route, solve)
 ├── flights.skill.yaml     # the spec the checked-in library came from — build it to remake it
 ├── trajectories/          # those solves' runs — try `learn` without solving first
 ├── solve_with_library.sh  # the solve wrapper: skill hint + answer-output instruction
@@ -34,10 +34,10 @@ before it landed (`meta.json`: `verified: true, grade: executable`):
 
 Why this task: a flight *schedule* is a stable, client-independent fact the page states
 plainly — so the answer is the same today, tomorrow, and on your machine, which is exactly
-what lets `--verify strict` and standalone reuse mean something. On the unseen route SEA→DEN, all three
-paths return the same answer: from scratch **50 steps / 23.5 min**, the agent with the library
-**11 steps**, the skill standalone **10 steps / ~40 s / no model at all** — and an independent
-model-free probe of the page agrees with them.
+what lets `--verify strict` and standalone reuse mean something. On the unseen route SEA→DEN the skill
+runs standalone in **10 steps / ~40 s / no model at all**, and an independent model-free probe of the
+page agrees. With the agent in the loop, reusing the library is both cheaper and steadier than solving
+from scratch — see the measured numbers in the module README.
 
 ## Run it
 
