@@ -103,10 +103,10 @@ A learned skill is a plain CLI. Run it directly — no model, no API key, about 
 
 ```bash
 python src/webwright/skill_factory/examples/learned_library/what_is_the_earliest_nonstop_flight_from_2c8dab1/skill.py \
-    --origin-code SEA --destination-code DEN --date 2026-08-26
+    --origin-city Seattle --origin-code SEA --destination-city Denver --destination-code DEN --date 2026-08-26
 ```
 
-The skill takes its three parameters as `--flags` (`--origin-code`, `--destination-code`, `--date`); it also accepts a positional `taskspec.json`, which is what replay and programmatic callers use. Change the codes and date for your own route.
+The skill takes its five parameters as `--flags` — a city name and its airport code for each endpoint (`--origin-city Seattle --origin-code SEA`), plus `--date`; it also accepts a positional `taskspec.json`, which is what replay and programmatic callers use. Change the cities, codes, and date for your own route.
 
 It prints the ten fixed steps it executed and the location of the saved screenshots. The steps are encoded in the skill, not chosen by a model. The run directory (under `$WORKSPACE_DIR`) contains the full trajectory.
 

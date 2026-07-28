@@ -4,7 +4,7 @@
 #   python skill.py --origin-city ...   (convenience for humans)
 def _skillfactory_cli():
     import sys, json, argparse, tempfile
-    _PARAMS = ['origin_code', 'destination_code', 'date']
+    _PARAMS = ['origin_city', 'origin_code', 'destination_city', 'destination_code', 'date']
     argv = sys.argv[1:]
     # A single positional, non-flag argument is a taskspec.json path -> original behaviour,
     # sys.argv left untouched. This is the path replay uses, so it must not change.
@@ -754,7 +754,7 @@ async def retrieve_earliest_nonstop_flight(page, params):
 async def main():
     LOG_PATH.write_text("", encoding="utf-8")
 
-    required = ["origin_code", "destination_code", "date"]
+    required = ["origin_city", "origin_code", "destination_city", "destination_code", "date"]
     missing = [k for k in required if not PARAMS.get(k)]
     if missing:
         raise RuntimeError(f"Missing required params: {missing}")

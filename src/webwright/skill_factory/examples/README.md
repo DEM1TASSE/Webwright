@@ -40,12 +40,12 @@ from scratch — see the measured numbers in the module README.
 
 ## Run it
 
-Standalone — no API key, ~40 s. The skill is a plain CLI (its three params as `--flags`, or a
+Standalone — no API key, ~40 s. The skill is a plain CLI (its five params as `--flags`, or a
 positional `taskspec.json`):
 
 ```bash
 python learned_library/what_is_the_earliest_nonstop_flight_from_2c8dab1/skill.py \
-    --origin-code SEA --destination-code DEN --date 2026-08-26
+    --origin-city Seattle --origin-code SEA --destination-city Denver --destination-code DEN --date 2026-08-26
 ```
 
 With the agent in the loop — `route` decides `run` / `adapt` / `skip` and then acts (needs a key).
