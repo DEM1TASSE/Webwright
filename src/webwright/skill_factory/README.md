@@ -110,17 +110,9 @@ The skill takes its three parameters as `--flags` (`--origin-code`, `--destinati
 
 It prints the ten fixed steps it executed and the location of the saved screenshots. The steps are encoded in the skill, not chosen by a model. The run directory (under `$WORKSPACE_DIR`) contains the full trajectory.
 
-> **This skill was distilled on Linux, against Google Flights as it looked then, and that's all
-> `strict` replay proved.** It's plain Playwright driving a live site it doesn't control, so a
-> different OS or a page Google has since changed can break it — on macOS it fails at the airport
-> field, for instance, because the field-clearing shortcut it learned (`Control+A`) is select-all
-> only on Linux/Windows. That fragility is the point of the research, not a bug in your setup: a
-> replay-verified skill reproduces its *training* run, which is not the same as generalizing.
+> **`strict` replay proves only that the skill reproduced its training run in the original environment.** Because it uses Playwright against a live site, OS differences or site changes can still break it. For example, a skill learned on Linux may fail on macOS if it relies on `Control+A` to clear a field. Replay verification is not the same as generalization across platforms.
 >
-> When the standalone run won't work, the agent still can. `route` (§2) carries the skill to the
-> agent as a prior it reads and adapts around the difference; run it without `--start-url` first to
-> just see the decision. Keep that solve and `learn` folds it back in, so the next standalone run
-> has your platform covered too.
+> When standalone execution fails, `route` can still pass the skill to the agent in `adapt` mode. Run it without `--start-url` to inspect the decision first. You can then keep the new solve and run `learn` again to incorporate support for the new environment.
 
 ---
 
@@ -156,7 +148,7 @@ Reuse reduced the mean, variance, and worst-case cost because the agent started 
 
 Everything below requires an API key. The standard workflow is `init` → `build`: describe a task, review the generated spec, and let `build` solve several instances and distill a skill. If you already have completed Webwright runs, skip to §3.2 and use `learn`.
 
-**3.1 — You onlly have a task.**
+**3.1 You only have a task.**
 
 `init` drafts a spec; after reviewing it, run `build` to solve the instances and learn a verified skill.
 
@@ -201,7 +193,7 @@ python -m webwright.skill_factory build flights.skill.yaml --library ./library -
 
 For changing answers such as prices or rankings, shape verification only checks output structure. Use `--golds` or a judge to verify correctness.
 
-**3.2 — You already have runs.**
+**3.2 You already have runs.**
 
 Point `learn` at a folder of completed Webwright runs to distill them directly.
 
@@ -272,11 +264,7 @@ gpt-5.4. 100 runs in total.
 - **Retrieval stayed reliable as the library grew** to 10 skills: all 20 held-out solves
   retrieved their own template's skill, including two near-duplicate gitlab commit skills.
 
-**How to read it.** In the agent-in-loop path (a `reference` skill the agent reads and reuses,
-which is what the eval runs), step savings scale with how much the agent doesn't already know:
-on a familiar site the cost of querying the library and reading the skill can outweigh what it
-saves, so reuse pays off most on the hard tasks. From-scratch cost is also high-variance, and a
-skill pins the strategy down.
+**How to read it.** In the agent-in-the-loop path used by our evaluation, a `reference` skill is selected in `adapt` mode, meaning the agent reads and reuses it as a prior. The benefit depends on how much the skill adds beyond the agent’s existing knowledge: on familiar sites, retrieval and reading overhead may outweigh the savings, while harder tasks benefit more. Skills also reduce variance by anchoring the agent to a consistent strategy.
 
 An `executable` skill skips that path entirely: it runs standalone, with no agent and no model
 in the loop, in a fixed handful of steps, so every repeat after the first is essentially free.
@@ -291,23 +279,11 @@ Here are some known rough edges, and directions we might take them.
   of failed attempts won't invent a strategy that was never there. The factory makes reuse cheap;
   it doesn't make hard tasks solvable.
 
-- **No cost/benefit judgment yet.** `route` asks "is there a skill that fits?", not "is reusing it
-  actually cheaper than solving from scratch?" There's no prediction of the reuse overhead or of the
-  exploration it would save, so it can't skip a marginal match when starting fresh is the cheaper
-  bet. A budget-aware decision — weighing that overhead against what it saves — is the missing piece.
+* **`route` does not yet model cost versus benefit.** It judges whether a skill fits, but not whether reuse is cheaper than solving from scratch. A budget-aware router should compare retrieval and adaptation overhead against the exploration it is expected to save.
 
 - **Verification is only as reliable as the reference answer it checks against.** On real websites, where no gold label is available, the LLM may misinterpret the task or produce an incorrect reference answer, and self-verification may fail to detect that error. For dynamic answers such as prices or rankings, verification often falls back to checking only the output format or structure. This can catch a skill that is broken or fails to execute, but not one that executes successfully and returns the wrong result. Achieving true correctness in these settings requires a stronger, independent judge like WebJudge.
 
-- **A direct run can be right-shaped but wrong.** When `route` runs a skill directly, it only catches
-  *observable* failures — a crash, a timeout, empty output, the wrong shape. It can't catch a run that
-  returns a well-shaped but wrong answer, which usually traces back to a slot filled with another
-  plausible value (the date `8/15` filled as `8/5`, say). With no gold answer there's nothing
-  machine-checkable to flag it, so there's no after-the-fact fallback for this case. The only guard is
-  the *before*-run fit judgment — does the skill's template actually hold the task, is the filled value
-  appropriate — not an after-run check. How well that pre-run judgment holds up end-to-end isn't
-  measured yet; that needs many independently-runnable skills, and the library has only 2 executable
-  ones today. Until then the conservative move is to keep direct-run off by default, or turn it on only
-  for high-confidence matches.
+* **A direct run can be right-shaped but wrong.** `route` checks that the skill is executable, the template fits, and all slots are filled, but not that the extracted values are correct. A plausible extraction error can therefore produce a well-formed but incorrect answer. Stricter post-run validation with fallback to the agent is needed.
 
 - **Distillation is stochastic.** A given attempt may produce a fragile skill that fails even its own replay. The gate filters out these failures, and rerunning distillation a few times usually succeeds. However, each retry consumes additional tokens, so improving the reliability of executable skill generation, ideally succeeding on the first attempt, remains an important direction to explore.
 
