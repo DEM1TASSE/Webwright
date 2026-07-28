@@ -64,7 +64,7 @@ unseen route standalone, which is what `executable` buys.
 The commands fall into two modes (see [Manual mode](manual.md) for when to use which). **Quick
 mode** covers `init`, `build`, and `learn`: it infers the template and parameters and gates each
 solve for you. **Manual mode** is `update`: you hand it a manifest and state all of that yourself.
-`skill_use` belongs to neither; it's the call the agent makes at solve time to query the library.
+`route` and `skill_use` belong to neither: they're the out-of-loop reuse decision — resolved before/around a solve (by `route`, or injected into the agent's prompt by `build`/`learn`), never a call the agent makes mid-loop.
  
 ### Quick mode
  
@@ -124,12 +124,30 @@ hand rather than from a spec.
 | `--verify` / `--verify-rounds` / `--draws` / `--on-fail` | `off` / 2 / 2 / `reference` | as above. `--verify` is `off` by default here because benchmark sites may need credentials; `--verify-rounds` and `--draws` only take effect once you turn `--verify` on |
  
 ### Solve time
- 
+
+#### `python -m webwright.skill_factory route`
+
+Route a task out of the agent loop: `recommend` decides `run`/`adapt`/`skip`, then `route` acts on
+it — runs a matching executable skill directly (no model), or hands the task to the agent with the
+skill as a prior, falling back to the agent if a direct run fails or comes back the wrong shape.
+Without `--start-url` it only prints the decision (and still runs a directly-runnable skill).
+
+| flag | default | meaning |
+|---|---|---|
+| `--task` | required | the task to route |
+| `--library` | `$SKILL_LIBRARY_ROOT`, else `library` | library to search |
+| `--start-url` | (none) | launch a Webwright solve on this URL for the agent path; omit to only decide |
+| `-c` / `--config` | (none) | agent model config for a launched solve (`base.yaml` is added automatically) |
+| `-o` / `--out`, `--task-id` | `.` / `route_task` | output dir and task id for a launched solve |
+| `--json` | off | print the raw outcome as JSON |
+
 #### `python -m webwright.tools.skill_use`
- 
-The call the agent makes to query the library while solving a task. Ranking is local; the
-verdict is one LLM round trip on the module's model (below).
- 
+
+The `recommend` decision on its own — retrieve + judge → `{verdict, skill_id, source_path,
+how_to_reuse}`, doing nothing else. Ranking is local; the verdict is one LLM round trip on the
+module's model (below). `route` and the prompt-hint injection are built on it; you rarely call it
+directly.
+
 | flag | default | meaning |
 |---|---|---|
 | `--task` | required | the task text to match against the library |
@@ -145,7 +163,7 @@ verdict is one LLM round trip on the module's model (below).
 | | the agent's model | the module's model |
 |---|---|---|
 | what it does | **opens the browser**: looks at the page, picks the next click, and again, ~50 times per solve | **never opens a browser**: reads the finished transcripts and writes the skill's python |
-| who calls it | the solves in `build`; any Webwright run | `learn`, plus `init` (drafts your spec) and `skill_use` ("can this skill help?") |
+| who calls it | the solves in `build`; any Webwright run | `learn`, plus `init` (drafts your spec) and `recommend` (the reuse decision behind `route`) |
 | which model | `model_name:` in a yaml you pass as `-c model.yaml` | `SKILL_MODEL_NAME`, else `OPENAI_MODEL`, else the class's fallback |
 | what URL | `openai_endpoint:` in that yaml | `SKILL_MODEL_ENDPOINT`, else `OPENAI_ENDPOINT`, else the class's fallback |
 
@@ -172,7 +190,7 @@ gateway. `build` warns when only one is set.
 | `SKILL_MODEL_NAME` | the module's model | the same setting as `OPENAI_MODEL`, higher priority (above) |
 | `SKILL_MODEL_CLASS` | the module's model | a non-OpenAI backend. Defaults to `openai` |
 | `SKILL_MODEL_TIMEOUT` | the module's model | seconds per call. Defaults to 600: distilling a skill emits ~16k tokens, and the model's own 120 s default cuts it off mid-file |
-| `SKILL_LIBRARY_ROOT` | `skill_use` | default for `--library`, so the agent doesn't need the path in its prompt |
+| `SKILL_LIBRARY_ROOT` | `route` / `skill_use` | default for `--library`, so you don't repeat the path |
 | `WORKSPACE_DIR` | every generated skill | where a skill writes `agent_response.json`, its log and screenshots. Defaults to the cwd, which is why the docs `cd` to a scratch dir before running one |
 
 Using the module as a library rather than a CLI? `configure_llm(model)` hands it a model object
@@ -192,8 +210,13 @@ The data flow between them, and the interface each one exposes:
 |---|---|
 | `library.py`  | `Skill` + `Library(root)`: on-disk skills (`<id>/skill.py` + `meta.json`) |
 | `retrieve.py` | `retrieve(task, library)` → ranked `Candidate`s (relevance) |
-| `decide.py`   | `decide(task, candidates)` → `Decision(verdict, skill_id, reason)` (utility: use/adapt/skip) |
+| `decide.py`   | `decide(task, candidates)` → `Decision(verdict, skill_id, reason)` (utility verdict: use/adapt/skip) |
+| `skill_use.py` (tools) | `recommend(task, library)` → `{verdict: run/adapt/skip, skill_id, source_path, how_to_reuse, params}`: the out-of-loop decision; promotes `decide`'s `use` to `run` when the skill is executable and every slot fills, else `adapt` |
+| `route.py`    | `route(task, library)`: out-of-loop orchestrator — `recommend`, then carry it out (run the skill directly / launch the agent / fall back) |
+| `execute.py`  | `run_skill(source, params)`: run a skill directly via a taskspec, out of the agent loop |
+| `fill.py`     | `fill_params(task, param_names)`: pull each slot's value from the task for a direct run (missing → `None`, never invented) |
+| `entry_shim.py` | prepends the CLI shim so a generated skill accepts `--flags` as well as a positional `taskspec.json` |
 | `gate.py`     | `gate(result, method=gold\|self_verify\|none)` → admit? (keeps wrong solves out) |
 | `update.py`   | `evolve(traces, library)`: grow on the existing library (add / adapt-refine / keep); `_refine` parameterizes and decomposes into primitives, incrementally improving an existing skill |
 | `llm.py`      | `configure_llm(model)` + `llm()`: **backend-agnostic** via Webwright's `Model` abstraction; a bare CLI builds the model from `SKILL_MODEL_NAME`/`SKILL_MODEL_ENDPOINT` (or `OPENAI_*`) env, no hardcoded endpoint/key |
-| `prompt.py`   | `with_skill_hint(prompt, task, library)`: non-invasive task-prompt hint (manual reuse path) |
+| `prompt.py`   | `with_skill_hint(prompt, task, library)`: resolves the library lookup out of the agent loop and prepends the chosen skill to the prompt (used by `build`/`learn`; the `route` agent path injects the same hint) |

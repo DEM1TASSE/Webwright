@@ -166,23 +166,23 @@ Everything below requires an API key. The normal path is `init` → `build`: des
 instances and learns a verified skill.
 
 ```bash
-python -m webwright.skill_factory init "the cheapest <product> on Amazon, for any product"
+python -m webwright.skill_factory init "the earliest nonstop flight from <origin> to <destination> on <date>"
 ```
 
 ```yaml
 # skill.yaml — the {holes} are the parameters; each is a column below
-task: Find the cheapest {product} on Amazon and return its brand and price.
-start_url: https://www.amazon.com/    # guessed — check it opens the right page
+task: Find the earliest nonstop flight from {origin_city} to {destination_city} on {travel_date} and return the departure time, arrival time, and flight number.
+start_url: https://www.google.com/flights    # guessed — check it opens the right page
 
 instances:            # PROPOSED — real, varied guesses to review, edit, add or delete
-  - {product: "makeup remover"}
-  - {product: "USB-C cable"}
-  - {product: "instant coffee"}
+  - {origin_city: "Seattle", destination_city: "New York", travel_date: "2026-08-15"}
+  - {origin_city: "Los Angeles", destination_city: "Chicago", travel_date: "2026-09-10"}
+  - {origin_city: "San Francisco", destination_city: "Boston", travel_date: "2026-10-05"}
 
 build:                # every key here is also a CLI flag; the flag wins
-  # this answer drifts (prices move on their own), so replay only checks the shape —
-  # strict would reject a working skill for reporting today's truth
-  verify: shape
+  # this answer holds still (a published schedule reads the same tomorrow), so replay demands
+  # the same answer back — a drifting answer like a price would use verify: shape instead
+  verify: strict
   draws: 2            # fresh attempts: bin the candidate, distil a new one from the same runs
   verify_rounds: 2    # repair rounds inside one attempt: feed it its failures, try again
   on_fail: reference  # reference = keep a readable prior if replay fails | reject = executable or nothing

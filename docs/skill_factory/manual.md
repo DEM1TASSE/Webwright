@@ -100,8 +100,8 @@ batches any time; batches may mix templates.
 
 ### 4. Reuse at solve time
 
-> With `build`/`learn` the agent queries the library on its own and you can skip this. It's the
-> manual wiring for driving Webwright runs yourself.
+> `build`/`learn` already resolve the library lookup out of the agent loop for you, so you can
+> skip this. It's the manual wiring for when you drive Webwright runs yourself.
 
 ```python
 from webwright.skill_factory import with_skill_hint
@@ -109,10 +109,11 @@ prompt = with_skill_hint(prompt, task=task_text, library="/abs/path/to/library")
 # then: python -m webwright.run.cli main -t "$prompt" ...
 ```
 
-The agent runs `skill_use`, gets `{verdict, skill_id, source_path, how_to_reuse}`, reads the
-source, and reuses it. `with_skill_hint` resolves `./library` to an absolute path so the agent
-finds it from its workspace; `--library` beats the `SKILL_LIBRARY_ROOT` env var, so use one or the
-other.
+`with_skill_hint` resolves the library lookup out of the agent loop (the `recommend` decision:
+`{verdict, skill_id, source_path, how_to_reuse}`) and prepends the chosen skill to the prompt; the
+agent reads that injected hint and reuses the source — it never queries the library itself. It also
+resolves `./library` to an absolute path so the run finds it from its workspace; `--library` beats
+the `SKILL_LIBRARY_ROOT` env var, so use one or the other.
 
 ### 5. Run a skill directly, and logged-in sites
 
