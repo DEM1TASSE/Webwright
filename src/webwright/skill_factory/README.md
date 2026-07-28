@@ -287,8 +287,6 @@ Here are some known rough edges, and directions we might take them.
 
 - **Distillation is stochastic.** A given attempt may produce a fragile skill that fails even its own replay. The gate filters out these failures, and rerunning distillation a few times usually succeeds. However, each retry consumes additional tokens, so improving the reliability of executable skill generation, ideally succeeding on the first attempt, remains an important direction to explore.
 
-- **The distiller can lift redundant parameters.** It declares a skill's parameters from what varied across the training instances, and it can over-split one value — `"Seattle (SEA)"` became both `origin_city` and `origin_code` — lifting parameters the skill's own code never reads. The checked-in flights skill is an example: it declares five parameters, but only the airport codes and the date drive the run; the two city parameters are inert. That bloats the interface and the taskspec, and a filled-but-unused value is never validated. A tighter distiller would keep only the parameters the generated code actually uses.
-
 - **The library needs upkeep, like any package registry.** After a skill lands, a site can shift
   under it with nothing re-checking, so it can quietly go stale and keep returning wrong answers.
   Stale skills never retire, and near-duplicate ones never get merged.
