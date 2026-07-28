@@ -221,7 +221,7 @@ def group_chunk(runs, existing_templates):
 
 
 def learn(runs_dir, library_root, golds=None, chunk=25, dry_run=False, verify="strict",
-          rounds=2, on_fail="reject", draws=2):
+          rounds=2, on_fail="reference", draws=2):
     lib = Library(library_root)
     ledger_path = Path(library_root) / ".learned.json"
     ledger = json.loads(ledger_path.read_text(encoding="utf-8")) if ledger_path.exists() else {"runs": {}}
@@ -297,7 +297,10 @@ def learn(runs_dir, library_root, golds=None, chunk=25, dry_run=False, verify="s
         # audit trail + idempotence, saved per chunk
         ledger_path.write_text(json.dumps(ledger, indent=2), encoding="utf-8")
     if not dry_run:
-        print(f"\nlibrary now has {len(lib.list())} skill(s); ledger -> {ledger_path}")
+        skills = lib.list()
+        print(f"\nlibrary now has {len(skills)} skill(s); ledger -> {ledger_path}")
+        for sk in skills:
+            print(f"  [{sk.meta.get('grade', '?')}] {lib.path(sk.skill_id)}")
 
 
 def main(argv=None) -> int:
@@ -314,7 +317,7 @@ def main(argv=None) -> int:
                         "Stops at the first that verifies.")
     p.add_argument("--verify-rounds", type=int, default=2,
                    help="Total build attempts (first + repairs) before giving up. Default 2.")
-    p.add_argument("--on-fail", default="reject", choices=["reject", "reference"],
+    p.add_argument("--on-fail", default="reference", choices=["reject", "reference"],
                    help="Failed verification: reject (default; runs stay retryable) or land as "
                         "grade=reference — readable prior for the agent, standalone NOT trusted.")
     p.add_argument("--verify", default="strict", choices=["off", "shape", "strict"],

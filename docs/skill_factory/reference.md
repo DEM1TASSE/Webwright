@@ -45,9 +45,10 @@ needs credentials the library can't store, or the training instances themselves 
 date has passed, the listing is gone), so the skill comes back with nothing and even `shape`
 rejects it (an empty answer fails the gate) for something that isn't the skill's fault. Drifting
 *values* are not that case; `shape` replays those and compares loosely. Nor is a page that moved:
-there the failed replay is real news, and `--on-fail reference` keeps the broken skill as a
-labelled prior (the default, `reject`, just leaves the runs retryable). It's an escape hatch, not
-a grade to aim for; normal runs land `executable` or `reference`.
+there the failed replay is real news, and `--on-fail reference` (the default) keeps the broken
+skill as a labelled prior; `--on-fail reject` instead lands nothing and leaves the runs retryable.
+`reference` isn't a grade to aim for, but it's the default so a failed replay never leaves you
+empty-handed; a clean run still lands `executable`.
 
 Why code even at `reference` grade, versus a natural-language note: the selectors, URLs and param
 shapes are verbatim-copyable into the agent's next script, individual primitives often still run
@@ -107,7 +108,7 @@ throttled, which reads as your solves failing; 3 to 5 is safe. With N > 1 each s
 | `--verify` | `strict` | replay bar: `strict` = give the recorded answers back (spacing and case folded, so a label typed `AS 26` for a page that prints `AS26` can't sink a working skill), `shape` = non-empty + schema-shaped (live data), `off` = skip |
 | `--verify-rounds` | 2 | repair rounds **within one candidate**: its failures are fed back and it is re-distilled |
 | `--draws` | 2 | **independent** candidates before giving up. A draw can simply come out brittle, and a fresh one often lands where repairing the bad one won't. Stops at the first that verifies |
-| `--on-fail` | `reject` | failed verification: `reject` (runs stay retryable) or `reference` (lands as a labeled prior; never overwrites an existing skill) |
+| `--on-fail` | `reference` | failed verification: `reference` (lands as a labeled prior; never overwrites an existing skill) or `reject` (lands nothing, runs stay retryable) |
  
 ### Manual mode
  
@@ -120,7 +121,7 @@ hand rather than from a spec.
 |---|---|---|
 | `--manifest` | required | `{template, runs:[{dir, admit(bool, REQUIRED), params, verdict, site, output_schema, answer?, credentials?}]}` |
 | `--library` | required | library directory |
-| `--verify` / `--verify-rounds` / `--draws` / `--on-fail` | `off` / 2 / 2 / `reject` | as above. `--verify` is `off` by default here because benchmark sites may need credentials; `--verify-rounds` and `--draws` only take effect once you turn `--verify` on |
+| `--verify` / `--verify-rounds` / `--draws` / `--on-fail` | `off` / 2 / 2 / `reference` | as above. `--verify` is `off` by default here because benchmark sites may need credentials; `--verify-rounds` and `--draws` only take effect once you turn `--verify` on |
  
 ### Solve time
  

@@ -90,7 +90,7 @@ def run():
         # strict: wrong twice -> REJECTED, library stays empty
         replies = iter([BAD, BAD])
         U.llm = lambda *a, **k: next(replies)
-        log = U.evolve([mktrace()], lib, verify="strict")
+        log = U.evolve([mktrace()], lib, verify="strict", on_fail="reject")
         assert log["rejected"] and not log["added"], log
         assert lib.list() == [], "rejected skill must not land"
 
@@ -104,10 +104,10 @@ def run():
 
     with tempfile.TemporaryDirectory() as d:
         lib = Library(d)
-        # shape: a CRASHING skill is caught even in the tolerant mode
+        # shape: a CRASHING skill is caught even in the tolerant mode (reject: nothing lands)
         replies = iter([CRASH, CRASH])
         U.llm = lambda *a, **k: next(replies)
-        log = U.evolve([mktrace()], lib, verify="shape")
+        log = U.evolve([mktrace()], lib, verify="shape", on_fail="reject")
         assert log["rejected"], f"crash must be caught: {log}"
 
     with tempfile.TemporaryDirectory() as d:
@@ -215,7 +215,7 @@ def test_a_fresh_draw_lands_where_repairing_the_bad_one_would_not():
         lib = Library(d)
         tr = [U.Trace("T", "code", answer=["right"], correct=True,
                       meta={"params": {}, "output_schema": {"type": "array"}})]
-        U._refine(tr, lib, verify="strict", rounds=2, draws=1)
+        U._refine(tr, lib, verify="strict", rounds=2, draws=1, on_fail="reject")
         assert not lib.list(), "one draw, all rounds broken -> nothing lands"
 
     calls.clear()

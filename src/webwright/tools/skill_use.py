@@ -20,7 +20,37 @@ from pathlib import Path
 
 from webwright.skill_factory.library import Library
 from webwright.skill_factory.retrieve import retrieve
-from webwright.skill_factory.decide import decide
+from webwright.skill_factory.decide import decide, promote
+
+
+def _load_replays(lib: Library, skill_id: str) -> list:
+    """The skill's past working value-sets (replays.json), used as form hints when filling."""
+    f = lib.path(skill_id).parent / "replays.json"
+    if f.exists():
+        try:
+            return json.loads(f.read_text(encoding="utf-8")) or []
+        except Exception:
+            return []
+    return []
+
+
+def _how_to_reuse(verdict: str, grade: str | None) -> str:
+    """What the agent should DO with the skill — honest about whether it can just be run.
+
+    Grade-blind advice ('copy the source into your script') is what made an agent loop re-emitting
+    a 700-line skill; the instruction must match what the skill actually is.
+    """
+    if verdict == "run":
+        return ("RUN it directly: python <source_path>/skill.py taskspec.json (or pass the params "
+                "as --flags). It is executable and fits this task; only fall back to adapting if "
+                "the answer does not actually address the task.")
+    if grade == "executable":
+        return ("ADAPT: this skill runs standalone, but not as-is for this task. FIRST read the "
+                "ENTIRE source file (cat the whole file — do NOT read only the top), then reuse its "
+                "login/navigation/extraction core and change only the part that differs.")
+    return ("READ it as a PRIOR: it is not proven to run standalone, so do not just execute it. "
+            "FIRST read the ENTIRE source file (cat the whole file — do NOT read only the top), then "
+            "reuse its approach (login/navigation/extraction) and write the final step yourself.")
 
 
 def recommend(task: str, library_root: str) -> dict:
@@ -51,17 +81,31 @@ def recommend(task: str, library_root: str) -> dict:
     if d.verdict != "skip" and d.skill_id not in {c.skill.skill_id for c in cands}:
         return {"verdict": "skip", "skill_id": None,
                 "reason": f"decided skill '{d.skill_id}' is not among the retrieved candidates"}
-    out = {"verdict": d.verdict, "skill_id": d.skill_id, "reason": d.reason}
-    if d.verdict != "skip" and d.skill_id:
-        sk = lib.get(d.skill_id)
-        if sk:
-            out["summary"] = sk.summary
-            out["call"] = sk.signature.get("call", "")
-            out["source_path"] = str(lib.path(sk.skill_id))
-            out["how_to_reuse"] = (
-                "USE: copy the source into your final_script and fill THIS task's params; "
-                "ADAPT: reuse its login/navigation/extraction core, change ONLY the final step."
-            )
+    if d.verdict == "skip" or not d.skill_id:
+        return {"verdict": "skip", "skill_id": None, "reason": d.reason}
+    sk = lib.get(d.skill_id)
+    if not sk:
+        return {"verdict": "skip", "skill_id": None,
+                "reason": f"decided skill '{d.skill_id}' is not in the library"}
+
+    verdict, reason, params = d.verdict, d.reason, None
+    if d.verdict == "use":
+        # decide only judged shape-fit; promote decides run vs adapt (grade + 3a + fillable slots)
+        pr = promote(task, sk, examples=_load_replays(lib, sk.skill_id))
+        verdict = pr["verdict"]
+        if verdict == "run":
+            params = pr["params"]
+        else:
+            reason = pr.get("reason", reason)
+
+    grade = sk.meta.get("grade")
+    out = {"verdict": verdict, "skill_id": sk.skill_id, "reason": reason,
+           "grade": grade, "summary": sk.summary,
+           "call": sk.signature.get("call", ""), "source_path": str(lib.path(sk.skill_id)),
+           "output_schema": sk.meta.get("output_schema"),
+           "how_to_reuse": _how_to_reuse(verdict, grade)}
+    if params is not None:
+        out["params"] = params            # ready-to-run taskspec params for verdict == "run"
     return out
 
 

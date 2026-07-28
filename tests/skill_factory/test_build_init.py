@@ -14,6 +14,7 @@ import yaml
 
 import webwright.skill_factory.build as B
 import webwright.skill_factory.init as I
+from webwright.skill_factory.route import agent_cfg   # config resolution shared by build and route
 
 
 # ---------------------------------------------------------------- build: substitution
@@ -192,17 +193,68 @@ def test_init_drafts_valid_yaml_for_a_multi_param_task(monkeypatch):
         B._fill(spec["task"], {"origin": "SEA", "dest": "JFK", "date": "2026-08-15"})
 
 
-def test_init_leaves_the_values_blank_for_the_user_to_fill(monkeypatch):
-    """The model proposes structure; the ground truth stays the user's."""
+def test_init_falls_back_to_blank_rows_when_nothing_is_proposed(monkeypatch):
+    """When the model proposes no instances (e.g. an account-scoped task), init leaves ____
+    rows for the user rather than inventing plausible-looking wrong values."""
     monkeypatch.setattr(I, "llm_json", _fake_llm({
         "task": "cheapest {product} on Acme", "params": ["product"],
-        "start_url": "https://acme.example", "drifts": True}))
+        "start_url": "https://acme.example", "drifts": True, "instances": []}))
     with tempfile.TemporaryDirectory() as d:
         out = Path(d) / "skill.yaml"
         I.init("cheapest stuff on Acme", str(out), rows=3)
-        spec = yaml.safe_load(out.read_text(encoding="utf-8"))
+        text = out.read_text(encoding="utf-8")
+        spec = yaml.safe_load(text)
         assert len(spec["instances"]) == 3
         assert all(i["product"] == "____" for i in spec["instances"])
+        assert "PROPOSED" not in text            # no review banner when nothing was proposed
+
+
+def test_init_proposes_values_and_marks_them_for_review(monkeypatch):
+    """The model proposes real, varied values; init writes them AND flags them as guesses so
+    the user reviews before paying for a build."""
+    monkeypatch.setattr(I, "llm_json", _fake_llm({
+        "task": "earliest flight from {origin} to {dest} on {date}",
+        "params": ["origin", "dest", "date"], "start_url": "https://flights.example",
+        "drifts": False,
+        "instances": [{"origin": "SEA", "dest": "JFK", "date": "2026-08-15"},
+                      {"origin": "LAX", "dest": "ORD", "date": "2026-09-01"}]}))
+    with tempfile.TemporaryDirectory() as d:
+        out = Path(d) / "skill.yaml"
+        I.init("earliest flight", str(out), rows=2)
+        text = out.read_text(encoding="utf-8")
+        spec = yaml.safe_load(text)
+        assert spec["instances"][0] == {"origin": "SEA", "dest": "JFK", "date": "2026-08-15"}
+        assert "PROPOSED" in text and "REVIEW" in text   # marked as guesses to check
+        # a proposed row must be something build can actually consume
+        B._fill(spec["task"], spec["instances"][1])
+
+
+def test_init_rows_sets_the_count_and_pads_short_proposals(monkeypatch):
+    """--rows is how many instances to propose; if the model returns fewer, the rest are ____."""
+    monkeypatch.setattr(I, "llm_json", _fake_llm({
+        "task": "cheapest {product} on Acme", "params": ["product"],
+        "start_url": "https://acme.example", "drifts": True,
+        "instances": [{"product": "widget"}, {"product": "gadget"}]}))
+    with tempfile.TemporaryDirectory() as d:
+        out = Path(d) / "skill.yaml"
+        I.init("cheapest stuff", str(out), rows=4)
+        spec = yaml.safe_load(out.read_text(encoding="utf-8"))
+        assert len(spec["instances"]) == 4                       # rows honoured
+        assert [i["product"] for i in spec["instances"]] == ["widget", "gadget", "____", "____"]
+
+
+def test_init_ignores_malformed_proposed_instances(monkeypatch):
+    """A non-dict instance, or one naming no known param, is dropped rather than written."""
+    monkeypatch.setattr(I, "llm_json", _fake_llm({
+        "task": "cheapest {product} on Acme", "params": ["product"],
+        "start_url": "https://acme.example", "drifts": True,
+        "instances": ["not-a-dict", {"unknown": "x"}, {"product": "widget"}]}))
+    with tempfile.TemporaryDirectory() as d:
+        out = Path(d) / "skill.yaml"
+        I.init("cheapest stuff", str(out), rows=3)
+        spec = yaml.safe_load(out.read_text(encoding="utf-8"))
+        products = [i["product"] for i in spec["instances"]]
+        assert products == ["widget", "____", "____"]            # only the well-formed one kept
 
 
 @pytest.mark.parametrize("drifts,expected", [(True, "shape"), (False, "strict")])
@@ -284,7 +336,7 @@ def test_a_named_gateway_reaches_the_agent_without_being_asked(monkeypatch):
     gateway used to send the module there and every solve to api.openai.com."""
     monkeypatch.setenv("OPENAI_ENDPOINT", "https://gw.example/api/responses")
     monkeypatch.setenv("OPENAI_MODEL", "some-model")
-    got = B._agent_cfg([])
+    got = agent_cfg([])
     assert "model.openai_endpoint=https://gw.example/api/responses" in got
     assert "model.model_name=some-model" in got
 
@@ -294,14 +346,22 @@ def test_the_cli_defaults_come_along_because_c_replaces_them(monkeypatch):
     drop base.yaml. And they're imported, not copied, so they can't drift."""
     from webwright.run.cli import DEFAULT_CONFIGS
     monkeypatch.setenv("OPENAI_ENDPOINT", "https://gw.example/api/responses")
-    got = B._agent_cfg([])
+    got = agent_cfg([])
     assert got[:len(DEFAULT_CONFIGS)] == list(DEFAULT_CONFIGS)
 
 
-def test_an_explicit_config_is_left_alone(monkeypatch):
-    """You said what you wanted; the env doesn't get a vote."""
+def test_an_explicit_config_with_base_is_left_alone(monkeypatch):
+    """You named a base; the env doesn't get a vote and base isn't doubled."""
     monkeypatch.setenv("OPENAI_ENDPOINT", "https://gw.example/api/responses")
-    assert B._agent_cfg(["base.yaml", "mine.yaml"]) == ["base.yaml", "mine.yaml"]
+    assert agent_cfg(["base.yaml", "mine.yaml"]) == ["base.yaml", "mine.yaml"]
+
+
+def test_bare_model_config_gets_base_prepended():
+    """-c REPLACES defaults, so `-c model.yaml` alone drops base.yaml and the agent has no
+    system/instance template. Re-add base so the common `-c model.yaml` just works."""
+    assert agent_cfg(["model_gateway.yaml"]) == ["base.yaml", "model_gateway.yaml"]
+    assert agent_cfg(["m.yaml", "model.max_output_tokens=16000"]) == \
+        ["base.yaml", "m.yaml", "model.max_output_tokens=16000"]
 
 
 def test_the_env_path_carries_a_usable_output_budget(monkeypatch):
@@ -310,20 +370,20 @@ def test_the_env_path_carries_a_usable_output_budget(monkeypatch):
     it. Forwarding endpoint/model but not the budget — the bug this pins — quietly quartered it."""
     monkeypatch.delenv("SKILL_AGENT_MAX_TOKENS", raising=False)
     monkeypatch.setenv("OPENAI_ENDPOINT", "https://gw.example/api/responses")
-    assert "model.max_output_tokens=16000" in B._agent_cfg([])
+    assert "model.max_output_tokens=16000" in agent_cfg([])
 
 
 def test_the_output_budget_is_overridable(monkeypatch):
     monkeypatch.setenv("OPENAI_ENDPOINT", "https://gw.example/api/responses")
     monkeypatch.setenv("SKILL_AGENT_MAX_TOKENS", "32000")
-    assert "model.max_output_tokens=32000" in B._agent_cfg([])
+    assert "model.max_output_tokens=32000" in agent_cfg([])
 
 
 def test_no_gateway_means_no_opinion(monkeypatch):
     """Nothing named, nothing invented: the CLI's own defaults still apply."""
     monkeypatch.delenv("OPENAI_ENDPOINT", raising=False)
     monkeypatch.delenv("OPENAI_MODEL", raising=False)
-    assert B._agent_cfg([]) == []
+    assert agent_cfg([]) == []
 
 
 def test_the_gateway_actually_reaches_the_solve(monkeypatch):

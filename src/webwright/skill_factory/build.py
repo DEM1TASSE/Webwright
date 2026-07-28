@@ -16,7 +16,7 @@ The spec is a single human-editable file (draft one with `init`):
       verify: strict       # strict | shape | off
       draws: 2             # independent distillation attempts
       verify_rounds: 3     # repair rounds within one attempt
-      on_fail: reject      # reject = executable or nothing | reference = keep a prior
+      on_fail: reference   # reference = keep a readable prior if replay fails | reject = executable-or-nothing
       chunk: 25
 
 Machine-specific settings stay OUT of the spec (so it stays committable): the agent's model
@@ -30,7 +30,6 @@ import argparse
 import json
 import os
 import re
-import subprocess
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -68,17 +67,13 @@ def _already_solved(outputs: Path, core_task: str) -> Path | None:
 
 def _solve(core_task: str, start_url: str, library: Path, outputs: Path,
            task_id: str, cfg: list[str], log_path: Path | None = None) -> int:
-    """Run one agent solve. log_path captures its output (parallel mode); None streams it."""
+    """Run one agent solve. Always launches the agent (build needs a real trajectory to distill),
+    but with the library hint resolved out of the loop. log_path captures output in parallel mode."""
     from .prompt import with_skill_hint
+    from .route import run_webwright
     prompt = with_skill_hint(core_task + " " + _ANSWER_INSTR, task=core_task, library=str(library))
-    cmd = [sys.executable, "-m", "webwright.run.cli", "main", "-t", prompt,
-           "--start-url", start_url, "-o", str(outputs), "--task-id", task_id]
-    for c in cfg:
-        cmd += ["-c", c]
-    if log_path is None:
-        return subprocess.run(cmd).returncode
-    with log_path.open("w", encoding="utf-8") as f:
-        return subprocess.run(cmd, stdout=f, stderr=subprocess.STDOUT).returncode
+    return run_webwright(prompt, start_url=start_url, cfg=cfg, outputs=str(outputs),
+                         task_id=task_id, log_path=log_path)
 
 
 def _pick(cli, spec_val, default):
@@ -87,32 +82,6 @@ def _pick(cli, spec_val, default):
     if spec_val is not None:
         return spec_val
     return default
-
-
-def _agent_cfg(cfg: list[str]) -> list[str]:
-    """Point the AGENT at the same backend the env vars name.
-
-    The agent's model comes from a yaml and never reads OPENAI_*, so exporting a gateway and
-    running `build` used to send the module to your gateway and every solve to api.openai.com —
-    401s after you'd already said yes. An explicit -c is the whole answer when you pass one.
-    Otherwise, if you named a gateway, say it on the command line for you: the CLI takes inline
-    `model.key=value` specs, so nothing has to be written to a file. They replace the CLI's
-    defaults rather than adding to them, hence DEFAULT_CONFIGS (imported, not copied) coming
-    along — and max_output_tokens with it, because this path stands in for a hand-written model
-    yaml (examples/model_gateway.example.yaml sets 16000) and base.yaml's 4000 truncates the
-    agent mid-script when it reuses a large skill: the write never completes and the run loops.
-    Override with SKILL_AGENT_MAX_TOKENS.
-    """
-    if cfg:
-        return cfg
-    over = [f"model.{key}={val}" for key, val in
-            (("openai_endpoint", os.environ.get("OPENAI_ENDPOINT")),
-             ("model_name", os.environ.get("OPENAI_MODEL"))) if val]
-    if not over:
-        return cfg
-    over.append(f"model.max_output_tokens={os.environ.get('SKILL_AGENT_MAX_TOKENS', '16000')}")
-    from webwright.run.cli import DEFAULT_CONFIGS
-    return list(DEFAULT_CONFIGS) + over
 
 
 def build(spec_path: str, library: str, cfg: list[str], *, verify=None, verify_rounds=None,
@@ -128,7 +97,7 @@ def build(spec_path: str, library: str, cfg: list[str], *, verify=None, verify_r
 
     verify = _pick(verify, policy.get("verify"), "strict")
     verify_rounds = _pick(verify_rounds, policy.get("verify_rounds"), 2)
-    on_fail = _pick(on_fail, policy.get("on_fail"), "reject")
+    on_fail = _pick(on_fail, policy.get("on_fail"), "reference")
     chunk = _pick(chunk, policy.get("chunk"), 25)
     draws = _pick(draws, policy.get("draws"), 2)
 
@@ -151,7 +120,8 @@ def build(spec_path: str, library: str, cfg: list[str], *, verify=None, verify_r
     to_solve = [c for c in concrete if not _already_solved(outputs, c[0])]
 
     if to_solve:
-        cfg = _agent_cfg(cfg)
+        from .route import agent_cfg
+        cfg = agent_cfg(cfg)
         print(f"agent cfg: {' '.join(cfg) if cfg else 'webwright defaults (api.openai.com)'}\n")
 
     if dry_run:

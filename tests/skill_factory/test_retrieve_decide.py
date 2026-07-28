@@ -43,24 +43,40 @@ def run():
             T.decide = lambda task, cands: Decision("use", "reviews", "hallucinated: not a candidate")
             r = T.recommend("top best-selling product", d)
             assert r["verdict"] == "skip" and r["skill_id"] is None, r
+            # a valid candidate is honored; with no grade it can't be run, so 'use' is promoted
+            # to 'adapt' (not 'run') — and this path takes NO LLM call (promote returns on grade)
             T.decide = lambda task, cands: Decision("use", "bestsellers", "in candidates")
             r2 = T.recommend("top best-selling product", d)
-            assert r2["verdict"] == "use" and r2["skill_id"] == "bestsellers", r2
+            assert r2["verdict"] == "adapt" and r2["skill_id"] == "bestsellers", r2
         finally:
             T.retrieve, T.decide = orig_retrieve, orig_decide
 
-    # with_skill_hint must bake an ABSOLUTE library path into the hint (the command runs in
-    # the agent's workspace, where a relative path would point at nothing)
+    # with_skill_hint resolves the lookup OUT of the agent loop and injects the RESULT, not a
+    # command. Mock recommend to pin the three behaviours.
+    import os
     from webwright.skill_factory.prompt import with_skill_hint
-    hinted = with_skill_hint("solve it", task="t", library="./some_rel_lib")
-    import os, shlex
-    assert f'--library {os.path.abspath("./some_rel_lib")}' in hinted, hinted[:300]
+    import webwright.tools.skill_use as SU
+    orig = SU.recommend
+    try:
+        # a useful skill -> its id + source + guidance are prepended, before the task
+        SU.recommend = lambda task, lib: {"verdict": "adapt", "skill_id": "flt",
+                                          "source_path": "/lib/flt/skill.py",
+                                          "how_to_reuse": "ADAPT: reuse the core"}
+        h = with_skill_hint("solve it", task="t", library="./some_rel_lib")
+        assert "flt" in h and "/lib/flt/skill.py" in h and "ADAPT: reuse the core" in h
+        assert h.rstrip().endswith("solve it"), "task must come after the hint"
 
-    # ...and shell-quote the task: $VAR / $(...) / backticks expand in bash even inside
-    # double quotes, so a task containing them must land single-quoted in the hint
-    evil = 'count $(whoami) commits in `pwd` for $USER'
-    hinted2 = with_skill_hint("solve it", task=evil, library="./some_rel_lib")
-    assert f"--task {shlex.quote(evil)}" in hinted2, hinted2[:300]
+        # skip -> nothing prepended, prompt unchanged (no tokens, no steps)
+        SU.recommend = lambda task, lib: {"verdict": "skip", "skill_id": None}
+        assert with_skill_hint("solve it", task="t", library="./x") == "solve it"
+
+        # fail-open: any error in the lookup must not block the solve
+        def boom(task, lib):
+            raise RuntimeError("gateway 500")
+        SU.recommend = boom
+        assert with_skill_hint("solve it", task="t", library="./x") == "solve it"
+    finally:
+        SU.recommend = orig
 
     # recommend on a MISSING or EMPTY library -> loud skip with a warning (and no mkdir side effect)
     import webwright.tools.skill_use as T2

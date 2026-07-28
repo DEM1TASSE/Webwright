@@ -1,10 +1,12 @@
-"""python -m webwright.skill_factory init "<one-line need>" — draft a skill spec you then fill in.
+"""python -m webwright.skill_factory init "<one-line need>" — draft a skill spec to review.
 
-One LLM call turns a natural-language need into a skill.yaml SKELETON: a task template with
-{parameter} holes, a *guessed* start_url, and empty instance rows for YOU to fill with real
-values. It deliberately does NOT invent the values — those are the ground truth you own, and a
-wrong guessed value would quietly train the skill on the wrong answer. Review the file (the
-guesses are marked), fill the rows, then run `build skill.yaml`.
+One LLM call turns a natural-language need into a skill.yaml DRAFT: a task template with
+{parameter} holes, a *guessed* start_url, and a few PROPOSED instances — real, varied values to
+fill the template. The proposals are a starting point, not ground truth: they are marked as
+guesses, and a wrong one would quietly train the skill on the wrong answer, so REVIEW them
+(replace, add, or delete rows) before running `build skill.yaml`. `--rows` sets how many
+instances to propose. If the task is account-scoped (values private to your login), the model is
+told to leave the rows blank rather than invent plausible-looking wrong ones.
 """
 from __future__ import annotations
 
@@ -36,14 +38,35 @@ _SYS = (
     "'today's top seller', anything ranked by a live number → drifts. Schedules, specs, IDs, "
     "counts of past things, published text → does not.\n"
     "Return \"drifts\": true|false, and \"drift_reason\": \"<one clause: what would move, or why "
-    "nothing would>\"."
+    "nothing would>\".\n"
+    "Finally, PROPOSE the requested number of concrete instances to fill the template — return "
+    "\"instances\": [{\"<param>\": \"<value>\", ...}, ...], one object per instance, every param "
+    "present in each. These are a STARTING POINT the user will review, so make them worth "
+    "reviewing: (a) REAL and likely to actually exist on that site right now — a real product, a "
+    "real airport code, a real repo — not a placeholder like 'item1'; (b) VARIED — every "
+    "instance should differ on every param, spanning easy and less-easy cases, so the distilled "
+    "skill is exercised across the range, not on one lucky value. If the task is account-scoped "
+    "(the values are private to a user's login — their order numbers, their repos) and you cannot "
+    "name real ones, return \"instances\": [] rather than inventing plausible-looking wrong values."
 )
 
 
+def _row(params: list[str], values: dict | None) -> str:
+    values = values or {}
+    cols = ", ".join(f"{p}: \"{values.get(p, '____')}\"" for p in params)
+    return f"  - {{{cols}}}"
+
+
 def _yaml_skeleton(task: str, params: list[str], start_url: str, rows: int,
-                   drifts: bool = False, reason: str = "") -> str:
-    cols = ", ".join(f"{p}: \"____\"" for p in params)
-    instance_lines = "\n".join(f"  - {{{cols}}}" for _ in range(rows))
+                   drifts: bool = False, reason: str = "",
+                   instances: list[dict] | None = None) -> str:
+    # Proposed values are a reviewed starting point, not ground truth: render what the model
+    # proposed, falling back to ____ for any missing param or any row it didn't propose. When
+    # nothing was proposed (e.g. account-scoped), every cell is ____ — the old blank-form behaviour.
+    instances = instances or []
+    proposed = bool(instances)
+    row_vals = (instances + [None] * rows)[:rows] if instances else [None] * rows
+    instance_lines = "\n".join(_row(params, v) for v in row_vals)
     # strict compares the replay against the recorded answer, so it is only fair when the
     # answer holds still. On a drifting answer (a price, stock, a ranking) strict rejects a
     # working skill for doing its job — pick shape up front rather than let the user find out
@@ -53,19 +76,31 @@ def _yaml_skeleton(task: str, params: list[str], start_url: str, rows: int,
            f"  # strict would reject a working skill for reporting today's truth\n  "
            if drifts else
            f"# this answer should hold still ({reason}), so replay demands the same answer back\n  ")
+    header = (
+        "# Draft skill spec — the instance values below are PROPOSED guesses. REVIEW them:\n"
+        "# replace any that are wrong or don't exist, then: build skill.yaml\n"
+        if proposed else
+        "# Draft skill spec — fill the ____ values (your ground truth), then: build skill.yaml\n"
+    )
+    inst_comment = (
+        "instances:            # PROPOSED — real+varied guesses to review, edit, add or delete\n"
+        if proposed else
+        "instances:            # give a few real instances (3+ makes a verifiable skill)\n"
+    )
     return (
-        f"# Draft skill spec — fill the ____ values (your ground truth), then: build skill.yaml\n"
+        f"{header}"
         f"# The {{holes}} in `task` are the parameters; each is a column below.\n\n"
         f"task: {task}\n"
         f"start_url: {start_url}    # guessed — check it opens the right page\n\n"
-        f"instances:            # give a few real instances (3+ makes a verifiable skill)\n"
+        f"{inst_comment}"
         f"{instance_lines}\n\n"
         f"build:                # optional policy — CLI flags override these\n"
         f"  {why}"
         f"verify: {verify}     # strict (reproduce answers) | shape (drifting data) | off\n"
         f"  draws: 2            # independent distillation attempts — a draw can come out brittle\n"
         f"  verify_rounds: 2    # repair rounds within one attempt\n"
-        f"  on_fail: reject     # reject = executable or nothing | reference = keep it as a prior\n"
+        f"  on_fail: reference  # if replay fails: reference = keep a readable prior (never empty-handed,\n"
+        f"                      # the agent can still adapt it) | reject = executable or nothing (stricter)\n"
         f"  chunk: 25\n"
     )
 
@@ -74,7 +109,7 @@ def init(need: str, out_path: str, rows: int = 3) -> int:
     out = Path(out_path)
     if out.exists():
         raise SystemExit(f"init: {out} already exists — remove it or pass -o another path.")
-    data = llm_json(_SYS, f"Task need: {need}")
+    data = llm_json(_SYS, f"Task need: {need}\nPropose {rows} instances.")
     task = (data.get("task") or "").strip()
     params = [str(p) for p in (data.get("params") or [])]
     start_url = (data.get("start_url") or "").strip()
@@ -95,9 +130,23 @@ def init(need: str, out_path: str, rows: int = 3) -> int:
     drifts = bool(data.get("drifts"))
     reason = (data.get("drift_reason") or "").strip().rstrip(".") or (
         "it changes on its own" if drifts else "nothing in it moves on its own")
-    out.write_text(_yaml_skeleton(task, params, start_url, rows, drifts, reason), encoding="utf-8")
-    print(f"wrote {out}\n\n  task:      {task}\n  params:    {params}\n  start_url: {start_url}\n  verify:    {'shape (this answer drifts)' if drifts else 'strict (this answer should hold still)'}\n\n"
-          f"Next: fill the ____ values in {out}, then\n"
+    # keep only well-formed instances: a dict naming known params, at least one value present.
+    instances = []
+    for inst in (data.get("instances") or []):
+        if isinstance(inst, dict):
+            row = {p: str(inst[p]) for p in params if inst.get(p) not in (None, "")}
+            if row:
+                instances.append(row)
+    out.write_text(_yaml_skeleton(task, params, start_url, rows, drifts, reason, instances),
+                   encoding="utf-8")
+    proposed = bool(instances)
+    next_line = (f"Next: REVIEW the proposed values in {out} (they are guesses — replace any that "
+                 f"are wrong), then\n" if proposed else
+                 f"Next: fill the ____ values in {out}, then\n")
+    print(f"wrote {out}\n\n  task:      {task}\n  params:    {params}\n  start_url: {start_url}\n"
+          f"  instances: {len(instances)} proposed (review before build)\n"
+          f"  verify:    {'shape (this answer drifts)' if drifts else 'strict (this answer should hold still)'}\n\n"
+          f"{next_line}"
           f"  python -m webwright.skill_factory build {out} --library ./library -c your_model.yaml")
     return 0
 
@@ -107,7 +156,8 @@ def main(argv=None) -> int:
                                 description="Draft a skill.yaml skeleton from a one-line need.")
     p.add_argument("need", help="One-line description of the repeatable task you want a skill for.")
     p.add_argument("-o", "--out", default="skill.yaml", help="Where to write the spec.")
-    p.add_argument("--rows", type=int, default=3, help="Empty instance rows to leave (default 3).")
+    p.add_argument("--rows", type=int, default=3,
+                   help="How many instances to propose (default 3). Edit them after.")
     a = p.parse_args(argv)
     return init(a.need, a.out, rows=a.rows)
 

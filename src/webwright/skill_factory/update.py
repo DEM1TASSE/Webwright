@@ -16,6 +16,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .entry_shim import prepend_cli_shim
 from .library import Library, Skill
 from .llm import llm
 
@@ -185,7 +186,7 @@ _REFINE_INCREMENTAL = (
 
 
 def _refine(traces: list[Trace], library: Library, verify: str = "off",
-            rounds: int = 2, on_fail: str = "reject", draws: int = 1) -> list[str]:
+            rounds: int = 2, on_fail: str = "reference", draws: int = 1) -> list[str]:
     """Batch distillation: align N gate-passed solves -> parameterize + primitives.
     Incremental: if a skill for the same template already exists, improve/widen it on top of the
     existing skill (rather than rewriting from the raw solves)."""
@@ -195,6 +196,11 @@ def _refine(traces: list[Trace], library: Library, verify: str = "off",
     schema = traces[0].meta.get("output_schema")
     sid = _slug(template)
     existing = library.get(sid)   # skill already exists? -> incremental evolution
+    # Parameter names for the CLI entry shim, taken from the first solve's params — the same
+    # source the signature is built from below. `code` stays the RAW model output throughout the
+    # distill/repair loop (so LLM feedback never sees the shim); the shim is applied only where
+    # the code is actually executed (replay) or persisted, both of which happen with these names.
+    param_names = list((traces[0].meta.get("params") or {}).keys())
 
     blocks = [f"## Template\n{template}\n\n## Required output_schema for retrieved_data\n{json.dumps(schema)}\n"]
     if existing and existing.code:
@@ -242,7 +248,8 @@ def _refine(traces: list[Trace], library: Library, verify: str = "off",
             for attempt in range(1, max(rounds, 1) + 1):
                 print(f"    verify ({verify}) round {attempt}/{max(rounds, 1)}{tag} — "
                       f"{len(replay_set)} instance(s), no model:", flush=True)
-                fails = _replay(code, replay_set, strict=(verify == "strict"))
+                fails = _replay(prepend_cli_shim(code, param_names), replay_set,
+                                strict=(verify == "strict"))
                 if not fails:
                     verified = True
                     break
@@ -295,7 +302,7 @@ def _refine(traces: list[Trace], library: Library, verify: str = "off",
     meta["verified"] = verified is True
     meta["grade"] = ("unverified" if verified is None else
                      "executable" if verified else "reference")
-    library.add(Skill(skill_id=sid, code=code, meta=meta))
+    library.add(Skill(skill_id=sid, code=prepend_cli_shim(code, param_names), meta=meta))
     if verify != "off":
         _save_examples(library, sid, traces, _load_examples(library, sid))
     return [sid]
@@ -325,7 +332,7 @@ def _memorized_answer(trace: "Trace") -> bool:
 
 
 def evolve(traces: list[Trace], library: Library, verify: str = "off",
-           rounds: int = 2, on_fail: str = "reject", draws: int = 1) -> dict:
+           rounds: int = 2, on_fail: str = "reference", draws: int = 1) -> dict:
     """Unified update: evolve the EXISTING library, deciding per trace's usage (use/adapt/skip) how
     to change it. This is the core of a continuously-growing library — not rebuilt from scratch each
     time, but grown from v_{n-1} into v_n.
@@ -429,10 +436,10 @@ def main(argv=None) -> int:
                         "bad one won't. Stops at the first that verifies.")
     p.add_argument("--verify-rounds", type=int, default=2,
                    help="Total build attempts (first + repairs) before giving up. Default 2.")
-    p.add_argument("--on-fail", default="reject", choices=["reject", "reference"],
-                   help="Failed verification: reject (default) or land as grade=reference — "
-                        "readable prior for the agent, standalone NOT trusted. Never overwrites "
-                        "an existing skill.")
+    p.add_argument("--on-fail", default="reference", choices=["reject", "reference"],
+                   help="Failed verification: reference (default) lands it as grade=reference — a "
+                        "readable prior for the agent, standalone NOT trusted; reject keeps nothing. "
+                        "Never overwrites an existing skill.")
     a = p.parse_args(argv)
     manifest = json.loads(Path(a.manifest).read_text(encoding="utf-8"))
     traces = traces_from_manifest(manifest)

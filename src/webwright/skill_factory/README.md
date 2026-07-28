@@ -35,6 +35,8 @@ The system adds two integration points to WebWright without changing the agent l
 
 At solve time, the agent queries the library once and receives one of three recommendations: `use`, `adapt`, or `skip`. This recommendation expresses how the agent intends to use the retrieved skill. The agent then receives the skill’s source code and can reuse or modify it as needed while solving the task.
 
+You can also route a task *without* the agent in the loop. `route` (and the `recommend` call under it) searches the library, picks a skill, and returns `run`, `adapt`, or `skip`. On `run` — an executable skill that covers the task and whose parameters all fill — it executes the skill directly, no model, and only falls back to the agent if that run fails or comes back the wrong shape. On `adapt` it hands the task to the agent with the skill as a prior; on `skip` the agent starts fresh. So a match you can trust runs for free, and anything short of that still gets solved.
+
 After solving, the library grows from the runs you already have. Solves of the same task template are aligned: what is identical becomes the skeleton, and what differs is lifted into parameters, giving one parameterized program per template. The expensive part, driving the site itself, is factored into named primitives (log in, run a search, read the results table), so a later task on the same site can call them even when its final step differs.
 
 Two gates decide what lands: before distillation, only correct solves become material; after it, the candidate must replay its own answers standalone, with no model. When a template already exists, its skill is widened in place, and every answer it previously reproduced is replayed alongside, so a later batch can't break what already worked.
@@ -109,10 +111,10 @@ No model, no API key, about 40 seconds:
 ```bash
 cd src/webwright/skill_factory/examples
 ./quickstart.sh                            # SEA -> DEN, date = today + 30 days
-./quickstart.sh demo LAX ORD 2026-09-01    # ...on your own route (codes + YYYY-MM-DD)
+./quickstart.sh run LAX ORD 2026-09-01     # ...on your own route (codes + YYYY-MM-DD)
 ```
 
-`demo` is the default mode. If no route is provided, it searches SEA→DEN thirty days from today and prints the date it selected.
+`run` is the default mode. If no route is provided, it searches SEA→DEN thirty days from today and prints the date it selected.
 
 It also prints the ten fixed steps it executed and the location of the saved screenshots. The steps are encoded in the skill, not chosen by a model. The run directory contains the full trajectory. Each run uses a fresh temporary directory by default. Set `QUICKSTART_WORKDIR=./run1` to keep the results.
 
@@ -123,9 +125,10 @@ It also prints the ten fixed steps it executed and the location of the saved scr
 > only on Linux/Windows. That fragility is the point of the research, not a bug in your setup: a
 > replay-verified skill reproduces its *training* run, which is not the same as generalizing.
 >
-> When the standalone run won't work, the agent still can: `./quickstart.sh ask` and `solve` carry
-> the skill as a prior the model reads and adapts around the difference. Keep that solve and
-> `learn` folds it back in, so the next standalone run has your platform covered too.
+> When the standalone run won't work, the agent still can: `./quickstart.sh route` shows the call
+> it would make, and `solve` carries the skill to the agent as a prior it reads and adapts around
+> the difference. Keep that solve and `learn` folds it back in, so the next standalone run has your
+> platform covered too.
 
 **What that just saved.**
 
@@ -148,13 +151,13 @@ The last column runs the learned skill directly. **Once the skill exists, every 
 The same task family, now with the agent in the loop. Needs an API key:
 
 ```bash
-./quickstart.sh ask     # ~10 s, one LLM call: "can the library help here?" -> use / adapt / skip
-./quickstart.sh solve   # ~5 min, a full agent solve of an unseen route, reusing the skill
+./quickstart.sh route   # ~10 s, one LLM call: route a task the skill can't run as-is -> run / adapt / skip
+./quickstart.sh solve   # ~5 min, route decides, then hands the task to the agent to adapt the skill
 ```
 
-* `demo` runs the skill directly.
-* `ask` queries the library once and prints the returned JSON: `verdict`, `skill_id`, `source_path`, and `how_to_reuse`. It decides whether to use a skill, which one to use, and how to use it.
-* `solve` runs the agent on the task using the retrieved skill.
+* `run` runs the checked-in skill directly, no model.
+* `route` judges one task — searches the library, picks a skill, decides `run` / `adapt` / `skip` — and prints the decision as JSON: `verdict`, `skill_id`, `source_path`, and `how_to_reuse`. Here the task asks for the *shortest-duration* nonstop, which the skill (it finds the *earliest*) can't run as-is, so `route` returns `adapt`. Give it a task the skill fits and it returns `run`, and can execute the skill directly with no agent at all.
+* `solve` carries that decision out: with a start URL, `route` launches the agent to adapt the skill — or, for a task the skill fits, runs the skill directly and only falls back to the agent if that run fails.
 
 ---
 
@@ -206,7 +209,7 @@ build:                # every key here is also a CLI flag; the flag wins
   verify: shape
   draws: 2            # fresh attempts: bin the candidate, distil a new one from the same runs
   verify_rounds: 2    # repair rounds inside one attempt: feed it its failures, try again
-  on_fail: reject     # reject = executable or nothing | reference = keep it as a prior
+  on_fail: reference  # reference = keep a readable prior if replay fails | reject = executable or nothing
   chunk: 25           # runs per grouping call
 ```
 
@@ -303,7 +306,7 @@ If repeated draws fail, inspect the failure:
 
 
 
-If you do not need a standalone executable skill, use `--on-fail reference`. The skill is kept with `grade: reference`, so the agent can reuse its selectors, URLs, and parameter structure, but it is not trusted to run independently. It is a one-way door for that template: the skill now exists and its runs are ledgered, so a later `learn` skips those runs and won't replace it. To go again for an `executable` one, delete the skill *and* its runs' entries from `library/.learned.json` — dropping the skill alone leaves the runs marked learned, and `learn` will find nothing to do.
+By default (`on_fail: reference`), a candidate that never passes replay still lands, kept with `grade: reference`: the agent can reuse its selectors, URLs, and parameter structure, but it is not trusted to run independently. Strict replay is slow, a little brittle, and a bit of a lottery, so the default leaves you with a readable prior the agent can adapt rather than nothing. Pass `--on-fail reject` for the stricter executable-or-nothing bar: a failed candidate lands nothing and its runs stay retryable. Landing a `reference` skill is a one-way door for that template: the skill now exists and its runs are ledgered, so a later `learn` skips those runs and won't replace it. To go again for an `executable` one, delete the skill *and* its runs' entries from `library/.learned.json` — dropping the skill alone leaves the runs marked learned, and `learn` will find nothing to do.
 
 
 

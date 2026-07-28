@@ -1,3 +1,43 @@
+# --- CLI entry shim (auto-added by skill_factory; do not edit) -------------------------------
+# Lets this skill run two ways with IDENTICAL results:
+#   python skill.py taskspec.json                       (what replay/programs use)
+#   python skill.py --origin-city ...   (convenience for humans)
+def _skillfactory_cli():
+    import sys, json, argparse, tempfile
+    _PARAMS = ['origin_city', 'origin_code', 'destination_city', 'destination_code', 'date']
+    argv = sys.argv[1:]
+    # A single positional, non-flag argument is a taskspec.json path -> original behaviour,
+    # sys.argv left untouched. This is the path replay uses, so it must not change.
+    if len(argv) == 1 and not argv[0].startswith("-"):
+        return
+    ap = argparse.ArgumentParser(
+        prog="skill.py",
+        description="Run this skill directly. Pass --flags, or a taskspec.json path.")
+    for _p in _PARAMS:
+        ap.add_argument("--" + _p.replace("_", "-"), dest=_p, default=None)
+    ap.add_argument("taskspec", nargs="?", help="path to a taskspec.json (instead of --flags)")
+    a = ap.parse_args(argv)
+    # A taskspec path given alongside/without flags -> honour it, stay untouched.
+    if a.taskspec and not any(getattr(a, _p) is not None for _p in _PARAMS):
+        sys.argv = [sys.argv[0], a.taskspec]
+        return
+    params = {_p: getattr(a, _p) for _p in _PARAMS if getattr(a, _p) is not None}
+    if not params:
+        ap.print_help()
+        ex = " ".join("--" + _p.replace("_", "-") + " <" + _p + ">" for _p in _PARAMS)
+        print("\n  example:  python skill.py " + ex)
+        print("  or:       python skill.py taskspec.json  "
+              '(taskspec = {"params": {' + ", ".join('"' + _p + '": ...' for _p in _PARAMS)
+              + "}})")
+        raise SystemExit(0)
+    spec = {"params": params}
+    f = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8")
+    json.dump(spec, f)
+    f.close()
+    sys.argv = [sys.argv[0], f.name]
+_skillfactory_cli()
+# --- end CLI entry shim ---------------------------------------------------------------------
+
 import asyncio
 import base64
 import json
@@ -657,22 +697,26 @@ async def retrieve_earliest_nonstop_flight(page, params):
 
     next_step("apply nonstop filter")
     await apply_nonstop_filter(page)
-    body = await wait_for_results(page, timeout_ms=20000)
-    log("filtered body snippet: " + body[:6000])
+    filtered_body = await wait_for_results(page, timeout_ms=20000)
+    log("filtered body snippet: " + filtered_body[:6000])
     await snap(page, "nonstop_applied")
 
     next_step("sort by departure time when available")
     await sort_by_departure_time(page)
-    body = await wait_for_results(page, timeout_ms=15000)
-    log("post-sort body snippet: " + body[:6000])
+    sorted_body = await wait_for_results(page, timeout_ms=15000)
+    log("post-sort body snippet: " + sorted_body[:6000])
     await snap(page, "sorted")
 
     next_step("parse visible nonstop rows and choose earliest")
-    rows = parse_nonstop_candidates_from_text(body, params["origin_code"], params["destination_code"])
-    if not rows:
-        # fallback using broader body text after collecting fresh content
-        more = normalize_space(await page.locator("body").inner_text())
-        rows = parse_nonstop_candidates_from_text(more, params["origin_code"], params["destination_code"])
+    # Sorting on-page is optional (we sort the parsed rows ourselves) and sometimes collapses the
+    # results view, so parse whichever body actually has rows: post-sort, then the filtered body
+    # (kept before the sort), then a fresh read. The first that yields rows wins.
+    rows = []
+    for src in (sorted_body, filtered_body,
+                normalize_space(await page.locator("body").inner_text())):
+        rows = parse_nonstop_candidates_from_text(src, params["origin_code"], params["destination_code"])
+        if rows:
+            break
     if not rows:
         raise RuntimeError("Could not parse any nonstop rows from results text")
 
