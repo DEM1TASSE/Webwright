@@ -126,7 +126,7 @@ It prints the ten fixed steps it executed and the location of the saved screensh
 
 ### 2. Bring the agent in
 
-Now a task the skill *doesn't* quite fit — which is exactly when the agent comes into the loop. We ask for the nonstop with the **shortest flight duration**, while the checked-in skill finds the **earliest departure**. That's nearly the same job — one different filter over the same results table — so the skill is a strong prior, but it can't be run as-is. `route` sees that, decides `adapt`, and hands the task to the agent with the skill to adapt around the difference. One command decides and then acts. Needs an API key:
+Now consider you have another task the skill almost fits but can't be directedly used: finding the nonstop flight with the **shortest duration**, while the existing skill finds the **earliest departure**. The workflow is nearly identical, with only the final filter changed, so `route` selects the skill as a prior and returns `adapt`.
 
 ```bash
 python -m webwright.skill_factory route \
@@ -135,31 +135,30 @@ python -m webwright.skill_factory route \
     --start-url https://www.google.com/flights -c <your_model.yaml>
 ```
 
-`route` searches the library, picks a skill, and decides `run` / `adapt` / `skip`, printing the decision (verdict, skill, why) before it acts. Then it carries the decision out: on `run` it executes the skill directly with no model; otherwise it launches the agent to adapt the skill, and a direct `run` that fails falls back to the agent too. Here the shortest-duration task can't run the earliest-departure skill as-is, so `route` returns `adapt`. Give it a task the skill fits and you'd see `run`, executed directly.
+`route` searches the library, chooses `run`, `adapt`, or `skip`, prints its decision, and acts on it. `run` executes the skill directly without a model; `adapt` gives the skill to the agent as a prior; `skip` starts from scratch. If a direct run fails, it falls back to the agent.
 
-Drop `--start-url` to inspect only: `route` prints the decision (and still runs a directly-runnable skill), but doesn't launch the agent. That's the cheap way to see the choice before spending a solve.
+Without `--start-url`, `route` only inspects the task and prints the decision, unless the skill can be run directly.
 
-**What that just saved.** Reusing the skill helps even when the agent has to adapt it — and it buys steadiness, not just speed. Five solves **with** the library (`route` → `adapt`) against five **without** it (empty library → the agent from scratch), same shortest-duration `SEA → DEN` task, `gpt-5.4`:
+**What reuse saved.** We compared five runs with the library against five runs from scratch on the same shortest-duration task using `gpt-5.4`:
 
-|                     | from scratch<br><sub>shortest-duration</sub> | with the library<br><sub>agent adapts the skill</sub> | skill standalone<br><sub>earliest nonstop departure</sub> |
-|---------------------|:---:|:---:|:---:|
-| steps — mean of 5   | 26.0 | **21.8** | **10**, fixed |
-| steps — worst of 5  | 39   | **29**   | — |
-| final attempts      | 5.8  | **4.6**  | — |
-| correct             | 5/5  | 5/5      | ✓ |
+|                  | from scratch | with skill adaptation | skill standalone<br><sub>original skill; same workflow, different final filter</sub> |
+| ---------------- | :----------: | :-------------------: | :----------------------------------------------------------------------------------: |
+| mean steps       |     26.0     |        **21.8**       |                                     **10**, fixed                                    |
+| worst-case steps |      39      |         **29**        |                                           —                                          |
+| final attempts   |      5.8     |        **4.6**        |                                           —                                          |
+| correct          |     100%     |          100%         |                                         100%                                         |
 
-Reuse lowers the mean (21.8 vs 26), the spread (std 6.6 vs 8.2), and the worst case (29 vs 39) — even the *unluckiest* run with the library beats the unluckiest without it, so this isn't a lucky draw. The skill hands the agent an already-debugged path instead of leaving it to wander and retry. (The `self_reflection` evidence gate is skill-independent noise that keeps the absolute step counts high; it hides how large the saving is, not its direction.)
-
-The last column is the skill running standalone on its *own* task — the **earliest nonstop departure** from §1, not the shortest-duration one the agent solved. Different question, nearly identical work: one filter changed over the same results table. So it's a fair floor for the same machinery — once a skill fits your task exactly, every repeat runs in a fixed handful of steps with no model at all.
+Reuse reduced the mean, variance, and worst-case cost because the agent started from an already-debugged workflow instead of rediscovering it. When a skill matches exactly, it can run directly in a fixed number of steps with no model at all.
 
 ---
 
 ### 3. Build your own skill
 
-Everything below requires an API key. The normal path is `init` → `build`: describe the task, review the draft, and let `build` solve a few instances and learn a skill from them. If you *already* have finished Webwright runs on disk, `learn` is the shortcut — skip to 3.2.
+Everything below requires an API key. The standard workflow is `init` → `build`: describe a task, review the generated spec, and let `build` solve several instances and distill a skill. If you already have completed Webwright runs, skip to §3.2 and use `learn`.
 
-**3.1 — You have a task.** Describe it; `init` drafts a spec you review, then `build` solves the
-instances and learns a verified skill.
+**3.1 — You onlly have a task.**
+
+`init` drafts a spec; after reviewing it, run `build` to solve the instances and learn a verified skill.
 
 ```bash
 python -m webwright.skill_factory init "the earliest nonstop flight from <origin> to <destination> on <date>"
@@ -185,7 +184,7 @@ build:                # every key here is also a CLI flag; the flag wins
   chunk: 25           # runs per grouping call
 ```
 
-`init` proposes the task template, site, verification mode, and a few real, varied instance values to start from. Review them — replace any that are wrong, since a bad value quietly trains the skill on the wrong answer — then run `build`. (For an account-scoped task, where the values are private to your login, `init` leaves the rows blank rather than invent them.)
+Review the generated task, site, verification mode, and instances before building. Incorrect instance values will train the skill on the wrong task. For account-scoped tasks, `init` leaves private values blank.
 
 ```bash
 python -m webwright.skill_factory build skill.yaml --library ./library --jobs 3
@@ -198,111 +197,55 @@ python -m webwright.skill_factory build skill.yaml --library ./library --jobs 3
 python -m webwright.skill_factory build flights.skill.yaml --library ./library --dry-run
 ```
 
-`build` runs `solve` for each instance, then calls `learn`. It prints the planned tasks and asks before starting. `--dry-run` prints the plan and exits. An instance that already has an answer is not solved again. `--jobs N` sets the number of parallel solves and defaults to 1. The practical limit is the target site. Too many browsers from one IP may trigger throttling. Start with 3 to 5.
+`build` solves each unfinished instance and then calls `learn`. It shows the planned tasks before starting. `--dry-run` only prints the plan, while `--jobs N` controls parallel solves. Start with 3–5 jobs to avoid site throttling.
 
-> For changing answers such as prices or rankings, shape verification can detect a broken skill but cannot verify that the answer is correct. Provide `--golds` or use a judge, as described in Limitations.
+For changing answers such as prices or rankings, shape verification only checks output structure. Use `--golds` or a judge to verify correctness.
 
-<details>
-<summary><b>The same loop by hand, without the wrapper</b> — what <code>build</code> is doing for you</summary>
+**3.2 — You already have runs.**
 
-<br>
-
-```bash
-cd src/webwright/skill_factory    # commands below run from the module directory
-
-# 1. SOLVE a few instances of the same task type (library is empty — these run from scratch)
-TASK='What is the earliest nonstop flight from %s to %s on 2026-08-15 (one-way)? Return the answer as a list: [flight_number, airline, departure_time], e.g. ["AS 336", "Alaska", "6:00 AM"].'
-while IFS='|' read -r FROM TO; do
-  examples/solve_with_library.sh \
-    "$(printf "$TASK" "$FROM" "$TO")" \
-    https://www.google.com/flights "$PWD/library" -o outputs -c base.yaml -c model_openai.yaml
-done <<'ROUTES'
-Seattle (SEA)|New York (JFK)
-San Francisco (SFO)|Boston (BOS)
-Los Angeles (LAX)|Chicago (ORD)
-ROUTES
-
-# 2. LEARN: distill everything you've solved into skills — no manifest, no fields to fill.
-#    --verify strict: the distilled skill must reproduce all three training answers standalone
-#    before it lands (a schedule is stable, so this is a fair bar).
-python -m webwright.skill_factory learn outputs/ --library ./library --verify strict --verify-rounds 3
-# -> groups the 3 runs into ONE template and lifts FIVE parameters:
-#    origin city/code, destination city/code, date
-#    library/what_is_the_earliest_nonstop_flight_from_.../{skill.py, meta.json, replays.json}
-
-# 3. USE the library: same wrapper, an UNSEEN route — the agent finds and reuses the skill
-examples/solve_with_library.sh \
-  "$(printf "$TASK" 'Seattle (SEA)' 'Denver (DEN)')" \
-  https://www.google.com/flights "$PWD/library" -o outputs -c base.yaml -c model_openai.yaml
-# outputs/<run>/skill_decision.json -> {"verdict": "use", "skill_id": "what_is_the_earliest_nonstop_..."}
-```
-
-</details>
-
-**3.2 — You already have runs.** `learn` is the shortcut: it's exactly what `build` does after
-solving, so it skips straight to distilling. Point it at a folder of finished Webwright runs.
+Point `learn` at a folder of completed Webwright runs to distill them directly.
 
 ```bash
 python -m webwright.skill_factory learn outputs/ --library ./library
 ```
 
-Never run Webwright, so you have nothing to try it on? Three real solves ship with the repo:
+The repository also includes three example trajectories:
 
 ```bash
 cd src/webwright/skill_factory/examples
 python -m webwright.skill_factory learn trajectories --library ./library --verify off
 ```
 
-~100 s: three runs → one template → five lifted parameters → one skill.
+This turns three runs into one five-parameter skill in about 100 seconds. The examples use flights scheduled for August 15, 2026, so `--verify off` avoids stale browser replay. Before that date, you can also use `--verify strict`. See [the trajectory README](examples/trajectories/README.md) for details on when the examples become stale.
 
-These trajectories use flights scheduled for August 15, 2026. We use `--verify off` to skip browser replay and keep the example stable if the schedule changes or the date passes. Before August 15, 2026, you can also try `--verify strict`. [The trajectory README](examples/trajectories/README.md) explains when the examples become stale.
-
-A verified skill built from these trajectories is included in [`examples/learned_library/`](examples/learned_library/). It has `verified: true` and `grade: executable`, and is the skill used in step 1. Everything here was produced with **gpt-5.4**, which we recommend.
+A verified version is included in [`examples/learned_library/`](examples/learned_library/). It has `verified: true`, `grade: executable`, and is used in §1. All examples were produced with **gpt-5.4**, which we recommend.
 
 <details>
-
 <summary><b>What to expect from skill distillation</b></summary>
 
 <br>
 
+Distillation is stochastic: about **40% of draws pass verification on the first attempt**, so `--draws` defaults to 2. Failed distillations are cheaper to retry than the original solves, and `build` keeps the trajectories in `build_outputs/`.
 
+Common failures:
 
-Distillation is stochastic. On the same set of runs, about **40% of draws pass verification on the first attempt**, so `--draws` defaults to 2. Each draw creates a fresh candidate.
+* **The skill crashes.** Retry or inspect `library/.rejected_<id>.py`.
 
-
-
-A rejection only costs another distillation, which is much cheaper than solving the tasks again. `build` keeps the trajectories in `build_outputs/`, so you can retry without rerunning them. Failed runs are not added to `library/.learned.json`, so `learn` will pick them up again. Once a skill lands — `executable` or `reference` — its runs are marked as learned and skipped on future builds.
-
-
-
-If repeated draws fail, inspect the failure:
-
-
-
-* **The skill crashes.** Try another draw. If it keeps failing, inspect `library/.rejected_<id>.py`, which contains the last candidate and its traceback.
-
-* **The skill returns a valid answer that differs from the recorded answer.** The recorded answer may be wrong. Without `--golds`, the original agent answer was not independently checked. Remove that run or provide the correct answer for its `task_id`:
-
-
+* **The answer differs from the recorded answer.** Remove the incorrect run or provide a gold answer:
 
   ```bash
   python -m webwright.skill_factory learn build_outputs/ --library ./library \
     --golds '{"<task_id>": "<right answer>"}'
   ```
 
+* **Only a changing value differs.** Use `--verify shape` instead of strict replay.
 
+By default, `on_fail: reference` keeps an unverified candidate as a readable prior the agent can adapt. Use `--on-fail reject` for an executable-or-nothing policy.
 
-  This verifies that run against the supplied answer while leaving the others on `self_verify`.
-
-* **Only a changing value differs**, such as a price or count. Strict replay does not fit the task. Use `--verify shape`.
-
-
-
-By default (`on_fail: reference`), a candidate that never passes replay still lands, kept with `grade: reference`: the agent can reuse its selectors, URLs, and parameter structure, but it is not trusted to run independently. Strict replay is slow, a little brittle, and a bit of a lottery, so the default leaves you with a readable prior the agent can adapt rather than nothing. Pass `--on-fail reject` for the stricter executable-or-nothing bar: a failed candidate lands nothing and its runs stay retryable. Landing a `reference` skill is a one-way door for that template: the skill now exists and its runs are ledgered, so a later `learn` skips those runs and won't replace it. To go again for an `executable` one, delete the skill *and* its runs' entries from `library/.learned.json` — dropping the skill alone leaves the runs marked learned, and `learn` will find nothing to do.
-
-
+A `reference` skill marks its runs as learned, so retrying requires deleting both the skill and the corresponding entries from `library/.learned.json`.
 
 </details>
+
 
 ## 📊 Results
 
