@@ -30,14 +30,12 @@ https://github.com/user-attachments/assets/a6cb7d8e-2411-4d14-b85e-4255ccb1ae81
 
 The system adds two integration points to WebWright without changing the agent loop:
 
-* **Reuse at solve time:** the `skill_use` tool, which the agent invokes from Bash like any other tool.
+* **Reuse, resolved out of the agent loop:** before the agent starts, the library is checked for a skill that fits the task, and only the *result* is used — injected into the agent's prompt as a hint, or (via `route`) run directly with no agent at all. The agent never spends its own steps querying the library.
 * **Library growth after solving:** the `skill_factory` CLI, through `init`, `build`, `learn`, and `update`.
 
-At solve time, the agent queries the library once and receives one of three recommendations: `use`, `adapt`, or `skip`. This recommendation expresses how the agent intends to use the retrieved skill. The agent then receives the skill’s source code and can reuse or modify it as needed while solving the task.
+The decision is `recommend`: given the task and the library, it retrieves candidates, judges fit, and returns a verdict — `run`, `adapt`, or `skip` — with the chosen skill, how to reuse it, and the filled parameters. It doesn't *do* anything; it only decides. It is not a command you call, and not a tool the agent invokes from inside its loop — it's the piece both the prompt-hint injection and `route` are built on.
 
-You can also route a task *without* the agent in the loop. `route` (and the `recommend` call under it) searches the library, picks a skill, and returns `run`, `adapt`, or `skip`. On `run` — an executable skill that covers the task and whose parameters all fill — it executes the skill directly, no model, and only falls back to the agent if that run fails or comes back the wrong shape. On `adapt` it hands the task to the agent with the skill as a prior; on `skip` the agent starts fresh. So a match you can trust runs for free, and anything short of that still gets solved.
-
-These are one entry, not two stacked routers. `recommend(task, library)` is the pure decision: retrieve, judge, return the verdict (`run`/`adapt`/`skip`) and the filled parameters — and nothing more. `route` is the thin orchestrator wrapped around it: it acts on that verdict — run the skill, or launch the agent — and it's the one that owns the fallback. The deciding and the acting are split by responsibility, but it's a single call path. You don't call two routers.
+`route` is the out-of-loop entry that acts on that decision. On `run` — an executable skill that covers the task and whose parameters all fill — it executes the skill directly, no model, and only falls back to the agent if that run fails or comes back the wrong shape. On `adapt` it hands the task to the agent with the skill as a prior; on `skip` the agent starts fresh. So `route` is just `recommend` plus carrying the verdict out: a match you can trust runs for free, and anything short of that still gets solved. It's one call path, not two stacked routers — you don't call `recommend` yourself.
 
 After solving, the library grows from the runs you already have. Solves of the same task template are aligned: what is identical becomes the skeleton, and what differs is lifted into parameters, giving one parameterized program per template. The expensive part, driving the site itself, is factored into named primitives (log in, run a search, read the results table), so a later task on the same site can call them even when its final step differs.
 
@@ -90,16 +88,11 @@ export OPENAI_ENDPOINT=https://your-gateway/api/responses   # Full request URL, 
 export OPENAI_MODEL=your-model
 ```
 
-`init`, `learn`, `skill_use`, `build`, and `quickstart.sh` all respect these variables.
+`init`, `learn`, `build`, and `route` all respect these variables.
 
-This also applies to the browser agent, even though its model configuration comes from YAML and cannot read environment variables directly. `build` and `quickstart.sh` translate the environment variables into the appropriate agent configuration, and `build` prints the final configuration it used.
+This also applies to the browser agent, even though its model configuration comes from YAML and cannot read environment variables directly. `build` and `route` translate the environment variables into the appropriate agent configuration, and `build` prints the final configuration it used.
 
-You only need a custom YAML file when you want the browser agent to use a different model from the one used for skill distillation. Copy [`examples/model_gateway.example.yaml`](examples/model_gateway.example.yaml), set `model_name` and `openai_endpoint`, then either:
-
-* Export `MODEL_CFG=$HOME/my_gateway.yaml` when using `quickstart.sh`; or
-* Pass `-c base.yaml -c $HOME/my_gateway.yaml` to `build`.
-
-Because `-c` replaces the default configuration files, make sure to include `base.yaml`.
+You only need a custom YAML file when you want the browser agent to use a different model from the one used for skill distillation. Copy [`examples/model_gateway.example.yaml`](examples/model_gateway.example.yaml), set `model_name` and `openai_endpoint`, and pass it with `-c base.yaml -c $HOME/my_gateway.yaml` to `build` or `route`. Because `-c` replaces the default configuration files, make sure to include `base.yaml`.
 
 </details>
 
@@ -108,17 +101,16 @@ Because `-c` replaces the default configuration files, make sure to include `bas
 Task: *what is the earliest nonstop flight from A to B on this date?*, on the
 live Google Flights.
 
-No model, no API key, about 40 seconds:
+A learned skill is a plain CLI. Run it directly — no model, no API key, about 40 seconds:
 
 ```bash
-cd src/webwright/skill_factory/examples
-./quickstart.sh                            # SEA -> DEN, date = today + 30 days
-./quickstart.sh run LAX ORD 2026-09-01     # ...on your own route (codes + YYYY-MM-DD)
+python src/webwright/skill_factory/examples/learned_library/what_is_the_earliest_nonstop_flight_from_2c8dab1/skill.py \
+    --origin-city SEA --origin-code SEA --destination-city DEN --destination-code DEN --date 2026-08-26
 ```
 
-`run` is the default mode. If no route is provided, it searches SEA→DEN thirty days from today and prints the date it selected.
+The skill takes all five parameters as `--flags` (for airport codes, city and code can be the same); it also accepts a positional `taskspec.json`, which is what replay and programmatic callers use. Change the codes and date for your own route.
 
-It also prints the ten fixed steps it executed and the location of the saved screenshots. The steps are encoded in the skill, not chosen by a model. The run directory contains the full trajectory. Each run uses a fresh temporary directory by default. Set `QUICKSTART_WORKDIR=./run1` to keep the results.
+It prints the ten fixed steps it executed and the location of the saved screenshots. The steps are encoded in the skill, not chosen by a model. The run directory (under `$WORKSPACE_DIR`) contains the full trajectory.
 
 > **This skill was distilled on Linux, against Google Flights as it looked then, and that's all
 > `strict` replay proved.** It's plain Playwright driving a live site it doesn't control, so a
@@ -127,10 +119,10 @@ It also prints the ten fixed steps it executed and the location of the saved scr
 > only on Linux/Windows. That fragility is the point of the research, not a bug in your setup: a
 > replay-verified skill reproduces its *training* run, which is not the same as generalizing.
 >
-> When the standalone run won't work, the agent still can: `./quickstart.sh route` shows the call
-> it would make, and `solve` carries the skill to the agent as a prior it reads and adapts around
-> the difference. Keep that solve and `learn` folds it back in, so the next standalone run has your
-> platform covered too.
+> When the standalone run won't work, the agent still can. `route` (§2) carries the skill to the
+> agent as a prior it reads and adapts around the difference; run it without `--start-url` first to
+> just see the decision. Keep that solve and `learn` folds it back in, so the next standalone run
+> has your platform covered too.
 
 **What that just saved.**
 
@@ -151,16 +143,18 @@ Reuse lowers the mean (21.8 vs 26), the spread (std 6.6 vs 8.2), and the worst c
 
 ### 2. Bring the agent in
 
-The same task family, now with the agent in the loop. Needs an API key:
+The same task family, now with the agent in the loop. One command — `route` — decides and then acts. Needs an API key:
 
 ```bash
-./quickstart.sh route   # ~10 s, one LLM call: route a task the skill can't run as-is -> run / adapt / skip
-./quickstart.sh solve   # ~5 min, route decides, then hands the task to the agent to adapt the skill
+python -m webwright.skill_factory route \
+    --task "What is the nonstop flight with the shortest flight duration from Seattle (SEA) to Denver (DEN) on 2026-08-26 (one-way)? Return the answer as a list: [flight_number, airline, duration]." \
+    --library ./library \
+    --start-url https://www.google.com/flights -c <your_model.yaml>
 ```
 
-* `run` runs the checked-in skill directly, no model.
-* `route` judges one task — searches the library, picks a skill, decides `run` / `adapt` / `skip` — and prints the decision as JSON: `verdict`, `skill_id`, `source_path`, and `how_to_reuse`. Here the task asks for the *shortest-duration* nonstop, which the skill (it finds the *earliest*) can't run as-is, so `route` returns `adapt`. Give it a task the skill fits and it returns `run`, and can execute the skill directly with no agent at all.
-* `solve` carries that decision out: with a start URL, `route` launches the agent to adapt the skill — or, for a task the skill fits, runs the skill directly and only falls back to the agent if that run fails.
+`route` searches the library, picks a skill, and decides `run` / `adapt` / `skip`, printing the decision (verdict, skill, why) before it acts. Then it carries the decision out: on `run` it executes the skill directly with no model; otherwise it launches the agent to adapt the skill, and a direct `run` that fails falls back to the agent too. The task above asks for the *shortest-duration* nonstop, which the checked-in skill (it finds the *earliest*) can't run as-is — so `route` returns `adapt` and hands it to the agent. Give it a task the skill fits and you'd see `run`, executed directly.
+
+Drop `--start-url` to inspect only: `route` prints the decision (and still runs a directly-runnable skill), but doesn't launch the agent. That's the cheap way to see the choice before spending a solve.
 
 ---
 

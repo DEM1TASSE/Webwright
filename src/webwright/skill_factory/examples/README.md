@@ -1,15 +1,14 @@
 # Examples
 
-Everything the Quickstart runs lives here, and nothing is hand-written — the library is
+Everything the examples run lives here, and nothing is hand-written — the library is
 verbatim `learn` output.
 
 ```
 examples/
-├── quickstart.sh          # one command, every parameter pre-filled (run, route, solve)
 ├── flights.skill.yaml     # the spec the checked-in library came from — build it to remake it
 ├── trajectories/          # those solves' runs — try `learn` without solving first
 ├── solve_with_library.sh  # the solve wrapper: skill hint + answer-output instruction
-├── learned_library/       # the Quickstart's artifact, checked in (skill.py + meta.json + replays.json)
+├── learned_library/       # the checked-in artifact (skill.py + meta.json + replays.json)
 │   └── what_is_the_earliest_nonstop_flight…/
 ├── tasks.example.json     # manual mode: a filled task list   (module README, step 6)
 └── batch.example.json     # manual mode: a filled manifest    (module README, step 2)
@@ -41,9 +40,23 @@ from scratch — see the measured numbers in the module README.
 
 ## Run it
 
+Standalone — no API key, ~40 s. The skill is a plain CLI (all five params as `--flags`, or a
+positional `taskspec.json`):
+
 ```bash
-./quickstart.sh          # standalone, no API key, ~40 s
-./quickstart.sh solve    # the agent reuses this skill on a new route (needs a key)
+python learned_library/what_is_the_earliest_nonstop_flight_from_2c8dab1/skill.py \
+    --origin-city SEA --origin-code SEA --destination-city DEN --destination-code DEN --date 2026-08-26
+```
+
+With the agent in the loop — `route` decides `run` / `adapt` / `skip` and then acts (needs a key).
+The task below asks for the *shortest-duration* nonstop, which this skill (it finds the *earliest*)
+can't run as-is, so `route` adapts it with the agent. Drop `--start-url` to just print the decision:
+
+```bash
+python -m webwright.skill_factory route \
+    --task "What is the nonstop flight with the shortest flight duration from Seattle (SEA) to Denver (DEN) on 2026-08-26 (one-way)? Return the answer as a list: [flight_number, airline, duration]." \
+    --library ./learned_library \
+    --start-url https://www.google.com/flights -c <your_model.yaml>
 ```
 
 Manual mode (explicit manifests, gold gates): see the module README; the two

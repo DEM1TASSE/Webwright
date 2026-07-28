@@ -30,7 +30,8 @@ That takes ~5-13 min, opens a browser per instance, and **may reject on the firs
 that's the gate working, not a misconfiguration; run it again. See
 [What to expect](../../README.md#what-to-expect). The proof that verification works doesn't rest
 on this demo anyway: the checked-in skill in `../learned_library/` carries
-`verified: true, grade: executable`, and `./quickstart.sh` runs it.
+`verified: true, grade: executable`, and the checked-in skill runs it directly
+(`python ../learned_library/what_is_the_earliest_nonstop_flight_from_2c8dab1/skill.py --flags`).
 
 ## What's here, and what isn't
 
