@@ -291,15 +291,10 @@ Here are some known rough edges, and directions we might take them.
   of failed attempts won't invent a strategy that was never there. The factory makes reuse cheap;
   it doesn't make hard tasks solvable.
 
-- **The agent reaches for skills too eagerly.** Right now `decide` only asks "is there a relevant
-  skill?", not "is using it actually worth it?" On WebArena it said `use` 49 times and `skip` not
-  once, even on tasks that would've been quicker from scratch. It should weigh the two, and skip
-  when starting fresh is the cheaper bet.
-
-- **Reuse today is copy-and-edit, not a clean import.** The agent reuses a skill by reading the
-  source and editing a copy, which is why `use` and `adapt` blur together in practice, and even a
-  `use` can quietly rewrite half the code. A proper callable interface, where you import a skill
-  and just pass it parameters, would make reuse a lot cleaner.
+- **No cost/benefit judgment yet.** `route` asks "is there a skill that fits?", not "is reusing it
+  actually cheaper than solving from scratch?" There's no prediction of the reuse overhead or of the
+  exploration it would save, so it can't skip a marginal match when starting fresh is the cheaper
+  bet. A budget-aware decision — weighing that overhead against what it saves — is the missing piece.
 
 - **Verification is only as reliable as the reference answer it checks against.** On real websites, where no gold label is available, the LLM may misinterpret the task or produce an incorrect reference answer, and self-verification may fail to detect that error. For dynamic answers such as prices or rankings, verification often falls back to checking only the output format or structure. This can catch a skill that is broken or fails to execute, but not one that executes successfully and returns the wrong result. Achieving true correctness in these settings requires a stronger, independent judge like WebJudge.
 
@@ -313,11 +308,6 @@ Here are some known rough edges, and directions we might take them.
   measured yet; that needs many independently-runnable skills, and the library has only 2 executable
   ones today. Until then the conservative move is to keep direct-run off by default, or turn it on only
   for high-confidence matches.
-
-- **Where the fallback lives.** The fallback isn't in `recommend` — that stays a pure decision. It
-  sits one level up, in the orchestrator (`route`): a direct `run` that fails is downgraded in place to
-  an `adapt`, handing the skill's source to the agent, so it reuses the existing agent path instead of
-  a second mechanism.
 
 - **Distillation is stochastic.** A given attempt may produce a fragile skill that fails even its own replay. The gate filters out these failures, and rerunning distillation a few times usually succeeds. However, each retry consumes additional tokens, so improving the reliability of executable skill generation, ideally succeeding on the first attempt, remains an important direction to explore.
 
