@@ -111,21 +111,33 @@ def _well_shaped(answer, output_schema) -> bool:
         return answer not in (None, "", [])
 
 
-def _to_agent(task, rec, agent_fn, *, reason, tried_error="", fell_back=False, with_skill=True):
+def _to_agent(task, rec, agent_fn, *, reason, tried_error="", fell_back=False, with_skill=True,
+              hint_override=None, primitive_sources=None, route_stage=None,
+              route_decision=None, remaining_gap=None):
     """Hand off to the agent. If agent_fn is given, launch it and return its result; otherwise
     return the resolved instruction (hint) so a caller can inspect the decision without acting."""
     skill_id = rec.get("skill_id") if with_skill else None
-    hint = _hint(rec, tried_error=tried_error) if with_skill else ""
+    hint = (hint_override if hint_override is not None
+            else _hint(rec, tried_error=tried_error) if with_skill else "")
+    primitive_sources = primitive_sources or []
     if agent_fn is not None:
         result = agent_fn(task, hint)
         return {"action": "agent", "launched": True, "fell_back": fell_back,
-                "skill_id": skill_id, "reason": reason, "result": result}
+                "skill_id": skill_id, "primitive_sources": primitive_sources,
+                "reason": reason, "route_stage": route_stage,
+                "route_decision": route_decision, "remaining_gap": remaining_gap or [],
+                "result": result}
     return {"action": "agent", "launched": False, "fell_back": fell_back,
-            "skill_id": skill_id, "reason": reason, "hint": hint}
+            "skill_id": skill_id, "primitive_sources": primitive_sources,
+            "reason": reason, "route_stage": route_stage,
+            "route_decision": route_decision, "remaining_gap": remaining_gap or [],
+            "hint": hint}
 
 
 def route(task: str, library: str, *, recommend_fn=None, run_skill_fn=run_skill,
-          agent_fn=None, on_decision=None) -> dict:
+          agent_fn=None, on_decision=None, primitive_site=None, primitive_retrieve_fn=None,
+          primitive_record_path=None, cross_template_workflow_first=False,
+          primitive_decide_fn=None) -> dict:
     """Judge the task, then act. Returns an outcome dict (see module docstring).
 
     `agent_fn(task, hint) -> result` launches the agent; leave it None to only decide (the agent
@@ -150,12 +162,71 @@ def route(task: str, library: str, *, recommend_fn=None, run_skill_fn=run_skill,
         err = res.get("error") or "answer failed the shape check"
         return _to_agent(task, rec, agent_fn, reason=err, tried_error=err, fell_back=True)
 
-    if verdict in ("run", "adapt"):
+    if verdict in ("run", "adapt") and (
+        not primitive_site or (cross_template_workflow_first and verdict == "adapt")
+    ):
         # adapt, or a run we couldn't execute (no source) — hand to the agent WITH the skill
-        return _to_agent(task, rec, agent_fn, reason=rec.get("reason"))
+        return _to_agent(
+            task, rec, agent_fn, reason=rec.get("reason"),
+            route_stage="workflow", route_decision="adapt",
+        )
 
-    # skip (or anything unexpected): agent from scratch, no skill hint
-    return _to_agent(task, rec, agent_fn, reason=rec.get("reason"), with_skill=False)
+    # Opt-in cross-template path: an exact runnable workflow won above. For adapt/skip, retrieve
+    # same-site snippets; if none help, solve from scratch rather than treating a related template
+    # as the new task's implementation base.
+    if primitive_site:
+        from .primitive_retrieve import (
+            decide_primitive_metadata,
+            render_primitive_hint,
+            retrieve_primitives,
+            write_retrieval_record,
+        )
+        primitive_decision = decide_primitive_metadata(
+            task, library, site=primitive_site, decide_fn=primitive_decide_fn
+        )
+        if primitive_decision.decision == "skip":
+            return _to_agent(
+                task, rec, agent_fn,
+                reason=primitive_decision.reason or rec.get("reason"),
+                with_skill=False,
+                route_stage="primitive",
+                route_decision="skip",
+                remaining_gap=primitive_decision.remaining_gap,
+            )
+        retrieve = primitive_retrieve_fn or retrieve_primitives
+        try:
+            primitive_result = retrieve(
+                task,
+                library,
+                site=primitive_site,
+                rank_fn=lambda _task, _primitives: primitive_decision.primitive_ids,
+            )
+        except TypeError as exc:
+            # Keep small injected retrievers used by downstream callers compatible. The real
+            # retriever accepts rank_fn; older test/application adapters may only accept the
+            # original (task, library, site) contract.
+            if "rank_fn" not in str(exc):
+                raise
+            primitive_result = retrieve(task, library, site=primitive_site)
+        if primitive_record_path:
+            write_retrieval_record(primitive_record_path, primitive_result, task=task)
+        if primitive_result.primitives:
+            return _to_agent(
+                task, rec, agent_fn,
+                reason=primitive_result.reason,
+                with_skill=False,
+                hint_override=render_primitive_hint(primitive_result),
+                primitive_sources=primitive_result.sources,
+                route_stage="primitive",
+                route_decision=primitive_decision.decision,
+                remaining_gap=primitive_decision.remaining_gap,
+            )
+
+    # skip, unusable related workflow, or empty primitive retrieval: solve from scratch.
+    return _to_agent(
+        task, rec, agent_fn, reason=rec.get("reason"), with_skill=False,
+        route_stage="scratch", route_decision="skip",
+    )
 
 
 def main(argv=None) -> int:
@@ -173,6 +244,18 @@ def main(argv=None) -> int:
                         "added automatically, so usually just your model yaml: -c model_gateway.yaml.")
     p.add_argument("-o", "--out", default=".", help="Output dir for a launched agent solve.")
     p.add_argument("--task-id", default="route_task", help="Task id for a launched agent solve.")
+    p.add_argument("--primitive-site",
+                   help="Opt in to same-site primitive retrieval when no exact runnable workflow "
+                        "exists (for example: map, gitlab, shopping_admin).")
+    p.add_argument("--primitive-record",
+                   help="Optional JSON path recording which primitive snippets were injected.")
+    p.add_argument(
+        "--cross-template-workflow-first",
+        action="store_true",
+        help="Use the cross-template router: adapt a related workflow first; consult primitive "
+             "metadata only when the workflow router skips. Primitive code is fetched only after "
+             "a use/adapt decision.",
+    )
     p.add_argument("--json", action="store_true", help="Print the raw outcome as JSON.")
     a = p.parse_args(argv)
     # Same config resolution as build: no -c + OPENAI_ENDPOINT/OPENAI_MODEL in env -> auto-build
@@ -195,7 +278,9 @@ def main(argv=None) -> int:
                         if rec.get("verdict") == "skip" else "agent"
                 print(f"  --- running ({where}) below ---")
 
-    out = route(a.task, a.library, agent_fn=agent_fn, on_decision=show_decision)
+    out = route(a.task, a.library, agent_fn=agent_fn, on_decision=show_decision,
+                primitive_site=a.primitive_site, primitive_record_path=a.primitive_record,
+                cross_template_workflow_first=a.cross_template_workflow_first)
     if a.json:
         print(json.dumps(out, ensure_ascii=False, indent=2))
         return 0
@@ -206,7 +291,7 @@ def main(argv=None) -> int:
               f"; exit code {out.get('result')}")
     else:
         print("  -> not run directly; the task is handed to the agent"
-              f"{' to ADAPT the skill' if out.get('skill_id') else ' from scratch'}.")
+              f"{' with site primitives' if out.get('primitive_sources') else ' to ADAPT the skill' if out.get('skill_id') else ' from scratch'}.")
         if out.get("hint"):
             print("  --- what the agent receives ---")
             print("  " + out["hint"].replace("\n", "\n  ").rstrip())

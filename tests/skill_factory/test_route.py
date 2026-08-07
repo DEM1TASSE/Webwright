@@ -8,6 +8,8 @@ offline and deterministically — no mock of the executor, no browser, no LLM.""
 import textwrap
 
 from webwright.skill_factory import route as R
+from webwright.skill_factory.primitive_catalog import Primitive, PrimitiveCatalog
+from webwright.skill_factory.primitive_retrieve import PrimitiveRetrieval
 
 
 def _rec(**kw):
@@ -57,6 +59,116 @@ def test_adapt_hands_to_agent_with_hint_not_marked_fallback():
 def test_skip_hands_to_agent_with_no_hint():
     out = R.route("t", "lib", recommend_fn=_rec(verdict="skip", reason="library has no relevant skill"))
     assert out["action"] == "agent" and out["hint"] == "" and out["skill_id"] is None
+
+
+def test_legacy_primitive_first_route_prefers_primitive_over_workflow_adaptation(tmp_path):
+    p = Primitive(
+        primitive_id="gitlab/list_commits", site="gitlab", capability="list commits",
+        entrypoint="list_commits", code="def list_commits(page):\n    return []\n",
+    )
+    PrimitiveCatalog(tmp_path, "gitlab").upsert(p)
+    out = R.route(
+        "new template", str(tmp_path),
+        recommend_fn=_rec(verdict="adapt", skill_id="old_template", source_path="/old",
+                          how_to_reuse="adapt old workflow"),
+        primitive_site="gitlab",
+        primitive_decide_fn=lambda task, metadata: {
+            "decision": "adapt", "primitive_ids": [p.primitive_id],
+            "reason": "covers repository extraction", "remaining_gap": ["task formatting"],
+        },
+        primitive_retrieve_fn=lambda task, library, site, **kwargs: PrimitiveRetrieval(
+            site=site, primitive_ids=[p.primitive_id], primitives=[p], reason="matched"
+        ),
+    )
+    assert out["skill_id"] is None
+    assert out["primitive_sources"][0]["primitive_id"] == p.primitive_id
+    assert p.code.strip() in out["hint"] and "old_template" not in out["hint"]
+
+
+def test_cross_template_route_falls_back_to_scratch_on_empty_catalog(tmp_path):
+    out = R.route(
+        "new template", str(tmp_path),
+        recommend_fn=_rec(verdict="adapt", skill_id="old_template", source_path="/old"),
+        primitive_site="gitlab",
+    )
+    assert out["skill_id"] is None and out["primitive_sources"] == [] and out["hint"] == ""
+
+
+def test_cross_template_workflow_adapt_stops_before_primitive_routing(tmp_path):
+    called = []
+    out = R.route(
+        "new template", str(tmp_path),
+        recommend_fn=_rec(verdict="adapt", skill_id="related_workflow", source_path="/old",
+                          how_to_reuse="reuse navigation, change extraction"),
+        primitive_site="gitlab",
+        cross_template_workflow_first=True,
+        primitive_decide_fn=lambda *args: called.append(args),
+    )
+    assert out["route_stage"] == "workflow" and out["route_decision"] == "adapt"
+    assert out["skill_id"] == "related_workflow"
+    assert "related_workflow" in out["hint"]
+    assert called == []
+
+
+def test_workflow_skip_then_primitive_metadata_skip_never_exposes_code(tmp_path):
+    p = Primitive(
+        primitive_id="gitlab/list_commits", site="gitlab", capability="list commits",
+        entrypoint="list_commits",
+        code="def list_commits(page):\n    SECRET_PRIMITIVE_CODE = True\n    return []\n",
+    )
+    PrimitiveCatalog(tmp_path, "gitlab").upsert(p)
+    seen = {}
+    fetched = []
+
+    def decide(task, metadata):
+        seen["metadata"] = metadata
+        return {"decision": "skip", "reason": "not useful", "remaining_gap": ["whole task"]}
+
+    out = R.route(
+        "change notification email", str(tmp_path),
+        recommend_fn=_rec(verdict="skip", reason="no workflow"),
+        primitive_site="gitlab",
+        cross_template_workflow_first=True,
+        primitive_decide_fn=decide,
+        primitive_retrieve_fn=lambda *a, **k: fetched.append(True),
+    )
+    assert out["route_stage"] == "primitive" and out["route_decision"] == "skip"
+    assert out["hint"] == "" and out["primitive_sources"] == []
+    assert fetched == []
+    assert all("code" not in item for item in seen["metadata"])
+    assert "SECRET_PRIMITIVE_CODE" not in repr(seen["metadata"])
+
+
+def test_workflow_skip_then_primitive_adapt_fetches_selected_full_code(tmp_path):
+    selected = Primitive(
+        primitive_id="gitlab/list_commits", site="gitlab", capability="list commits",
+        entrypoint="list_commits", code="def list_commits(page):\n    return ['full code']\n",
+    )
+    unrelated = Primitive(
+        primitive_id="gitlab/change_email", site="gitlab", capability="change email",
+        entrypoint="change_email",
+        code="def change_email(page):\n    UNRELATED_SECRET = True\n    return None\n",
+    )
+    cat = PrimitiveCatalog(tmp_path, "gitlab")
+    cat.upsert(selected)
+    cat.upsert(unrelated)
+    out = R.route(
+        "summarize commits", str(tmp_path),
+        recommend_fn=_rec(verdict="skip", reason="no workflow"),
+        primitive_site="gitlab",
+        cross_template_workflow_first=True,
+        primitive_decide_fn=lambda task, metadata: {
+            "decision": "adapt",
+            "primitive_ids": [selected.primitive_id],
+            "reason": "navigation and extraction are reusable",
+            "remaining_gap": ["summarization"],
+        },
+    )
+    assert out["route_stage"] == "primitive" and out["route_decision"] == "adapt"
+    assert out["remaining_gap"] == ["summarization"]
+    assert selected.code.strip() in out["hint"]
+    assert unrelated.code.strip() not in out["hint"]
+    assert out["primitive_sources"][0]["primitive_id"] == selected.primitive_id
 
 
 # ---- symmetric: with an agent_fn, the agent branch actually launches -------------------------
@@ -174,6 +286,22 @@ def test_cli_resolves_agent_config_through_agent_cfg(monkeypatch):
                                                      "fell_back": False, "result": 0})
     R.main(["--task", "t", "--library", "L", "--start-url", "http://x", "-c", "m.yaml"])
     assert seen["cfg"] == ["RESOLVED", "m.yaml"]
+
+
+def test_cli_enables_cross_template_workflow_first_router(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(
+        R, "route",
+        lambda *args, **kwargs: seen.update(kwargs) or {
+            "action": "agent", "launched": False, "skill_id": None, "hint": "",
+        },
+    )
+    R.main([
+        "--task", "t", "--library", "L", "--primitive-site", "gitlab",
+        "--cross-template-workflow-first",
+    ])
+    assert seen["primitive_site"] == "gitlab"
+    assert seen["cross_template_workflow_first"] is True
 
 
 def test_cli_shows_the_decision_before_the_outcome(monkeypatch, capsys):
