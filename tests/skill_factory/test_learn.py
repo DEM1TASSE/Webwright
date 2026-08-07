@@ -1,7 +1,20 @@
 """Unit test: learn's LLM-free plumbing (schema inference, run collection, ledger skip)."""
 import json, tempfile
 from pathlib import Path
-from webwright.skill_factory.learn import infer_schema, collect_runs
+from webwright.skill_factory.learn import answer_from_run, infer_schema, collect_runs
+
+
+def test_gold_recovery_accepts_not_found_with_null_retrieved_data(tmp_path):
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "task.json").write_text(json.dumps({
+        "task_id": "null_task", "task": "find missing item", "start_url": "http://x"
+    }))
+    (run_dir / "agent_response.json").write_text(json.dumps({
+        "task_type": "RETRIEVE", "status": "NOT_FOUND_ERROR",
+        "retrieved_data": None, "error_details": None,
+    }))
+    assert answer_from_run(run_dir) == (None, "NOT_FOUND_ERROR")
 
 
 def run():

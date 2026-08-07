@@ -106,7 +106,9 @@ def _recover_answer(d: Path):
         except Exception as e:
             return (False, None, f"unreadable agent_response.json ({e})")
         ans = resp.get("retrieved_data")
-        if ans is not None:
+        if "retrieved_data" in resp and (
+            ans is not None or resp.get("status") == "NOT_FOUND_ERROR"
+        ):
             return (True, ans, resp.get("status") or "SUCCESS")
         # present but no retrieved_data -> fall through to the exit message
 
