@@ -1,0 +1,237 @@
+{
+  "library": "evals/webarena/site_libraries_32_24/shopping",
+  "sites": {
+    "shopping": {
+      "source_workflows": [
+        {
+          "id": "task26_t222",
+          "task_id": 26,
+          "template_id": 222,
+          "record_path": "evals/webarena/train_32_results/shopping/task26_scratch.json"
+        },
+        {
+          "id": "task320_t160",
+          "task_id": 320,
+          "template_id": 160,
+          "record_path": "evals/webarena/train_32_results/shopping/task320_scratch.json"
+        },
+        {
+          "id": "task126_t159",
+          "task_id": 126,
+          "template_id": 159,
+          "record_path": "evals/webarena/train_32_results/shopping/task126_scratch.json"
+        },
+        {
+          "id": "task313_t134",
+          "task_id": 313,
+          "template_id": 134,
+          "record_path": "evals/webarena/train_32_results/shopping/task313_scratch.json"
+        }
+      ],
+      "raw_proposals": [
+        {
+          "operations": [
+            {
+              "op": "ADD",
+              "primitive_id": "shopping/extract_phone_numbers_from_text",
+              "capability": "Extract phone-number-like strings from arbitrary page text using reusable US-oriented patterns.",
+              "entrypoint": "extract_phone_numbers_from_text",
+              "candidate_code": "import re\nfrom typing import List\n\n_PHONE_PATTERN = re.compile(\n    r\"(?:\\+?1[-.\\s]?)?(?:\\(?\\d{3}\\)?[-.\\s]?\\d{3}[-.\\s]?\\d{4})\"\n)\n\n\ndef _normalize_phone(raw: str) -> str:\n    return re.sub(r\"\\s+\", \" \", raw).strip()\n\n\ndef extract_phone_numbers_from_text(text: str) -> List[str]:\n    if not text:\n        return []\n    matches = [_normalize_phone(m.group(0)) for m in _PHONE_PATTERN.finditer(text)]\n    seen = set()\n    ordered = []\n    for phone in matches:\n        if phone not in seen:\n            seen.add(phone)\n            ordered.append(phone)\n    return ordered\n",
+              "signature": {
+                "name": "extract_phone_numbers_from_text",
+                "args": [
+                  {
+                    "name": "text",
+                    "type": "str"
+                  }
+                ],
+                "returns": {
+                  "type": "List[str]"
+                }
+              },
+              "requires": [
+                "page_text"
+              ],
+              "provides": [
+                "phone_number_candidates"
+              ],
+              "source_templates": [
+                134,
+                222
+              ],
+              "source_workflows": [
+                "task313_t134",
+                "task26_t222"
+              ],
+              "supported_patterns": [
+                "extract phone-like strings from body text",
+                "deduplicate ordered phone matches from visible text"
+              ]
+            },
+            {
+              "op": "ADD",
+              "primitive_id": "shopping/parse_search_result_product_cards",
+              "capability": "Parse visible shopping search-result product cards into structured name and price records from HTML.",
+              "entrypoint": "parse_search_result_product_cards",
+              "candidate_code": "import re\nfrom html.parser import HTMLParser\nfrom typing import Dict, List, Optional\n\n\nclass _ProductCardParser(HTMLParser):\n    def __init__(self) -> None:\n        super().__init__()\n        self.in_product = False\n        self.product_depth = 0\n        self.capture_name = False\n        self.capture_price = False\n        self.current_name_parts: List[str] = []\n        self.current_price_parts: List[str] = []\n        self.current: Dict[str, str] = {}\n        self.items: List[Dict[str, object]] = []\n\n    def handle_starttag(self, tag: str, attrs) -> None:\n        attrs_dict = dict(attrs)\n        classes = attrs_dict.get(\"class\", \"\")\n        class_tokens = set(classes.split()) if classes else set()\n\n        if tag == \"li\" and \"product-item\" in class_tokens and not self.in_product:\n            self.in_product = True\n            self.product_depth = 1\n            self.current = {}\n            self.current_name_parts = []\n            self.current_price_parts = []\n            return\n\n        if self.in_product:\n            self.product_depth += 1\n            if \"product-item-link\" in class_tokens:\n                self.capture_name = True\n            if \"price\" in class_tokens:\n                self.capture_price = True\n\n    def handle_endtag(self, tag: str) -> None:\n        if self.capture_name and tag == \"a\":\n            self.capture_name = False\n            name = _collapse(\"\".join(self.current_name_parts))\n            if name:\n                self.current[\"name\"] = name\n            self.current_name_parts = []\n\n        if self.capture_price and tag in {\"span\", \"div\"}:\n            self.capture_price = False\n            price_text = _collapse(\"\".join(self.current_price_parts))\n            if price_text and \"price_text\" not in self.current:\n                self.current[\"price_text\"] = price_text\n            self.current_price_parts = []\n\n        if self.in_product:\n            self.product_depth -= 1\n            if self.product_depth <= 0:\n                parsed = _finalize_product(self.current)\n                if parsed is not None:\n                    self.items.append(parsed)\n                self.in_product = False\n                self.product_depth = 0\n                self.current = {}\n\n    def handle_data(self, data: str) -> None:\n        if self.capture_name:\n            self.current_name_parts.append(data)\n        if self.capture_price:\n            self.current_price_parts.append(data)\n\n\ndef _collapse(text: str) -> str:\n    return re.sub(r\"\\s+\", \" \", text).strip()\n\n\ndef _parse_price(text: str) -> Optional[float]:\n    match = re.search(r\"\\$\\s*([\\d,]+(?:\\.\\d{2})?)\", text)\n    if not match:\n        return None\n    return float(match.group(1).replace(\",\", \"\"))\n\n\ndef _finalize_product(raw: Dict[str, str]) -> Optional[Dict[str, object]]:\n    name = raw.get(\"name\", \"\").strip()\n    price_text = raw.get(\"price_text\", \"\").strip()\n    if not name:\n        return None\n    price = _parse_price(price_text) if price_text else None\n    return {\n        \"name\": name,\n        \"price\": price,\n        \"price_text\": price_text or None,\n    }\n\n\ndef parse_search_result_product_cards(html: str) -> List[Dict[str, object]]:\n    parser = _ProductCardParser()\n    parser.feed(html or \"\")\n    return parser.items\n",
+              "signature": {
+                "name": "parse_search_result_product_cards",
+                "args": [
+                  {
+                    "name": "html",
+                    "type": "str"
+                  }
+                ],
+                "returns": {
+                  "type": "List[dict]"
+                }
+              },
+              "requires": [
+                "search_results_html"
+              ],
+              "provides": [
+                "product_card_records"
+              ],
+              "source_templates": [
+                134,
+                159
+              ],
+              "source_workflows": [
+                "task313_t134",
+                "task126_t159"
+              ],
+              "supported_patterns": [
+                "parse search result listing cards",
+                "extract product names and visible prices from product-item markup"
+              ]
+            }
+          ]
+        }
+      ],
+      "operations": [
+        {
+          "op": "ADD",
+          "primitive_id": "shopping/extract_phone_numbers_from_text",
+          "capability": "Extract phone-number-like strings from arbitrary page text using reusable US-oriented patterns.",
+          "entrypoint": "extract_phone_numbers_from_text",
+          "candidate_code": "import re\nfrom typing import List\n\n_PHONE_PATTERN = re.compile(\n    r\"(?:\\+?1[-.\\s]?)?(?:\\(?\\d{3}\\)?[-.\\s]?\\d{3}[-.\\s]?\\d{4})\"\n)\n\n\ndef _normalize_phone(raw: str) -> str:\n    return re.sub(r\"\\s+\", \" \", raw).strip()\n\n\ndef extract_phone_numbers_from_text(text: str) -> List[str]:\n    if not text:\n        return []\n    matches = [_normalize_phone(m.group(0)) for m in _PHONE_PATTERN.finditer(text)]\n    seen = set()\n    ordered = []\n    for phone in matches:\n        if phone not in seen:\n            seen.add(phone)\n            ordered.append(phone)\n    return ordered\n",
+          "signature": {
+            "name": "extract_phone_numbers_from_text",
+            "args": [
+              {
+                "name": "text",
+                "type": "str"
+              }
+            ],
+            "returns": {
+              "type": "List[str]"
+            }
+          },
+          "requires": [
+            "page_text"
+          ],
+          "provides": [
+            "phone_number_candidates"
+          ],
+          "source_templates": [
+            134,
+            222
+          ],
+          "source_workflows": [
+            "task313_t134",
+            "task26_t222"
+          ],
+          "supported_patterns": [
+            "extract phone-like strings from body text",
+            "deduplicate ordered phone matches from visible text"
+          ],
+          "replacements": [],
+          "reason": "",
+          "confidence": 1.0,
+          "contains_source_answer": false
+        },
+        {
+          "op": "ADD",
+          "primitive_id": "shopping/parse_search_result_product_cards",
+          "capability": "Parse visible shopping search-result product cards into structured name and price records from HTML.",
+          "entrypoint": "parse_search_result_product_cards",
+          "candidate_code": "import re\nfrom html.parser import HTMLParser\nfrom typing import Dict, List, Optional\n\n\nclass _ProductCardParser(HTMLParser):\n    def __init__(self) -> None:\n        super().__init__()\n        self.in_product = False\n        self.product_depth = 0\n        self.capture_name = False\n        self.capture_price = False\n        self.current_name_parts: List[str] = []\n        self.current_price_parts: List[str] = []\n        self.current: Dict[str, str] = {}\n        self.items: List[Dict[str, object]] = []\n\n    def handle_starttag(self, tag: str, attrs) -> None:\n        attrs_dict = dict(attrs)\n        classes = attrs_dict.get(\"class\", \"\")\n        class_tokens = set(classes.split()) if classes else set()\n\n        if tag == \"li\" and \"product-item\" in class_tokens and not self.in_product:\n            self.in_product = True\n            self.product_depth = 1\n            self.current = {}\n            self.current_name_parts = []\n            self.current_price_parts = []\n            return\n\n        if self.in_product:\n            self.product_depth += 1\n            if \"product-item-link\" in class_tokens:\n                self.capture_name = True\n            if \"price\" in class_tokens:\n                self.capture_price = True\n\n    def handle_endtag(self, tag: str) -> None:\n        if self.capture_name and tag == \"a\":\n            self.capture_name = False\n            name = _collapse(\"\".join(self.current_name_parts))\n            if name:\n                self.current[\"name\"] = name\n            self.current_name_parts = []\n\n        if self.capture_price and tag in {\"span\", \"div\"}:\n            self.capture_price = False\n            price_text = _collapse(\"\".join(self.current_price_parts))\n            if price_text and \"price_text\" not in self.current:\n                self.current[\"price_text\"] = price_text\n            self.current_price_parts = []\n\n        if self.in_product:\n            self.product_depth -= 1\n            if self.product_depth <= 0:\n                parsed = _finalize_product(self.current)\n                if parsed is not None:\n                    self.items.append(parsed)\n                self.in_product = False\n                self.product_depth = 0\n                self.current = {}\n\n    def handle_data(self, data: str) -> None:\n        if self.capture_name:\n            self.current_name_parts.append(data)\n        if self.capture_price:\n            self.current_price_parts.append(data)\n\n\ndef _collapse(text: str) -> str:\n    return re.sub(r\"\\s+\", \" \", text).strip()\n\n\ndef _parse_price(text: str) -> Optional[float]:\n    match = re.search(r\"\\$\\s*([\\d,]+(?:\\.\\d{2})?)\", text)\n    if not match:\n        return None\n    return float(match.group(1).replace(\",\", \"\"))\n\n\ndef _finalize_product(raw: Dict[str, str]) -> Optional[Dict[str, object]]:\n    name = raw.get(\"name\", \"\").strip()\n    price_text = raw.get(\"price_text\", \"\").strip()\n    if not name:\n        return None\n    price = _parse_price(price_text) if price_text else None\n    return {\n        \"name\": name,\n        \"price\": price,\n        \"price_text\": price_text or None,\n    }\n\n\ndef parse_search_result_product_cards(html: str) -> List[Dict[str, object]]:\n    parser = _ProductCardParser()\n    parser.feed(html or \"\")\n    return parser.items\n",
+          "signature": {
+            "name": "parse_search_result_product_cards",
+            "args": [
+              {
+                "name": "html",
+                "type": "str"
+              }
+            ],
+            "returns": {
+              "type": "List[dict]"
+            }
+          },
+          "requires": [
+            "search_results_html"
+          ],
+          "provides": [
+            "product_card_records"
+          ],
+          "source_templates": [
+            134,
+            159
+          ],
+          "source_workflows": [
+            "task313_t134",
+            "task126_t159"
+          ],
+          "supported_patterns": [
+            "parse search result listing cards",
+            "extract product names and visible prices from product-item markup"
+          ],
+          "replacements": [],
+          "reason": "",
+          "confidence": 1.0,
+          "contains_source_answer": false
+        }
+      ],
+      "applied": [
+        {
+          "op": "ADD",
+          "primitive_id": "shopping/extract_phone_numbers_from_text",
+          "content_hash": "sha256:abe75eda300fcca224fb83fce123cb3893aa6a4bc4cfefce8c92e89f9330a931"
+        },
+        {
+          "op": "ADD",
+          "primitive_id": "shopping/parse_search_result_product_cards",
+          "content_hash": "sha256:c904744362e79c0395b4c102f4f163bf00c182173560346084bcf8d7ae0bcc46"
+        }
+      ],
+      "reviewed": [],
+      "rejected": [],
+      "active_primitives": [
+        {
+          "primitive_id": "shopping/extract_phone_numbers_from_text",
+          "content_hash": "sha256:abe75eda300fcca224fb83fce123cb3893aa6a4bc4cfefce8c92e89f9330a931",
+          "source_templates": [
+            134,
+            222
+          ],
+          "source_workflows": [
+            "task313_t134",
+            "task26_t222"
+          ]
+        },
+        {
+          "primitive_id": "shopping/parse_search_result_product_cards",
+          "content_hash": "sha256:c904744362e79c0395b4c102f4f163bf00c182173560346084bcf8d7ae0bcc46",
+          "source_templates": [
+            134,
+            159
+          ],
+          "source_workflows": [
+            "task313_t134",
+            "task126_t159"
+          ]
+        }
+      ]
+    }
+  }
+}

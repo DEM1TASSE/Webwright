@@ -1,0 +1,315 @@
+{
+  "library": "evals/webarena/site_libraries_32_24/shopping_admin",
+  "sites": {
+    "shopping_admin": {
+      "source_workflows": [
+        {
+          "id": "task108_t270",
+          "task_id": 108,
+          "template_id": 270,
+          "record_path": "evals/webarena/train_32_results/shopping_admin/task108_scratch.json"
+        },
+        {
+          "id": "task77_t277",
+          "task_id": 77,
+          "template_id": 277,
+          "record_path": "evals/webarena/train_32_results/shopping_admin/task77_scratch.json"
+        },
+        {
+          "id": "task215_t249",
+          "task_id": 215,
+          "template_id": 249,
+          "record_path": "evals/webarena/train_32_results/shopping_admin/task215_scratch.json"
+        }
+      ],
+      "raw_proposals": [
+        {
+          "operations": [
+            {
+              "operation": "ADD",
+              "primitive_id": "shopping_admin/admin_login",
+              "capability": "Authenticate into the Magento admin area and confirm an authenticated session is available.",
+              "entrypoint": "admin_login",
+              "candidate_code": "from urllib.parse import urlencode\nfrom urllib.request import build_opener, HTTPCookieProcessor, Request\nfrom http.cookiejar import CookieJar\nimport re\n\n\ndef _extract_form_key(html: str):\n    m = re.search(r'name=[\"\\']form_key[\"\\']\\s+type=[\"\\']hidden[\"\\']\\s+value=[\"\\']([^\"\\']+)[\"\\']', html, re.I)\n    return m.group(1) if m else None\n\n\ndef _looks_authenticated(html: str, final_url: str) -> bool:\n    text = html.lower()\n    return ('dashboard' in text or 'all reviews' in text or 'pending reviews' in text or '/admin/' in final_url) and 'login[password]' not in text\n\n\ndef admin_login(base_admin_url: str, username: str, password: str):\n    jar = CookieJar()\n    opener = build_opener(HTTPCookieProcessor(jar))\n    login_html = opener.open(base_admin_url, timeout=30).read().decode('utf-8', 'ignore')\n    form_key = _extract_form_key(login_html)\n    payload = {'login[username]': username, 'login[password]': password}\n    if form_key:\n        payload['form_key'] = form_key\n    req = Request(\n        base_admin_url,\n        data=urlencode(payload).encode('utf-8'),\n        headers={'Content-Type': 'application/x-www-form-urlencoded'},\n    )\n    resp = opener.open(req, timeout=30)\n    html = resp.read().decode('utf-8', 'ignore')\n    final_url = resp.geturl()\n    if not _looks_authenticated(html, final_url):\n        raise RuntimeError('admin_login_failed')\n    return {\n        'opener': opener,\n        'cookie_jar': jar,\n        'base_admin_url': base_admin_url,\n        'final_url': final_url,\n        'dashboard_html': html,\n    }\n",
+              "signature": {
+                "name": "admin_login",
+                "args": [
+                  {
+                    "name": "base_admin_url",
+                    "type": "str"
+                  },
+                  {
+                    "name": "username",
+                    "type": "str"
+                  },
+                  {
+                    "name": "password",
+                    "type": "str"
+                  }
+                ],
+                "returns": {
+                  "type": "dict",
+                  "keys": {
+                    "opener": "object",
+                    "cookie_jar": "object",
+                    "base_admin_url": "str",
+                    "final_url": "str",
+                    "dashboard_html": "str"
+                  }
+                }
+              },
+              "requires": [
+                "base_admin_url",
+                "admin_credentials"
+              ],
+              "provides": [
+                "authenticated_admin_session",
+                "admin_dashboard_context"
+              ],
+              "source_templates": [
+                249,
+                277
+              ],
+              "source_workflows": [
+                "task215_t249",
+                "task77_t277"
+              ],
+              "supported_patterns": [
+                "form_post_admin_authentication",
+                "cookie_backed_session_establishment",
+                "authenticated_admin_context_creation"
+              ]
+            },
+            {
+              "operation": "ADD",
+              "primitive_id": "shopping_admin/fetch_review_grid_rows",
+              "capability": "Open a Magento admin review grid page and extract visible review row records, optionally after applying a product-name filter.",
+              "entrypoint": "fetch_review_grid_rows",
+              "candidate_code": "import re\nfrom urllib.parse import urlencode\n\n\nREVIEW_ROW_RE = re.compile(r'/admin/review/product/edit/id/(\\d+)/', re.I)\nTD_RE = re.compile(r'<td\\b[^>]*>(.*?)</td>', re.I | re.S)\nTR_RE = re.compile(r'<tr\\b[^>]*>(.*?)</tr>', re.I | re.S)\nTAG_RE = re.compile(r'<[^>]+>')\n\n\ndef _strip_html(text: str) -> str:\n    text = TAG_RE.sub(' ', text)\n    text = text.replace('&nbsp;', ' ')\n    return ' '.join(text.split())\n\n\ndef _extract_rows(html: str):\n    rows = []\n    for block in TR_RE.findall(html):\n        rid_match = REVIEW_ROW_RE.search(block)\n        if not rid_match:\n            continue\n        cells = [_strip_html(x) for x in TD_RE.findall(block)]\n        rows.append({\n            'review_id': rid_match.group(1),\n            'cells': cells,\n            'row_text': _strip_html(block),\n            'title': cells[4] if len(cells) > 4 else None,\n        })\n    return rows\n\n\ndef fetch_review_grid_rows(opener, review_grid_url: str, product_name: str = None, product_filter_param: str = 'name'):\n    url = review_grid_url\n    if product_name:\n        sep = '&' if '?' in review_grid_url else '?'\n        url = review_grid_url + sep + urlencode({product_filter_param: product_name})\n    html = opener.open(url, timeout=30).read().decode('utf-8', 'ignore')\n    rows = _extract_rows(html)\n    if product_name:\n        lowered = product_name.lower()\n        rows = [r for r in rows if lowered in r['row_text'].lower()]\n    return {\n        'url': url,\n        'rows': rows,\n        'row_count': len(rows),\n        'html': html,\n    }\n",
+              "signature": {
+                "name": "fetch_review_grid_rows",
+                "args": [
+                  {
+                    "name": "opener",
+                    "type": "object"
+                  },
+                  {
+                    "name": "review_grid_url",
+                    "type": "str"
+                  },
+                  {
+                    "name": "product_name",
+                    "type": "str",
+                    "optional": true
+                  },
+                  {
+                    "name": "product_filter_param",
+                    "type": "str",
+                    "optional": true,
+                    "default": "name"
+                  }
+                ],
+                "returns": {
+                  "type": "dict",
+                  "keys": {
+                    "url": "str",
+                    "rows": "list",
+                    "row_count": "int",
+                    "html": "str"
+                  }
+                }
+              },
+              "requires": [
+                "authenticated_admin_session",
+                "review_grid_url"
+              ],
+              "provides": [
+                "review_grid_page_context",
+                "visible_review_grid_rows"
+              ],
+              "source_templates": [
+                249,
+                277
+              ],
+              "source_workflows": [
+                "task215_t249",
+                "task77_t277"
+              ],
+              "supported_patterns": [
+                "open_all_reviews_grid",
+                "apply_product_name_filter_to_review_grid",
+                "extract_visible_review_rows_from_admin_grid"
+              ]
+            }
+          ]
+        }
+      ],
+      "operations": [
+        {
+          "op": "ADD",
+          "primitive_id": "shopping_admin/admin_login",
+          "capability": "Authenticate into the Magento admin area and confirm an authenticated session is available.",
+          "entrypoint": "admin_login",
+          "candidate_code": "from urllib.parse import urlencode\nfrom urllib.request import build_opener, HTTPCookieProcessor, Request\nfrom http.cookiejar import CookieJar\nimport re\n\n\ndef _extract_form_key(html: str):\n    m = re.search(r'name=[\"\\']form_key[\"\\']\\s+type=[\"\\']hidden[\"\\']\\s+value=[\"\\']([^\"\\']+)[\"\\']', html, re.I)\n    return m.group(1) if m else None\n\n\ndef _looks_authenticated(html: str, final_url: str) -> bool:\n    text = html.lower()\n    return ('dashboard' in text or 'all reviews' in text or 'pending reviews' in text or '/admin/' in final_url) and 'login[password]' not in text\n\n\ndef admin_login(base_admin_url: str, username: str, password: str):\n    jar = CookieJar()\n    opener = build_opener(HTTPCookieProcessor(jar))\n    login_html = opener.open(base_admin_url, timeout=30).read().decode('utf-8', 'ignore')\n    form_key = _extract_form_key(login_html)\n    payload = {'login[username]': username, 'login[password]': password}\n    if form_key:\n        payload['form_key'] = form_key\n    req = Request(\n        base_admin_url,\n        data=urlencode(payload).encode('utf-8'),\n        headers={'Content-Type': 'application/x-www-form-urlencoded'},\n    )\n    resp = opener.open(req, timeout=30)\n    html = resp.read().decode('utf-8', 'ignore')\n    final_url = resp.geturl()\n    if not _looks_authenticated(html, final_url):\n        raise RuntimeError('admin_login_failed')\n    return {\n        'opener': opener,\n        'cookie_jar': jar,\n        'base_admin_url': base_admin_url,\n        'final_url': final_url,\n        'dashboard_html': html,\n    }\n",
+          "signature": {
+            "name": "admin_login",
+            "args": [
+              {
+                "name": "base_admin_url",
+                "type": "str"
+              },
+              {
+                "name": "username",
+                "type": "str"
+              },
+              {
+                "name": "password",
+                "type": "str"
+              }
+            ],
+            "returns": {
+              "type": "dict",
+              "keys": {
+                "opener": "object",
+                "cookie_jar": "object",
+                "base_admin_url": "str",
+                "final_url": "str",
+                "dashboard_html": "str"
+              }
+            }
+          },
+          "requires": [
+            "base_admin_url",
+            "admin_credentials"
+          ],
+          "provides": [
+            "authenticated_admin_session",
+            "admin_dashboard_context"
+          ],
+          "source_templates": [
+            249,
+            277
+          ],
+          "source_workflows": [
+            "task215_t249",
+            "task77_t277"
+          ],
+          "supported_patterns": [
+            "form_post_admin_authentication",
+            "cookie_backed_session_establishment",
+            "authenticated_admin_context_creation"
+          ],
+          "replacements": [],
+          "reason": "",
+          "confidence": 1.0,
+          "contains_source_answer": false
+        },
+        {
+          "op": "ADD",
+          "primitive_id": "shopping_admin/fetch_review_grid_rows",
+          "capability": "Open a Magento admin review grid page and extract visible review row records, optionally after applying a product-name filter.",
+          "entrypoint": "fetch_review_grid_rows",
+          "candidate_code": "import re\nfrom urllib.parse import urlencode\n\n\nREVIEW_ROW_RE = re.compile(r'/admin/review/product/edit/id/(\\d+)/', re.I)\nTD_RE = re.compile(r'<td\\b[^>]*>(.*?)</td>', re.I | re.S)\nTR_RE = re.compile(r'<tr\\b[^>]*>(.*?)</tr>', re.I | re.S)\nTAG_RE = re.compile(r'<[^>]+>')\n\n\ndef _strip_html(text: str) -> str:\n    text = TAG_RE.sub(' ', text)\n    text = text.replace('&nbsp;', ' ')\n    return ' '.join(text.split())\n\n\ndef _extract_rows(html: str):\n    rows = []\n    for block in TR_RE.findall(html):\n        rid_match = REVIEW_ROW_RE.search(block)\n        if not rid_match:\n            continue\n        cells = [_strip_html(x) for x in TD_RE.findall(block)]\n        rows.append({\n            'review_id': rid_match.group(1),\n            'cells': cells,\n            'row_text': _strip_html(block),\n            'title': cells[4] if len(cells) > 4 else None,\n        })\n    return rows\n\n\ndef fetch_review_grid_rows(opener, review_grid_url: str, product_name: str = None, product_filter_param: str = 'name'):\n    url = review_grid_url\n    if product_name:\n        sep = '&' if '?' in review_grid_url else '?'\n        url = review_grid_url + sep + urlencode({product_filter_param: product_name})\n    html = opener.open(url, timeout=30).read().decode('utf-8', 'ignore')\n    rows = _extract_rows(html)\n    if product_name:\n        lowered = product_name.lower()\n        rows = [r for r in rows if lowered in r['row_text'].lower()]\n    return {\n        'url': url,\n        'rows': rows,\n        'row_count': len(rows),\n        'html': html,\n    }\n",
+          "signature": {
+            "name": "fetch_review_grid_rows",
+            "args": [
+              {
+                "name": "opener",
+                "type": "object"
+              },
+              {
+                "name": "review_grid_url",
+                "type": "str"
+              },
+              {
+                "name": "product_name",
+                "type": "str",
+                "optional": true
+              },
+              {
+                "name": "product_filter_param",
+                "type": "str",
+                "optional": true,
+                "default": "name"
+              }
+            ],
+            "returns": {
+              "type": "dict",
+              "keys": {
+                "url": "str",
+                "rows": "list",
+                "row_count": "int",
+                "html": "str"
+              }
+            }
+          },
+          "requires": [
+            "authenticated_admin_session",
+            "review_grid_url"
+          ],
+          "provides": [
+            "review_grid_page_context",
+            "visible_review_grid_rows"
+          ],
+          "source_templates": [
+            249,
+            277
+          ],
+          "source_workflows": [
+            "task215_t249",
+            "task77_t277"
+          ],
+          "supported_patterns": [
+            "open_all_reviews_grid",
+            "apply_product_name_filter_to_review_grid",
+            "extract_visible_review_rows_from_admin_grid"
+          ],
+          "replacements": [],
+          "reason": "",
+          "confidence": 1.0,
+          "contains_source_answer": false
+        }
+      ],
+      "applied": [
+        {
+          "op": "ADD",
+          "primitive_id": "shopping_admin/admin_login",
+          "content_hash": "sha256:342aa208afc1073683b3e9f133cd8eed8d815cdb7103e799e49c77a40893f1d9"
+        },
+        {
+          "op": "ADD",
+          "primitive_id": "shopping_admin/fetch_review_grid_rows",
+          "content_hash": "sha256:5b085a98fe90b2cb8da5de5609545150ddfe24ac76687b9b9cb7f5362aac1022"
+        }
+      ],
+      "reviewed": [],
+      "rejected": [],
+      "active_primitives": [
+        {
+          "primitive_id": "shopping_admin/admin_login",
+          "content_hash": "sha256:342aa208afc1073683b3e9f133cd8eed8d815cdb7103e799e49c77a40893f1d9",
+          "source_templates": [
+            249,
+            277
+          ],
+          "source_workflows": [
+            "task215_t249",
+            "task77_t277"
+          ]
+        },
+        {
+          "primitive_id": "shopping_admin/fetch_review_grid_rows",
+          "content_hash": "sha256:5b085a98fe90b2cb8da5de5609545150ddfe24ac76687b9b9cb7f5362aac1022",
+          "source_templates": [
+            249,
+            277
+          ],
+          "source_workflows": [
+            "task215_t249",
+            "task77_t277"
+          ]
+        }
+      ]
+    }
+  }
+}

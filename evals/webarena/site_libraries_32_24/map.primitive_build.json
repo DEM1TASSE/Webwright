@@ -1,0 +1,307 @@
+{
+  "library": "evals/webarena/site_libraries_32_24/map",
+  "sites": {
+    "map": {
+      "source_workflows": [
+        {
+          "id": "task81_t72",
+          "task_id": 81,
+          "template_id": 72,
+          "record_path": "evals/webarena/train_32_results/map/task81_scratch.json"
+        },
+        {
+          "id": "task85_t64",
+          "task_id": 85,
+          "template_id": 64,
+          "record_path": "evals/webarena/train_32_results/map/task85_scratch.json"
+        },
+        {
+          "id": "task76_t65",
+          "task_id": 76,
+          "template_id": 65,
+          "record_path": "evals/webarena/train_32_results/map/task76_scratch.json"
+        }
+      ],
+      "raw_proposals": [
+        {
+          "operations": [
+            {
+              "op": "ADD",
+              "primitive_id": "map/geocode_places_with_nominatim",
+              "capability": "Geocode one or more place queries against the site's Nominatim service and return normalized top matches with coordinates.",
+              "entrypoint": "geocode_places_with_nominatim",
+              "candidate_code": "import json\nimport urllib.parse\nimport urllib.request\n\n\ndef _fetch_json(url, timeout=60):\n    with urllib.request.urlopen(url, timeout=timeout) as resp:\n        return json.load(resp)\n\n\ndef _normalize_match(query, item):\n    return {\n        \"query\": query,\n        \"display_name\": item.get(\"display_name\"),\n        \"lat\": float(item[\"lat\"]),\n        \"lon\": float(item[\"lon\"]),\n        \"raw\": item,\n    }\n\n\ndef geocode_places_with_nominatim(queries, base_url=\"http://18.208.187.221:8085/\", limit=1, timeout=60):\n    if isinstance(queries, str):\n        queries = [queries]\n    results = []\n    for query in queries:\n        url = (\n            base_url.rstrip(\"/\")\n            + \"/search?format=json&limit=\"\n            + str(limit)\n            + \"&q=\"\n            + urllib.parse.quote(query)\n        )\n        data = _fetch_json(url, timeout=timeout)\n        if not data:\n            raise ValueError(f\"No geocoding results for query: {query}\")\n        results.append(_normalize_match(query, data[0]))\n    return results\n",
+              "signature": {
+                "name": "geocode_places_with_nominatim",
+                "args": [
+                  {
+                    "name": "queries",
+                    "type": "str | list[str]"
+                  },
+                  {
+                    "name": "base_url",
+                    "type": "str",
+                    "default": "http://18.208.187.221:8085/"
+                  },
+                  {
+                    "name": "limit",
+                    "type": "int",
+                    "default": 1
+                  },
+                  {
+                    "name": "timeout",
+                    "type": "int",
+                    "default": 60
+                  }
+                ],
+                "returns": {
+                  "type": "list[dict]"
+                }
+              },
+              "requires": [
+                "place_queries"
+              ],
+              "provides": [
+                "geocoded_place_records"
+              ],
+              "source_templates": [
+                65,
+                72
+              ],
+              "source_workflows": [
+                "task76_t65",
+                "task81_t72"
+              ],
+              "supported_patterns": [
+                "single-place geocoding",
+                "multi-place geocoding",
+                "top-result selection from Nominatim search"
+              ]
+            },
+            {
+              "op": "ADD",
+              "primitive_id": "map/query_osrm_route",
+              "capability": "Query an OSRM routing endpoint for an ordered list of coordinates and return route totals and leg summaries.",
+              "entrypoint": "query_osrm_route",
+              "candidate_code": "import json\nimport urllib.request\n\n\ndef _fetch_json(url, timeout=60):\n    with urllib.request.urlopen(url, timeout=timeout) as resp:\n        return json.load(resp)\n\n\ndef _coord_string(coordinates):\n    parts = []\n    for lon, lat in coordinates:\n        parts.append(f\"{float(lon)},{float(lat)}\")\n    return \";\".join(parts)\n\n\ndef _normalize_route(route):\n    return {\n        \"duration\": route.get(\"duration\"),\n        \"distance\": route.get(\"distance\"),\n        \"legs\": [\n            {\n                \"duration\": leg.get(\"duration\"),\n                \"distance\": leg.get(\"distance\"),\n                \"summary\": leg.get(\"summary\"),\n            }\n            for leg in route.get(\"legs\", [])\n        ],\n        \"raw\": route,\n    }\n\n\ndef query_osrm_route(coordinates, base_url=\"http://18.208.187.221:5000/route/v1/driving/\", overview=False, steps=True, timeout=60):\n    if len(coordinates) < 2:\n        raise ValueError(\"At least two coordinates are required\")\n    coord_str = _coord_string(coordinates)\n    query = f\"overview={'true' if overview else 'false'}&steps={'true' if steps else 'false'}\"\n    url = base_url.rstrip(\"/\") + \"/\" + coord_str + \"?\" + query\n    data = _fetch_json(url, timeout=timeout)\n    if data.get(\"code\") not in (None, \"Ok\"):\n        raise ValueError(f\"OSRM route request failed: {data}\")\n    routes = data.get(\"routes\") or []\n    if not routes:\n        raise ValueError(\"OSRM returned no routes\")\n    return _normalize_route(routes[0])\n",
+              "signature": {
+                "name": "query_osrm_route",
+                "args": [
+                  {
+                    "name": "coordinates",
+                    "type": "list[tuple[float, float]]"
+                  },
+                  {
+                    "name": "base_url",
+                    "type": "str",
+                    "default": "http://18.208.187.221:5000/route/v1/driving/"
+                  },
+                  {
+                    "name": "overview",
+                    "type": "bool",
+                    "default": false
+                  },
+                  {
+                    "name": "steps",
+                    "type": "bool",
+                    "default": true
+                  },
+                  {
+                    "name": "timeout",
+                    "type": "int",
+                    "default": 60
+                  }
+                ],
+                "returns": {
+                  "type": "dict"
+                }
+              },
+              "requires": [
+                "ordered_coordinate_sequence"
+              ],
+              "provides": [
+                "osrm_route_record"
+              ],
+              "source_templates": [
+                65,
+                72
+              ],
+              "source_workflows": [
+                "task76_t65",
+                "task81_t72"
+              ],
+              "supported_patterns": [
+                "driving route lookup",
+                "foot route lookup via alternate OSRM base URL",
+                "multi-stop ordered route lookup",
+                "route-leg extraction"
+              ]
+            }
+          ]
+        }
+      ],
+      "operations": [
+        {
+          "op": "ADD",
+          "primitive_id": "map/geocode_places_with_nominatim",
+          "capability": "Geocode one or more place queries against the site's Nominatim service and return normalized top matches with coordinates.",
+          "entrypoint": "geocode_places_with_nominatim",
+          "candidate_code": "import json\nimport urllib.parse\nimport urllib.request\n\n\ndef _fetch_json(url, timeout=60):\n    with urllib.request.urlopen(url, timeout=timeout) as resp:\n        return json.load(resp)\n\n\ndef _normalize_match(query, item):\n    return {\n        \"query\": query,\n        \"display_name\": item.get(\"display_name\"),\n        \"lat\": float(item[\"lat\"]),\n        \"lon\": float(item[\"lon\"]),\n        \"raw\": item,\n    }\n\n\ndef geocode_places_with_nominatim(queries, base_url=\"http://18.208.187.221:8085/\", limit=1, timeout=60):\n    if isinstance(queries, str):\n        queries = [queries]\n    results = []\n    for query in queries:\n        url = (\n            base_url.rstrip(\"/\")\n            + \"/search?format=json&limit=\"\n            + str(limit)\n            + \"&q=\"\n            + urllib.parse.quote(query)\n        )\n        data = _fetch_json(url, timeout=timeout)\n        if not data:\n            raise ValueError(f\"No geocoding results for query: {query}\")\n        results.append(_normalize_match(query, data[0]))\n    return results\n",
+          "signature": {
+            "name": "geocode_places_with_nominatim",
+            "args": [
+              {
+                "name": "queries",
+                "type": "str | list[str]"
+              },
+              {
+                "name": "base_url",
+                "type": "str",
+                "default": "http://18.208.187.221:8085/"
+              },
+              {
+                "name": "limit",
+                "type": "int",
+                "default": 1
+              },
+              {
+                "name": "timeout",
+                "type": "int",
+                "default": 60
+              }
+            ],
+            "returns": {
+              "type": "list[dict]"
+            }
+          },
+          "requires": [
+            "place_queries"
+          ],
+          "provides": [
+            "geocoded_place_records"
+          ],
+          "source_templates": [
+            65,
+            72
+          ],
+          "source_workflows": [
+            "task76_t65",
+            "task81_t72"
+          ],
+          "supported_patterns": [
+            "single-place geocoding",
+            "multi-place geocoding",
+            "top-result selection from Nominatim search"
+          ],
+          "replacements": [],
+          "reason": "",
+          "confidence": 1.0,
+          "contains_source_answer": false
+        },
+        {
+          "op": "ADD",
+          "primitive_id": "map/query_osrm_route",
+          "capability": "Query an OSRM routing endpoint for an ordered list of coordinates and return route totals and leg summaries.",
+          "entrypoint": "query_osrm_route",
+          "candidate_code": "import json\nimport urllib.request\n\n\ndef _fetch_json(url, timeout=60):\n    with urllib.request.urlopen(url, timeout=timeout) as resp:\n        return json.load(resp)\n\n\ndef _coord_string(coordinates):\n    parts = []\n    for lon, lat in coordinates:\n        parts.append(f\"{float(lon)},{float(lat)}\")\n    return \";\".join(parts)\n\n\ndef _normalize_route(route):\n    return {\n        \"duration\": route.get(\"duration\"),\n        \"distance\": route.get(\"distance\"),\n        \"legs\": [\n            {\n                \"duration\": leg.get(\"duration\"),\n                \"distance\": leg.get(\"distance\"),\n                \"summary\": leg.get(\"summary\"),\n            }\n            for leg in route.get(\"legs\", [])\n        ],\n        \"raw\": route,\n    }\n\n\ndef query_osrm_route(coordinates, base_url=\"http://18.208.187.221:5000/route/v1/driving/\", overview=False, steps=True, timeout=60):\n    if len(coordinates) < 2:\n        raise ValueError(\"At least two coordinates are required\")\n    coord_str = _coord_string(coordinates)\n    query = f\"overview={'true' if overview else 'false'}&steps={'true' if steps else 'false'}\"\n    url = base_url.rstrip(\"/\") + \"/\" + coord_str + \"?\" + query\n    data = _fetch_json(url, timeout=timeout)\n    if data.get(\"code\") not in (None, \"Ok\"):\n        raise ValueError(f\"OSRM route request failed: {data}\")\n    routes = data.get(\"routes\") or []\n    if not routes:\n        raise ValueError(\"OSRM returned no routes\")\n    return _normalize_route(routes[0])\n",
+          "signature": {
+            "name": "query_osrm_route",
+            "args": [
+              {
+                "name": "coordinates",
+                "type": "list[tuple[float, float]]"
+              },
+              {
+                "name": "base_url",
+                "type": "str",
+                "default": "http://18.208.187.221:5000/route/v1/driving/"
+              },
+              {
+                "name": "overview",
+                "type": "bool",
+                "default": false
+              },
+              {
+                "name": "steps",
+                "type": "bool",
+                "default": true
+              },
+              {
+                "name": "timeout",
+                "type": "int",
+                "default": 60
+              }
+            ],
+            "returns": {
+              "type": "dict"
+            }
+          },
+          "requires": [
+            "ordered_coordinate_sequence"
+          ],
+          "provides": [
+            "osrm_route_record"
+          ],
+          "source_templates": [
+            65,
+            72
+          ],
+          "source_workflows": [
+            "task76_t65",
+            "task81_t72"
+          ],
+          "supported_patterns": [
+            "driving route lookup",
+            "foot route lookup via alternate OSRM base URL",
+            "multi-stop ordered route lookup",
+            "route-leg extraction"
+          ],
+          "replacements": [],
+          "reason": "",
+          "confidence": 1.0,
+          "contains_source_answer": false
+        }
+      ],
+      "applied": [
+        {
+          "op": "ADD",
+          "primitive_id": "map/geocode_places_with_nominatim",
+          "content_hash": "sha256:7b1ca963981787ce87db35768ada2bf29ea6bf92eae3af7eb0cdf925b93ec3b8"
+        },
+        {
+          "op": "ADD",
+          "primitive_id": "map/query_osrm_route",
+          "content_hash": "sha256:bd2e90e437a453e7229d09dc312b8d040712154fa69cb383f905cf8bc6b319ca"
+        }
+      ],
+      "reviewed": [],
+      "rejected": [],
+      "active_primitives": [
+        {
+          "primitive_id": "map/geocode_places_with_nominatim",
+          "content_hash": "sha256:7b1ca963981787ce87db35768ada2bf29ea6bf92eae3af7eb0cdf925b93ec3b8",
+          "source_templates": [
+            65,
+            72
+          ],
+          "source_workflows": [
+            "task76_t65",
+            "task81_t72"
+          ]
+        },
+        {
+          "primitive_id": "map/query_osrm_route",
+          "content_hash": "sha256:bd2e90e437a453e7229d09dc312b8d040712154fa69cb383f905cf8bc6b319ca",
+          "source_templates": [
+            65,
+            72
+          ],
+          "source_workflows": [
+            "task76_t65",
+            "task81_t72"
+          ]
+        }
+      ]
+    }
+  }
+}
