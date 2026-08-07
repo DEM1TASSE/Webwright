@@ -7,6 +7,7 @@ CMDS = {
     "learn": "webwright.skill_factory.learn",
     "update": "webwright.skill_factory.update",
     "route": "webwright.skill_factory.route",
+    "om2w-eval": "webwright.skill_factory.om2w_eval",
 }
 
 def main() -> int:
@@ -14,12 +15,13 @@ def main() -> int:
         import importlib
         mod = importlib.import_module(CMDS[sys.argv[1]])
         return mod.main(sys.argv[2:])
-    print("usage: python -m webwright.skill_factory <init|build|learn|update|route> …\n"
+    print("usage: python -m webwright.skill_factory <init|build|learn|update|route|om2w-eval> …\n"
           "  init    draft a skill.yaml skeleton from a one-line need (you fill the values)\n"
           "  build   solve a spec's instances, then learn — for a task you haven't solved yet\n"
           "  learn   distill a folder of finished runs into skills (no manifest needed)\n"
           "  update  manual mode: distill from an explicit batch.json manifest\n"
-          "  route   route a task: run a matching skill directly, or hand it to the agent")
+          "  route   route a task: run a matching skill directly, or hand it to the agent\n"
+          "  om2w-eval  judge Webwright runs with an upstream Online-Mind2Web checkout")
     return 1
 
 if __name__ == "__main__":

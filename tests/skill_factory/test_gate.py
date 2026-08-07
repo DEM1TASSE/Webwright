@@ -1,8 +1,9 @@
 """Unit test: admission gate (deterministic, no external)."""
 import sys
+import json
 from pathlib import Path
 pass
-from webwright.skill_factory.gate import gate
+from webwright.skill_factory.gate import external_gate, gate, load_external_verdicts
 
 ARR = {"type": "array", "items": {"type": "string"}}
 
@@ -35,6 +36,21 @@ def run():
     assert gate(["ok"], method="self_verify").admit, "no status -> unchanged behaviour"
     # gold outranks the self-report path entirely
     assert gate([1], gold=[1], method="auto", status="NOT_FOUND_ERROR").admit
+
+    # imported OM2W JSONL verdicts are strict and fail closed for absent tasks
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / "judge.jsonl"
+        p.write_text("\n".join(json.dumps(x) for x in [
+            {"task_id": "pass", "predicted_label": 1,
+             "evaluation_details": {"response": "Status: success"}},
+            {"task_id": "fail", "predicted_label": 0},
+        ]))
+        verdicts = load_external_verdicts(p)
+        assert external_gate("pass", verdicts).admit
+        assert not external_gate("fail", verdicts).admit
+        missing = external_gate("missing", verdicts)
+        assert not missing.admit and "no external" in missing.reason
 
     print("test_gate OK")
 

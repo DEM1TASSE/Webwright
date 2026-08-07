@@ -22,13 +22,51 @@ Upgrade path (next step): for real websites use WebJudge (OM2W's official judge)
 consistency checks for a truly independent gate.
 """
 from __future__ import annotations
+import json
 from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass
 class GateResult:
     admit: bool
     reason: str
+
+
+def load_external_verdicts(path: str | Path) -> dict[str, GateResult]:
+    """Load task-level verdicts emitted by the OM2W adapter (JSONL or JSON).
+
+    Fail closed: malformed labels and duplicate task ids are configuration errors, while a
+    missing task is handled by ``external_gate`` as a rejection.
+    """
+    source = Path(path)
+    text = source.read_text(encoding="utf-8")
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        records = [json.loads(line) for line in text.splitlines() if line.strip()]
+    else:
+        records = payload if isinstance(payload, list) else [payload]
+
+    verdicts: dict[str, GateResult] = {}
+    for record in records:
+        if not isinstance(record, dict) or not record.get("task_id"):
+            raise ValueError(f"external gate record has no task_id: {record!r}")
+        task_id = str(record["task_id"])
+        if task_id in verdicts:
+            raise ValueError(f"duplicate external gate verdict for task_id={task_id!r}")
+        label = record.get("predicted_label")
+        if label not in (0, 1, False, True):
+            raise ValueError(f"external gate verdict for {task_id!r} has invalid predicted_label={label!r}")
+        details = record.get("evaluation_details") or {}
+        response = details.get("response") if isinstance(details, dict) else ""
+        verdicts[task_id] = GateResult(bool(label), str(response or f"external predicted_label={int(label)}"))
+    return verdicts
+
+
+def external_gate(task_id: str, verdicts: dict[str, GateResult]) -> GateResult:
+    """Return an imported independent verdict; missing tasks are rejected, never admitted."""
+    return verdicts.get(str(task_id), GateResult(False, "no external gate verdict for task"))
 
 
 def _shape_ok(result, output_schema) -> bool:

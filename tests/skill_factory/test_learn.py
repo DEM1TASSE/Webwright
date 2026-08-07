@@ -58,6 +58,27 @@ def run_status_gate():
     print("test_learn status-gate OK")
 
 
+def run_external_gate():
+    """An imported independent verdict outranks the run's own SUCCESS report."""
+    import contextlib, io, tempfile
+    from webwright.skill_factory.learn import learn
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        run_dir = root / "runs" / "external_reject"
+        run_dir.mkdir(parents=True)
+        (run_dir / "task.json").write_text(json.dumps(
+            {"task": "find it", "task_id": "t1", "start_url": "https://example.com"}))
+        (run_dir / "agent_response.json").write_text(json.dumps(
+            {"status": "SUCCESS", "retrieved_data": ["looks valid"]}))
+        verdicts = root / "judge.jsonl"
+        verdicts.write_text(json.dumps({"task_id": "t1", "predicted_label": 0}))
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            learn(root / "runs", root / "lib", gate_results=verdicts)
+        assert "0/1 runs admitted by gate (external)" in buf.getvalue()
+    print("test_learn external-gate OK")
+
+
 def run_regressions():
     """F3: grouping-LLM failure must exit with an actionable one-liner, not a traceback."""
     import webwright.skill_factory.learn as L
@@ -104,6 +125,7 @@ def test_all():
     run()
     run_regressions()
     run_status_gate()
+    run_external_gate()
     run_reject_ledger()
 
 
@@ -111,4 +133,5 @@ if __name__ == "__main__":
     run()
     run_regressions()
     run_status_gate()
+    run_external_gate()
     run_reject_ledger()

@@ -16,7 +16,7 @@ import json
 from pathlib import Path
 from urllib.parse import urlparse
 
-from .gate import gate
+from .gate import external_gate, gate, load_external_verdicts
 from .library import Library
 from .llm import llm_json
 from .update import Trace, evolve
@@ -221,11 +221,12 @@ def group_chunk(runs, existing_templates):
 
 
 def learn(runs_dir, library_root, golds=None, chunk=25, dry_run=False, verify="strict",
-          rounds=2, on_fail="reference", draws=2):
+          rounds=2, on_fail="reference", draws=2, gate_results=None):
     lib = Library(library_root)
     ledger_path = Path(library_root) / ".learned.json"
     ledger = json.loads(ledger_path.read_text(encoding="utf-8")) if ledger_path.exists() else {"runs": {}}
     golds = golds or {}
+    external_verdicts = load_external_verdicts(gate_results) if gate_results else None
 
     runs = collect_runs(Path(runs_dir), ledger)
     if not runs:
@@ -234,17 +235,20 @@ def learn(runs_dir, library_root, golds=None, chunk=25, dry_run=False, verify="s
     # gate first — wrong solves never reach the grouping step
     admitted = []
     for r in runs:
-        g = (gate(r["answer"], gold=golds[r["task_id"]], method="gold")
-             if r["task_id"] in golds
-             else gate(r["answer"], method="self_verify", status=r.get("status", "")))
+        if external_verdicts is not None:
+            g = external_gate(r["task_id"], external_verdicts)
+        else:
+            g = (gate(r["answer"], gold=golds[r["task_id"]], method="gold")
+                 if r["task_id"] in golds
+                 else gate(r["answer"], method="self_verify", status=r.get("status", "")))
         r["admit"] = g.admit
         if g.admit:
             admitted.append(r)
         else:
             print(f"  gate ✗ {r['task_id']}: {g.reason}")
     print(f"{len(admitted)}/{len(runs)} runs admitted by gate "
-          f"({'gold' if golds else 'self_verify'})")
-    if not golds:
+          f"({'external' if external_verdicts is not None else 'gold' if golds else 'self_verify'})")
+    if external_verdicts is None and not golds:
         print("  ! gate=self_verify: shape check + the agent's own SUCCESS report — an answer "
               "the agent wrongly believed still PASSES. Pass --golds for real verification.")
     if not admitted:
@@ -310,6 +314,8 @@ def main(argv=None) -> int:
     p.add_argument("runs_dir", help="Folder containing webwright run directories.")
     p.add_argument("--library", default="library")
     p.add_argument("--golds", default="", help="JSON file {task_id: gold_answer} -> gold gate.")
+    p.add_argument("--gate-results", default="",
+                   help="OM2W evaluator JSONL/JSON. predicted_label=1 admits a task; missing tasks reject.")
     p.add_argument("--chunk", type=int, default=25, help="Runs per LLM grouping call.")
     p.add_argument("--dry-run", action="store_true", help="Show the grouping plan, change nothing.")
     p.add_argument("--draws", type=int, default=2, metavar="N",
@@ -328,7 +334,8 @@ def main(argv=None) -> int:
     a = p.parse_args(argv)
     golds = json.loads(Path(a.golds).read_text(encoding="utf-8")) if a.golds else {}
     learn(a.runs_dir, a.library, golds=golds, chunk=a.chunk, dry_run=a.dry_run,
-          verify=a.verify, rounds=a.verify_rounds, on_fail=a.on_fail, draws=a.draws)
+          verify=a.verify, rounds=a.verify_rounds, on_fail=a.on_fail, draws=a.draws,
+          gate_results=a.gate_results or None)
     return 0
 
 

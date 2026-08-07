@@ -201,6 +201,28 @@ Point `learn` at a folder of completed Webwright runs to distill them directly.
 python -m webwright.skill_factory learn outputs/ --library ./library
 ```
 
+For Online-Mind2Web runs, use the benchmark's independent WebJudge verdict as the input gate.
+Keep a separate checkout of the official evaluator, judge the latest clean `final_runs/run_*`
+artifacts, then pass its JSONL output to `learn`:
+
+```bash
+python -m webwright.skill_factory om2w-eval \
+  --trajectories-dir outputs/ \
+  --tasks-file /path/to/om2w_tasks.json \
+  --upstream-src /path/to/Online-Mind2Web/src \
+  --output judge_results.jsonl \
+  --model o4-mini --jobs 8
+
+python -m webwright.skill_factory learn outputs/ --library ./library \
+  --gate-results judge_results.jsonl
+```
+
+The adapter imports the upstream `WebJudge_Online_Mind2Web_eval` implementation rather than
+copying its prompts. It supplies factual actions from `final_script_log.txt` (excluding final
+answer lines) and the latest clean run's screenshots. `learn` admits only tasks whose imported
+`predicted_label` is `1`; a missing or invalid verdict fails closed. Pin the Online-Mind2Web
+checkout commit when reporting reproducible results.
+
 The repository also includes three example trajectories:
 
 ```bash
