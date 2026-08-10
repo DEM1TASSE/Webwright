@@ -1,5 +1,8 @@
 # Online-Mind2Web single-task smoke test
 
+For the current implementation status, five-site pilot findings, and a task-level comparison with
+WebVoyager, see [`docs/skill_factory/online_mind2web_webvoyager.md`](../../docs/skill_factory/online_mind2web_webvoyager.md).
+
 The smoke pipeline intentionally separates live website solves from WebJudge calls. Replace the
 example task ID as needed; no frozen subset is required.
 
