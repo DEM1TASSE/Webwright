@@ -71,6 +71,9 @@ Pilot 使用的数据和 evaluator：
 Pilot 冻结了 Recreation.gov、AKC、BBB、Healthline 和 The Weather Network 上的 14 个
 source 任务及 5 个 held-out 任务。
 
+逐任务的 scratch/routed 结果、WebJudge 失败原因及生成的 primitive library 见
+[`evals/om2w/pilot_5sites/PILOT_REPORT.zh-CN.md`](../../evals/om2w/pilot_5sites/PILOT_REPORT.zh-CN.md)。
+
 | 站点 | Source 计划数 | 可判定 | 通过准入 | Active primitives | Held-out scratch | Held-out routed | 使用 primitive？ |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
 | Recreation.gov | 3 | 3 | 3 | 2 | 1 | 1 | 否；metadata gate 跳过 |
