@@ -27,9 +27,36 @@ def load_task_map(path: str | Path) -> dict[str, str]:
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     rows = data if isinstance(data, list) else data.get("tasks", [])
     return {
-        str(row["task_id"]): str(row.get("confirmed_task") or row.get("task"))
+        str(row["task_id"]): str(
+            row.get("confirmed_task") or row.get("task_description") or row.get("task")
+        )
         for row in rows
-        if isinstance(row, dict) and row.get("task_id") and (row.get("confirmed_task") or row.get("task"))
+        if isinstance(row, dict) and row.get("task_id") and (
+            row.get("confirmed_task") or row.get("task_description") or row.get("task")
+        )
+    }
+
+
+def discover_task_dirs(root: str | Path, task_ids: set[str]) -> dict[str, Path]:
+    """Resolve the newest Webwright workspace for every task."""
+    found: dict[str, list[Path]] = {}
+    for child in Path(root).iterdir():
+        if not child.is_dir():
+            continue
+        task_id = None
+        metadata = child / "task.json"
+        if metadata.is_file():
+            try:
+                task_id = str(json.loads(metadata.read_text(encoding="utf-8")).get("task_id") or "")
+            except (OSError, ValueError):
+                pass
+        if not task_id and child.name in task_ids:
+            task_id = child.name
+        if task_id in task_ids:
+            found.setdefault(task_id, []).append(child)
+    return {
+        task_id: max(paths, key=lambda path: (path.stat().st_mtime_ns, path.name))
+        for task_id, paths in found.items()
     }
 
 
@@ -137,7 +164,8 @@ def import_upstream(src: str | Path):
         raise SystemExit(f"could not import upstream WebJudge from {src}: {exc}") from exc
 
 
-def evaluate_task(task_id: str, task_dir: Path, task: str, upstream, engine, threshold: int) -> dict:
+def evaluate_task(task_id: str, task_dir: Path, task: str, upstream, engine, threshold: int,
+                  mode: str | None = None) -> dict:
     run = latest_run(task_dir)
     if run is None:
         raise RuntimeError("no final_runs/run_* with artifacts")
@@ -151,7 +179,8 @@ def evaluate_task(task_id: str, task_dir: Path, task: str, upstream, engine, thr
     response = engine.generate(messages, max_new_tokens=8192)[0]
     return {
         "task_id": task_id,
-        "mode": "WebJudge_Online_Mind2Web_eval",
+        "mode": mode,
+        "judge_mode": "WebJudge_Online_Mind2Web_eval",
         "final_run_dir": str(run),
         "action_history": actions,
         "sandbox_screenshot_paths": screenshots,
@@ -176,6 +205,8 @@ def main(argv=None) -> int:
     p.add_argument("--score-threshold", type=int, default=3)
     p.add_argument("--jobs", type=int, default=1)
     p.add_argument("--timeout", type=int, default=600)
+    p.add_argument("--mode", choices=("scratch", "routed"),
+                   help="Optional experiment arm recorded in every verdict.")
     a = p.parse_args(argv)
     if not a.api_key:
         raise SystemExit("set OPENAI_API_KEY or pass --api-key")
@@ -186,12 +217,16 @@ def main(argv=None) -> int:
     existing = set()
     if output.exists():
         existing = {json.loads(line)["task_id"] for line in output.read_text().splitlines() if line.strip()}
-    work = [(d.name, d) for d in sorted(root.iterdir()) if d.is_dir() and d.name in tasks and d.name not in existing]
+    task_dirs = discover_task_dirs(root, set(tasks))
+    work = [(task_id, task_dirs[task_id]) for task_id in sorted(task_dirs)
+            if task_id not in existing]
 
     def one(item):
         task_id, task_dir = item
         engine = ResponsesEngine(a.model, a.api_key, a.endpoint, a.timeout)
-        return evaluate_task(task_id, task_dir, tasks[task_id], upstream, engine, a.score_threshold)
+        return evaluate_task(
+            task_id, task_dir, tasks[task_id], upstream, engine, a.score_threshold, a.mode
+        )
 
     with ThreadPoolExecutor(max_workers=max(1, a.jobs)) as pool:
         futures = {pool.submit(one, item): item[0] for item in work}
