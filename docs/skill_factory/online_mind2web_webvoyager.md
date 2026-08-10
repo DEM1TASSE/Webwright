@@ -1,188 +1,193 @@
-# Online-Mind2Web status and WebVoyager task study
+# Online-Mind2Web 现状与 WebVoyager 任务调研
 
-Updated: 2026-08-10
+更新时间：2026-08-10
 
-## Executive summary
+## 总结
 
-The Online-Mind2Web (OM2W) integration is functional end to end: Webwright can run a live task,
-convert its trajectory for the official evaluator, use upstream WebJudge as the answer-admission
-gate, build a same-site primitive catalog from admitted source runs, and run a held-out task through
-the routed path. The frozen five-site pilot validates that plumbing, but it does **not** yet measure
-primitive lift. Three sites produced eligible libraries, yet the primitive metadata gate selected
-`skip` for every held-out task because the learned primitives did not cover a material part of the
-held-out capability.
+Online-Mind2Web（OM2W）接入已经端到端跑通：Webwright 可以在真实网站上执行任务，
+将轨迹转换成官方 evaluator 所需格式，使用上游 WebJudge 作为答案准入 gate，基于通过
+WebJudge 的 source run 构建同站点 primitive catalog，再通过 routed 路径运行 held-out
+任务。
 
-WebVoyager is a better development set for testing whether primitives can be learned and reused.
-Its official data has 643 tasks over only 15 sites (41--46 tasks per site), versus OM2W's 300 tasks
-over 136 sites. This makes a same-site, same-capability, different-instance train/held-out split
-possible. WebVoyager should not replace OM2W as the final external-validity benchmark: its tasks are
-older, several are date-sensitive, and its original evaluator and maintenance policy are weaker.
+冻结的五站点 pilot 验证了整条 pipeline，但尚未测出 primitive 带来的提升。三个站点
+成功建立了合格的 primitive library，然而所有 held-out 任务都被 primitive metadata gate
+判定为 `skip`，原因是生成的 primitive 没有覆盖 held-out 任务中足够实质性的能力。
 
-Recommended use:
+WebVoyager 更适合作为验证“能否学习并复用 primitive”的开发集。它的官方数据包含 643
+个任务，但只有 15 个站点，每站 41--46 个任务；OM2W 则是 300 个任务、136 个站点。
+WebVoyager 因此可以构造同站点、同 capability、不同实例的 train/held-out split。
 
-1. Use WebVoyager to measure primitive treatment and lift.
-2. Use OM2W to measure live-site robustness, answer-gate precision, safe primitive skipping, and
-   cross-site external validity.
+但 WebVoyager 不应完全替代 OM2W：其任务更旧，部分任务依赖日期和实时内容，原始 evaluator
+和任务维护也弱于 OM2W。推荐分工如下：
 
-## 1. Online-Mind2Web: current implementation
+1. 用 WebVoyager 测 primitive treatment、成功率提升和效率收益。
+2. 用 OM2W 测真实网站鲁棒性、答案 gate 准确性、primitive 安全跳过以及外部泛化。
 
-### 1.1 Benchmark characteristics
+## 1. Online-Mind2Web 当前情况
 
-The official OM2W release contains 300 live tasks over 136 websites. The project updates tasks that
-become invalid or encounter CAPTCHA/site drift. Its WebJudge evaluation has three conceptual stages:
-key-point identification, key-screenshot selection, and outcome judgment over the task, screenshots,
-and action history. The official repository reports 86% agreement between the o4-mini WebJudge and
-human evaluation, with a 3.8 percentage-point success-rate gap.
+### 1.1 Benchmark 特征
 
-Primary references:
+官方 OM2W 包含 300 个真实在线任务，覆盖 136 个网站。项目方会更新因网页变化、CAPTCHA
+或其他原因而失效的任务。
 
-- [Online-Mind2Web official repository](https://github.com/OSU-NLP-Group/Online-Mind2Web)
+WebJudge 的评测分为三个概念阶段：
+
+1. 识别完成任务必须满足的关键点。
+2. 从轨迹中选择关键截图。
+3. 根据任务、关键点、截图和 action history 判断结果。
+
+官方仓库报告，使用 o4-mini 的 WebJudge 与人工判断的一致率为 86%，成功率差距为 3.8
+个百分点。
+
+主要来源：
+
+- [Online-Mind2Web 官方仓库](https://github.com/OSU-NLP-Group/Online-Mind2Web)
 - [Online-Mind2Web leaderboard](https://hal.cs.princeton.edu/online_mind2web)
 
-### 1.2 Code now present on this branch
+### 1.2 当前分支已有实现
 
-The branch `dev-online-mind2web-gate` contains:
+分支 `dev-online-mind2web-gate` 包含：
 
-| Component | Path | Purpose |
+| 组件 | 路径 | 用途 |
 | --- | --- | --- |
-| Official evaluator adapter | `src/webwright/skill_factory/om2w_eval.py` | Converts Webwright runs and invokes the upstream OM2W evaluator |
-| Answer/admission gate | `src/webwright/skill_factory/gate.py` | Admits only source runs accepted by WebJudge |
-| Single-task paired runner | `evals/om2w/smoke_pipeline.py` | Runs scratch/routed arms, materializes verdicts, and compares them |
-| Primitive builder | `evals/om2w/build_generated_primitives.py` | Builds a site catalog from WebJudge-admitted source families |
-| Primitive catalog/retrieval | `src/webwright/skill_factory/primitive_catalog.py`, `primitive_retrieve.py` | Stores primitives and performs metadata-only treatment selection |
-| Frozen pilot split | `evals/om2w/pilot_5sites/manifest.json` | Fixes source and held-out IDs before judging |
-| Pilot summary | `evals/om2w/pilot_5sites/results.json` | Records outcomes and whether primitive treatment actually occurred |
+| 官方 evaluator adapter | `src/webwright/skill_factory/om2w_eval.py` | 转换 Webwright 轨迹并调用 OM2W 上游 evaluator |
+| Answer/admission gate | `src/webwright/skill_factory/gate.py` | 只允许 WebJudge 接纳的 source run 进入学习阶段 |
+| 单任务 paired runner | `evals/om2w/smoke_pipeline.py` | 运行 scratch/routed、物化 verdict 并比较结果 |
+| Primitive builder | `evals/om2w/build_generated_primitives.py` | 从通过 WebJudge 的 source family 建立站点 catalog |
+| Primitive catalog/retrieval | `src/webwright/skill_factory/primitive_catalog.py`、`primitive_retrieve.py` | 存储 primitive，并通过 metadata-only gate 选择 treatment |
+| 冻结 pilot split | `evals/om2w/pilot_5sites/manifest.json` | 在运行前固定 source 和 held-out ID |
+| Pilot 结果 | `evals/om2w/pilot_5sites/results.json` | 记录结果以及是否真正发生 primitive treatment |
 
-Dataset and evaluator used for the pilot:
+Pilot 使用的数据和 evaluator：
 
-- Dataset: `Online_Mind2Web.json`, 300 tasks, SHA-256
-  `7dedf381531d423dc0fc48d21dc1d425655dd75f38b10211a880fa09102f257f`.
-- Upstream evaluator commit: `f0d805ee0e9e0b3ea70911e45e5264b72968f3dc`.
-- Judge: `o4-mini`, admission threshold 3.
-- Complete generated artifacts: `/home/t-demiwang/om2w-pilot-5sites`.
+- 数据集：`Online_Mind2Web.json`，300 个任务。
+- 数据集 SHA-256：`7dedf381531d423dc0fc48d21dc1d425655dd75f38b10211a880fa09102f257f`。
+- 上游 evaluator commit：`f0d805ee0e9e0b3ea70911e45e5264b72968f3dc`。
+- Judge：`o4-mini`，准入阈值为 3。
+- 完整运行产物：`/home/t-demiwang/om2w-pilot-5sites`。
 
-### 1.3 Five-site pilot result
+### 1.3 五站点 pilot 结果
 
-The pilot froze 14 source tasks and five held-out tasks over Recreation.gov, AKC, BBB,
-Healthline, and The Weather Network.
+Pilot 冻结了 Recreation.gov、AKC、BBB、Healthline 和 The Weather Network 上的 14 个
+source 任务及 5 个 held-out 任务。
 
-| Site | Source planned | Judgeable | Admitted | Active primitives | Held-out scratch | Held-out routed | Primitive used? |
+| 站点 | Source 计划数 | 可判定 | 通过准入 | Active primitives | Held-out scratch | Held-out routed | 使用 primitive？ |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| Recreation.gov | 3 | 3 | 3 | 2 | 1 | 1 | No; metadata gate skipped |
-| AKC | 3 | 3 | 2 | 2 | 1 | 1 | No; metadata gate skipped |
-| BBB | 3 | 3 | 3 | 1 | 0 | no final artifact | No; metadata gate skipped |
-| Healthline | 3 | 1 | 1 | 0 | not run | not run | Ineligible library |
-| The Weather Network | 2 | 2 | 1 | 0 | not run | not run | Ineligible library |
+| Recreation.gov | 3 | 3 | 3 | 2 | 1 | 1 | 否；metadata gate 跳过 |
+| AKC | 3 | 3 | 2 | 2 | 1 | 1 | 否；metadata gate 跳过 |
+| BBB | 3 | 3 | 3 | 1 | 0 | 未产生 final artifact | 否；metadata gate 跳过 |
+| Healthline | 3 | 1 | 1 | 0 | 未运行 | 未运行 | Library 不满足准入条件 |
+| The Weather Network | 2 | 2 | 1 | 0 | 未运行 | 未运行 | Library 不满足准入条件 |
 
-Totals:
+汇总：
 
-- 12 of 14 source tasks were judgeable.
-- 10 of 12 judgeable sources passed WebJudge.
-- Three of five sites met the minimum two-admitted-family library requirement.
-- Two held-out pairs produced verdicts for both arms; both were `scratch=1, routed=1`.
-- Zero held-out pairs received primitive treatment, so no primitive effect size can be computed.
+- 14 个 source 中有 12 个可以交给 Judge。
+- 12 个可判定 source 中有 10 个通过 WebJudge。
+- 5 个站点中有 3 个达到“至少两个通过准入的 source family”要求。
+- 两个 held-out pair 的两个 arm 都产生了 verdict，结果均为 `scratch=1, routed=1`。
+- 没有任何 held-out 任务真正使用 primitive，因此不能计算 primitive effect size。
 
-`routed=1` only says that a task entered the routed pipeline and its eventual answer passed
-WebJudge. It does not prove that a primitive was selected. A valid treatment analysis must record
-both the answer verdict and `primitive_treatment=true|false`.
+`routed=1` 只表示任务进入 routed pipeline 后，其最终答案通过了 WebJudge；它不表示
+primitive 被选择。正式 treatment 分析必须同时记录答案 verdict 和
+`primitive_treatment=true|false`。
 
-### 1.4 Why the primitive metadata gate skipped
+### 1.4 Primitive metadata gate 为什么全部 skip
 
-The source WebJudge gate and the held-out primitive gate are different:
+Source WebJudge gate 和 held-out primitive gate 是两道不同的 gate：
 
-1. WebJudge decides whether a completed source trajectory is trustworthy enough to learn from.
-2. The metadata gate decides whether an existing primitive materially helps the current held-out
-   task without inspecting its code.
+1. WebJudge 判断 source trajectory 是否成功、是否值得用于学习。
+2. Primitive metadata gate 判断已有 primitive 是否能实质性帮助当前 held-out 任务。
 
-The metadata gate is instructed to skip when acquiring a primitive's prerequisites is itself the
-main work, or when the primitive only provides marginal help. The pilot behaved accordingly:
+Metadata gate 的规则要求：如果获得 primitive 所需前置状态本身就是任务的主要工作，或
+primitive 只能提供边缘帮助，就应当选择 `skip`。
 
-| Site | Learned capability | Held-out capability | Reason for skip |
+| 站点 | 学到的能力 | Held-out 能力 | Skip 原因 |
 | --- | --- | --- | --- |
-| Recreation.gov | Navigate to an already identified facility; open a facility detail tab | Search by activity and location to identify a park | Search and entity selection remained the main unresolved work |
-| AKC | Dismiss cookies; navigate to an AKC destination | Use breed traits to identify an energetic hairless dog with medium barking | No breed-selector or trait-filter primitive existed |
-| BBB | Dismiss recurring overlays | Search dealers, rank the second result, and enumerate all locations | Overlay dismissal was marginal to the core task |
+| Recreation.gov | 进入已知 facility 页面；打开 facility detail tab | 根据 activity 和 location 搜索并识别公园 | 搜索和实体选择仍是主要工作 |
+| AKC | 关闭 cookie；跳转到 AKC 子页面 | 根据 energetic、hairless、barking 等 trait 选择犬种 | 没有 breed selector 或 trait filter primitive |
+| BBB | 关闭反复出现的 overlay | 搜索 dealer、选择排名第二的结果、列出所有 locations | 关闭 overlay 对核心任务帮助过小 |
 
-The pilot used completely different source and held-out families. The builder was also required to
-find support across multiple admitted source families. Their intersection naturally collapsed to
-generic navigation, tabs, and overlay handling. A held-out task from yet another family then had
-little reason to select those primitives. The gate is therefore not the main failure; the split and
-abstraction target were misaligned with a reuse experiment.
+Pilot 使用了完全不同的 source family 和 held-out family，同时 builder 又要求 primitive
+必须得到多个已准入 source family 的支持。多个 family 的交集自然容易退化成通用导航、
+tab 和 overlay 操作。Held-out 又来自另一个 family，于是 gate 没有理由选择它们。
 
-### 1.5 Operational issues found
+因此 gate 本身不是主要问题；问题是 split 与预期复用能力没有对齐。
 
-- Healthline returned CloudFront 403 pages on two source tasks. These are site-infrastructure
-  failures, not agent or WebJudge failures.
-- Several Webwright child processes stayed alive after writing final artifacts. The pilot had to
-  verify the artifact and terminate the waiting parent manually. Batch execution needs an explicit
-  post-final exit/timeout policy.
-- Routed execution must receive `SKILL_MODEL_ENDPOINT`, `SKILL_MODEL_NAME`, and credentials. A model
-  gateway YAML used by the browser agent does not automatically configure the primitive router.
-  Without these variables, routing can fall back to the default OpenAI endpoint and fail with 401.
-- A routed arm can safely fall back to scratch. Reports must distinguish `routed` from actual
-  primitive selection, preferably with `route_stage`, `route_decision`, primitive IDs, and content
-  hashes as required fields.
-- OM2W's low per-site density makes a statistically useful same-site reuse split difficult. Sites
-  with only two or three tasks cannot simultaneously support multiple admitted source families and
-  a capability-overlapping held-out set.
+### 1.5 已发现的运行问题
 
-## 2. WebVoyager official task set
+- Healthline 在两个 source 任务中返回 CloudFront 403。这属于站点基础设施失败，不应算作
+  agent 或 WebJudge 失败。
+- 多个 Webwright child process 在写出 final artifact 后仍未退出。Pilot 只能先验证
+  artifact 完整，再手动结束等待中的 parent process。批量运行需要明确的 post-final
+  exit/timeout 策略。
+- Routed execution 必须显式获得 `SKILL_MODEL_ENDPOINT`、`SKILL_MODEL_NAME` 和凭证。
+  Browser agent 使用的 gateway YAML 不会自动配置 primitive router。缺少这些环境变量时，
+  router 可能回退到默认 OpenAI endpoint 并返回 401。
+- Routed arm 可能安全回退到 scratch。报告必须区分 routed pipeline 和真正的 primitive
+  selection，建议强制记录 `route_stage`、`route_decision`、primitive ID 和 content hash。
+- OM2W 每站任务过少。只有两三个任务的站点难以同时组成多个 source family 和具有能力
+  重叠的 held-out 集合。
 
-### 2.1 Dataset and evaluation
+## 2. WebVoyager 官方任务集
 
-The official `data/WebVoyager_data.jsonl` contains exactly 643 tasks. Each record has `web_name`,
-`id`, `ques`, and starting `web`. The accompanying `reference_answer.json` contains site-grouped
-answers, commonly marked `possible` when multiple or changing answers may be acceptable.
-The counts and examples below were computed from official repository commit
-`5a7896738c10bfb8b9edccce6bb0e0411f8ae569`.
+### 2.1 数据集与评测
 
-The original evaluator provides the task, the agent response, and the last *k* screenshots to
-GPT-4V. The paper reports 85.3% agreement with human judgments when the full trajectory is used.
-The repository explicitly notes that Booking and Google Flights tasks are time-sensitive and that
-their dates must be manually updated before execution.
+官方 `data/WebVoyager_data.jsonl` 恰好包含 643 个任务。每条记录包括 `web_name`、`id`、
+`ques` 和起始 `web`。配套的 `reference_answer.json` 按站点保存答案，其中很多答案标记为
+`possible`，表示可能存在多个可接受答案，或答案会随实时网页变化。
 
-Primary references:
+以下统计和例子来自官方仓库 commit：
+`5a7896738c10bfb8b9edccce6bb0e0411f8ae569`。
 
-- [WebVoyager official repository and task instructions](https://github.com/MinorJerry/WebVoyager)
-- [WebVoyager paper](https://arxiv.org/abs/2401.13919)
+原始 evaluator 会把任务、agent 回答和最后若干张截图交给 GPT-4V。论文报告，在使用完整
+trajectory 时，自动评测与人工判断的一致率为 85.3%。官方仓库明确指出 Booking 和
+Google Flights 的任务具有时间敏感性，运行前需要手动更新日期。
 
-### 2.2 Exact site distribution and concrete task families
+主要来源：
 
-| Site | Tasks | Dominant task families | Concrete official task examples | Primitive-fit assessment |
+- [WebVoyager 官方仓库和任务说明](https://github.com/MinorJerry/WebVoyager)
+- [WebVoyager 论文](https://arxiv.org/abs/2401.13919)
+
+### 2.2 精确站点分布与具体任务类型
+
+| 站点 | 任务数 | 主要任务类型 | 官方任务例子 | Primitive 适配判断 |
 | --- | ---: | --- | --- | --- |
-| Allrecipes | 45 | Recipe search, multi-constraint filtering, recipe-detail extraction, ingredients/instructions/nutrition | Find vegetarian lasagna with rating/review constraints; find a cauliflower crust under a prep-time threshold and report calories | **High**: repeated search-filter-detail-extract flow |
-| Amazon | 41 | Product search, facets, rating/price constraints, product detail, comparison, cart | Find black size-7 running shoes under $50 and add to cart; find an ergonomic keyboard in a price range with 500+ reviews | Medium mechanically, but bot protection, volatile inventory, and cart mutation are major risks |
-| Apple | 43 | Product/spec lookup, model comparison, configuration options, pricing, support content | Compare latest MacBook Air prices; inspect keyboard options while configuring a 14-inch MacBook Pro | Medium-high: stable navigation/configuration primitives, but products and prices change |
-| ArXiv | 43 | Basic/advanced search, category/date filtering, result counts, paper detail, submission/help pages | Compare quantum-computing result counts in q-ph versus all archives; find the latest statistics ML paper and its abstract | **High**: stable, structured, repeatable query and detail flows |
-| BBC News | 42 | Section navigation, latest article, named article lookup, summarization | Find the latest Green Living article; find a named climate guide and extract causal activities | Medium: navigation repeats, but answers and “latest” tasks drift rapidly |
-| Booking | 44 | Destination/date/guest entry, amenity filters, rating/sort, price/currency | Find a Paris hotel for two adults with free cancellation; count London hotels after breakfast and fitness filters | Low for a frozen pilot: nearly all supplied dates are stale and availability is volatile |
-| Cambridge Dictionary | 43 | Word lookup, UK/US pronunciation, definition, examples, grammar pages | Look up definition and pronunciation of “sustainability”; retrieve UK/US pronunciations and an example for “procrastination” | **High**: dense near-template instances and stable page structure |
-| Coursera | 42 | Course search, level/duration/institution filters, course detail, syllabus, review distribution | Find a beginner 3D-printing course lasting 1--3 months; inspect star-rating percentages for a named Stanford course | **High/medium**: strong reusable flows, with some login/UI drift risk |
-| ESPN | 44 | Scores, schedules, standings, leaders, team/player detail, sports news | Get current NBA Eastern standings; report the top scorer in the latest completed NBA game | Medium: strong repeated structure, but highly time-sensitive outputs |
-| GitHub | 41 | Repository search qualifiers, stars/update/language filters, repository detail, contributors, product docs | Find a Python repository updated in two days with 500+ stars; find a blockchain repository and list its top five contributors | **High**: query syntax and repo-detail primitives are reusable; avoid signup/account tasks |
-| Google Flights | 42 | Origin/destination/date entry, trip type, stops/airline filters, cheapest/shortest sorting | Find the cheapest NYC–Tokyo round trip; compare nonstop prices and duration | Low: all dated instances are stale, prices fluctuate, and UI/locale variation is high |
-| Google Map | 41 | Place/category search, geographic proximity, rating/open-hours filters, place details, reviews | Find five Seattle salons rated above 4.8; locate a 24-hour lot near Brooklyn Bridge and summarize reviews | Medium-high capability reuse, but consent, localization, and result nondeterminism complicate evaluation |
-| Google Search | 43 | Fact lookup, sports/current charts, knowledge panels, broad web search, some account/login tasks | Find a movie release date; find the latest Phoenix Suns score | Low for primitive learning: the website action is shallow and task domains are heterogeneous |
-| Huggingface | 43 | Model/dataset/Space search, task/library/language filters, popularity sorting, model-card/docs extraction | Find a sentiment-analysis model updated in March 2023; identify the most downloaded en-zh translation model and report metrics/usage | **High**: repeated structured search-detail-documentation flows |
-| Wolfram Alpha | 46 | Submit structured query, inspect result pods, mathematical/scientific computation | Compute a definite integral; request a differential-equation solution; calculate geomagnetic field for a place/date | **High** for query/result primitives, though many tasks test query formulation more than navigation |
+| Allrecipes | 45 | Recipe 搜索、多条件过滤、详情、ingredients/instructions/nutrition 提取 | 查找满足评分和评论数约束的素食千层面；查找准备时间低于阈值的 cauliflower crust 并报告 calories | **高**：重复的 search-filter-detail-extract 流程 |
+| Amazon | 41 | 商品搜索、facet、价格/评分过滤、详情、比较、购物车 | 查找低于 50 美元的黑色 7 码跑鞋并加入购物车；查找指定价格区间且评论数超过 500 的键盘 | 机械复用性中等，但反爬、库存变化和购物车副作用风险高 |
+| Apple | 43 | 产品规格、型号比较、配置选项、定价、support 内容 | 比较最新 MacBook Air 价格；查看 14 英寸 MacBook Pro 配置中的键盘选项 | 中高：导航和配置可复用，但产品和价格会变化 |
+| ArXiv | 43 | 基础/高级搜索、分类/日期过滤、结果计数、论文详情、help 页面 | 比较 quantum computing 在 q-ph 和全部 archive 的结果数；查找最新 statistics ML 论文及其摘要 | **高**：页面结构稳定，query/detail 流程重复 |
+| BBC News | 42 | Section 导航、最新文章、指定文章、总结 | 查找最新 Green Living 文章；找到指定 climate guide 并提取原因 | 中等：导航可复用，但 latest 和答案快速变化 |
+| Booking | 44 | 地点/日期/人数输入、amenity filter、评分/排序、价格/币种 | 查找适合两人的巴黎酒店并要求免费取消；过滤伦敦酒店后统计结果数 | 首轮不推荐：原始日期大量过期且 availability 高度变化 |
+| Cambridge Dictionary | 43 | 单词查询、英美发音、definition、example、grammar | 查询 sustainability 的定义和发音；查询 procrastination 的英美发音与例句 | **高**：大量密集的近模板实例，结构稳定 |
+| Coursera | 42 | 课程搜索、level/duration/institution filter、课程详情、syllabus、review distribution | 查找持续 1--3 个月的 3D printing 初级课程；查看指定 Stanford 课程的星级占比 | **中高**：复用链路较强，但存在登录和 UI 漂移风险 |
+| ESPN | 44 | 比分、赛程、standings、leaders、team/player detail、新闻 | 获取当前 NBA 东部排名；报告最近一场 NBA 比赛的得分王 | 中等：结构重复，但内容高度时间敏感 |
+| GitHub | 41 | Repository qualifier 搜索、stars/update/language 过滤、repo 详情、contributors、文档 | 查找两天内更新且超过 500 stars 的 Python repo；查找 blockchain repo 并列出前五名 contributors | **高**：query 和 repo-detail primitive 可复用；应排除 signup 任务 |
+| Google Flights | 42 | 出发地/目的地/日期、trip type、stops/airline filter、最便宜/最短排序 | 查找 NYC 到 Tokyo 的最低价往返航班；比较直飞价格和时长 | 低：日期过期、价格变化、UI 和地区差异明显 |
+| Google Map | 41 | 地点/类别搜索、距离、评分/营业时间过滤、详情、评论 | 查找五个评分高于 4.8 的 Seattle salon；找 Brooklyn Bridge 附近 24 小时停车场并总结评论 | 能力复用性中高，但 consent、地区和结果不确定性较强 |
+| Google Search | 43 | 事实查询、体育、排行榜、knowledge panel、开放搜索、少量登录任务 | 查询电影上映日期；查询 Phoenix Suns 最近比赛得分 | 对 primitive 学习较弱：入口浅，任务领域非常分散 |
+| Hugging Face | 43 | Model/dataset/Space 搜索、task/library/language filter、排序、model card/docs | 查找 2023 年 3 月更新的 sentiment model；找下载最多的 en-zh 翻译模型并报告 metrics/usage | **高**：结构化 search-detail-documentation 流程重复 |
+| Wolfram Alpha | 46 | 结构化 query、result pod、数学和科学计算 | 计算定积分；求解微分方程；查询指定地点和日期的地磁场 | Query/result primitive 复用性高，但更偏 query formulation 而非复杂导航 |
 
-Task counts sum to 643. The range is 41--46 tasks per site, consistent with the paper's statement
-that each site contains roughly 40--45 tasks (the released Wolfram Alpha group has 46).
+总数为 643。各站点任务数为 41--46，与论文中“每站约 40--45 个任务”的描述基本一致；
+正式发布数据中的 Wolfram Alpha 有 46 条。
 
-### 2.3 Approximate template and cross-template distribution
+### 2.3 Template 与 cross-template 分布（粗略分析）
 
-WebVoyager does not provide template or capability-family labels. The analysis below is therefore an
-audit-derived taxonomy, not an official annotation. It uses two views:
+WebVoyager 官方没有提供 template 或 capability-family 标签。以下分类是调研得到的启发式
+taxonomy，不是数据集原生标注。
 
-1. Manual inspection of the operation skeleton required by every task on the most promising sites.
-2. A conservative lexical check: quoted entities and numbers are normalized, common instruction
-   words are removed, and each task's maximum token-Jaccard similarity to another task on the same
-   site is measured. This lexical score detects obvious near templates but misses semantic templates
-   whose entities are unquoted, so it is a lower bound rather than a cluster assignment.
+分析使用了两个视角：
 
-#### Lexical near-template lower bound
+1. 人工查看任务实际要求的操作骨架。
+2. 保守的词汇近似检查：归一化引号中的实体和数字，移除常见 instruction words，然后
+   计算每个任务与同站点其他任务之间最大的 token-Jaccard similarity。
 
-| Site | Tasks | Median best-match similarity | Tasks with best match >= 0.35 | Tasks with best match >= 0.50 |
+词汇相似度只能识别明显的近模板。Amazon、Booking、Maps 等任务中的实体和日期通常没有
+引号，会显著降低分数。因此这张表只能视为近模板数量的下界，不能直接当 cluster label。
+
+#### 词汇近模板下界
+
+| 站点 | 任务数 | 最佳匹配相似度中位数 | 最佳匹配 >= 0.35 | 最佳匹配 >= 0.50 |
 | --- | ---: | ---: | ---: | ---: |
 | Allrecipes | 45 | 0.38 | 28 | 7 |
 | Amazon | 41 | 0.17 | 0 | 0 |
@@ -200,46 +205,39 @@ audit-derived taxonomy, not an official annotation. It uses two views:
 | Hugging Face | 43 | 0.26 | 12 | 4 |
 | Wolfram Alpha | 46 | 0.12 | 0 | 0 |
 
-The low Amazon, Booking, Maps, and Wolfram scores do not mean those sites lack templates. Their
-entities, locations, dates, or mathematical expressions dominate the words and were not always
-quoted, while the browser operation skeleton remains highly repetitive.
+#### 人工操作骨架判断
 
-#### Manual operation-skeleton assessment
-
-| Distribution type | Sites | Approximate interpretation |
+| 分布类型 | 站点 | 粗略解释 |
 | --- | --- | --- |
-| One dominant repeated skeleton | Allrecipes, Amazon, Booking, Google Flights, Google Map, Wolfram Alpha | Roughly three quarters or more of tasks repeat one form/search-result-detail flow with different entities and constraints |
-| One dominant family plus small side families | Cambridge Dictionary, Apple, BBC News, ESPN | A majority repeats lookup/detail or section/detail; the remainder covers grammar, configuration, standings, games, support, or marketing pages |
-| Several connected families | ArXiv, Coursera, GitHub, Hugging Face | Search/discovery, result filtering, entity detail, and documentation are distinct templates connected by reusable navigation primitives |
-| Shared shallow entry point but heterogeneous goals | Google Search | Most tasks share only issuing a search; downstream domains and evidence needs differ substantially |
+| 单一重复骨架占主导 | Allrecipes、Amazon、Booking、Google Flights、Google Map、Wolfram Alpha | 约四分之三或更多任务重复同一个 form/search-result-detail 流程，主要变化是实体和约束 |
+| 一个主 family 加少量旁支 | Cambridge Dictionary、Apple、BBC News、ESPN | 多数任务重复 lookup/detail 或 section/detail，其余涉及 grammar、配置、排名、游戏、support 或 marketing 页面 |
+| 多个相互连接的 family | ArXiv、Coursera、GitHub、Hugging Face | Search、filter、entity detail 和 documentation 是不同 template，但由可复用的中间导航能力连接 |
+| 入口相同但目标高度异质 | Google Search | 多数任务只共享“发起一次搜索”，后续领域和证据需求差异很大 |
 
-Approximate dominant-family observations from task-by-task inspection:
+逐任务查看后，几个重点站点大致如下：
 
-- **Allrecipes:** 41 of 45 tasks follow recipe discovery/detail extraction. Output requirements vary
-  among ingredients, instructions, time, ratings, reviews, nutrition, storage, and latest review.
-  This is primarily a same-template parameterization set, with useful sub-template variation after
-  the recipe page is opened.
-- **Cambridge Dictionary:** roughly two dozen tasks are direct word lookup plus some combination of
-  definition, UK/US pronunciation, IPA, meaning, and example sentences. Eight tasks form a separate
-  grammar-page family; translation/thesaurus, quizzes/games, shop, and locale switching form smaller
-  families.
-- **GitHub:** repository discovery/search is the largest family. Repository inspection then branches
-  into contributors, releases, commits, changed files, issues, wiki, README, language, stars, and
-  forks. Pricing, Copilot, Skills, customer stories, and signup are separate site-content families.
-- **ArXiv:** the largest connected component contains keyword/category/date/author/journal-reference
-  search, result counts, latest-category browsing, and paper-detail extraction. Help/policy,
-  organization/blog, and store/cart tasks are separate families.
-- **Hugging Face:** model search/filter/rank and model-card extraction form the largest component.
-  Dataset search/detail, Spaces/inference interaction, documentation, blogs/daily papers, pricing,
-  and organization content form additional families.
-- **Coursera:** course discovery/filtering and named-course inspection dominate. Course details
-  branch into modules, duration, rating histograms, instructors, skills, and reviews. Specialization,
-  degree, partner, Plus/Business, and homepage browsing are related but distinct templates.
+- **Allrecipes：**45 个任务中约 41 个属于 recipe discovery/detail extraction。区别主要是
+  ingredients、instructions、time、ratings、reviews、nutrition、storage 和 latest review
+  等输出字段。这更像同模板参数变化，而非真正的跨模板迁移。
+- **Cambridge Dictionary：**约二十多个任务是单词查询，再组合 definition、英美发音、
+  IPA、meaning 和 example sentence。另有 8 个 grammar family，以及 translation、
+  thesaurus、quiz/game、shop 和语言切换等小 family。
+- **GitHub：**repository discovery/search 是最大 family。进入 repository 后，又分支到
+  contributors、releases、commits、changed files、issues、wiki、README、language、stars
+  和 forks。Pricing、Copilot、Skills、customer stories 和 signup 属于其他 family。
+- **ArXiv：**最大连通部分包括 keyword/category/date/author/journal-reference search、结果
+  计数、latest-category browse 和 paper detail。Help/policy、organization/blog、store/cart
+  是独立 family。
+- **Hugging Face：**model search/filter/rank 和 model-card extraction 是最大部分。其他
+  family 包括 dataset、Spaces/inference、documentation、blog/daily paper、pricing 和组织内容。
+- **Coursera：**course discovery/filter 和 named-course inspection 占主导。详情页又分成
+  modules、duration、rating histogram、instructor、skills 和 reviews。Specialization、
+  degree、partner、Plus/Business 等是相关但不同的 template。
 
-#### Where genuine cross-template transfer exists
+#### 真正存在 cross-template transfer 的位置
 
-The best cross-template sites are not necessarily those with the most near duplicates. They have a
-graph of different task endpoints connected through reusable intermediate browser states:
+最好的 cross-template 站点不一定是近重复最多的站点。更重要的是：不同最终任务之间存在
+实质性的共享中间状态。
 
 ```text
 GitHub repository search
@@ -248,77 +246,75 @@ GitHub repository search
 
 ArXiv query/category browse
   -> result list
-      -> paper abstract | versions | HTML | PDF-derived inspection
+      -> paper abstract | versions | HTML | PDF inspection
 
 Hugging Face model search/filter
   -> model page
-      -> model metadata | model card | metrics | usage | linked Spaces
+      -> metadata | model card | metrics | usage | linked Spaces
 
 Coursera course search/filter
   -> course or specialization page
       -> modules | reviews | instructor | skills | included courses
 ```
 
-These are useful cross-template relationships because the held-out goal differs while a material
-intermediate capability remains shared. They are unlike the failed OM2W pilot, where the shared
-primitive often ended before the held-out task's main work began.
+这些关系适合 cross-template 实验，因为 held-out 的最终目标不同，但仍共享一个重要的中间
+能力。它们不同于失败的 OM2W pilot：OM2W 中的共享 primitive 通常在 held-out 的主要工作
+开始前就结束了。
 
-By contrast:
+相对而言：
 
-- Allrecipes and Cambridge Dictionary are excellent **same-template/generalized-parameter** test
-  beds, but a random split would be too easy and vulnerable to near-duplicate leakage.
-- Booking and Google Flights contain strong repeated templates, but stale dates and volatile live
-  results make them poor first experiments.
-- Google Search and Wolfram Alpha mostly test query formulation and answer extraction. A primitive
-  that only enters a query may reduce steps without demonstrating rich website skill reuse.
+- Allrecipes 和 Cambridge Dictionary 很适合做**同模板、不同参数**实验，但随机 split
+  太容易发生 near-duplicate leakage。
+- Booking 和 Google Flights 虽然模板重复很强，但日期过期和实时结果变化使其不适合首轮。
+- Google Search 和 Wolfram Alpha 的主要难点是 query formulation 和答案提取。只学会输入
+  query 的 primitive 可能减少步骤，但很难证明复杂网站技能复用。
 
-### 2.4 What the concrete tasks imply for primitive learning
+### 2.4 这些任务对 primitive 学习意味着什么
 
-WebVoyager contains several naturally repeated capabilities:
+WebVoyager 中有若干天然重复的 capability：
 
-- **Search/filter/detail:** Allrecipes, Amazon, Coursera, GitHub, Hugging Face.
-- **Structured query/result extraction:** ArXiv, Cambridge Dictionary, Wolfram Alpha.
-- **Location search/detail/reviews:** Google Maps.
-- **Date-driven form filling and sorting:** Booking and Google Flights.
-- **Section/latest/detail extraction:** BBC and ESPN.
-- **Product selection/configuration:** Apple and Amazon.
+- **Search/filter/detail：**Allrecipes、Amazon、Coursera、GitHub、Hugging Face。
+- **结构化 query/result extraction：**ArXiv、Cambridge Dictionary、Wolfram Alpha。
+- **地点搜索、详情和评论：**Google Maps。
+- **日期表单和排序：**Booking、Google Flights。
+- **Section/latest/detail：**BBC、ESPN。
+- **产品选择和配置：**Apple、Amazon。
 
-This density lets the experiment separate task identity from capability. For example, a GitHub
-repository-search primitive can be trained on climate and quantum queries and held out on blockchain
-queries. Entities, dates, thresholds, and answers remain unseen, while the reusable capability is
-present. This is a stricter and more informative test than random splitting, but less pathological
-than holding out a completely unrelated task family.
+这种任务密度允许我们将 task identity 与 capability 分开。例如，GitHub repository-search
+primitive 可以用 climate 和 quantum query 训练，再用 blockchain query 做 held-out。实体、
+日期、阈值和答案均未见过，但可复用 capability 仍然存在。
 
-### 2.5 Data-quality and leakage risks
+这种测试比随机 split 严格，又不像当前 OM2W pilot 那样把 held-out 换成完全无关的 family。
 
-- Many tasks are near-template paraphrases. A random task split will overstate generalization.
-- Reference answers include old ratings, review counts, prices, standings, model metadata, and
-  2023/2024 dates. They cannot be treated as immutable gold answers on the live web.
-- Booking and Google Flights explicitly require date rewriting. Rewriting must happen before the
-  split is frozen and must be recorded in a task-instantiation manifest.
-- Cart, signup, login, and account-related tasks should be excluded from an initial read-only pilot.
-- “Latest”, “highest rated”, prices, availability, and review-count constraints require trajectory
-  evidence and a live judge; string matching against the old reference answer is insufficient.
-- Google Search offers many tasks but little common website-operation depth, so it is a poor test of
-  a site primitive library even though individual answers may be easy.
+### 2.5 数据质量与泄漏风险
 
-## 3. Recommended WebVoyager primitive pilot
+- 很多任务是近模板改写。随机切分会高估泛化能力。
+- Reference answers 包含旧的评分、评论数、价格、排名、模型信息和 2023/2024 日期，不能
+  直接作为当前 live web 的固定 gold answer。
+- Booking 和 Google Flights 明确需要重写日期。必须先完成任务实例化，再冻结 split，并在
+  manifest 中记录修改。
+- 初始 read-only pilot 应排除 cart、signup、login 和 account 任务。
+- `latest`、最高评分、价格、availability 和 review count 必须依赖 trajectory evidence 和
+  live judge，不能只与旧 reference answer 做字符串匹配。
+- Google Search 的任务很多，但站点操作深度很小，因此不适合验证 site primitive library。
 
-### 3.1 Initial sites
+## 3. 推荐的 WebVoyager primitive pilot
 
-Start with five read-only, capability-dense sites:
+### 3.1 首批站点
+
+先选择五个只读、capability 密集的站点：
 
 1. ArXiv
 2. Cambridge Dictionary
 3. GitHub
 4. Hugging Face
-5. Allrecipes or Coursera, chosen after a live accessibility smoke test
+5. Allrecipes 或 Coursera，根据 live accessibility smoke test 决定
 
-Keep Wolfram Alpha as the first replacement. Avoid Amazon, Booking, and Google Flights initially.
+Wolfram Alpha 作为第一替补。首轮避免 Amazon、Booking 和 Google Flights。
 
-### 3.2 Split unit and admission rules
+### 3.2 Split 单位和准入规则
 
-Do not randomly split raw tasks. First annotate each task with:
+不能直接随机切分原始任务。应先为每条任务标注：
 
 - `site`
 - `capability_family`
@@ -329,59 +325,56 @@ Do not randomly split raw tasks. First annotate each task with:
 - `requires_login`
 - `live_validated_at`
 
-For each selected site, target 20 tasks across at least three capability families:
+每个站点先选择 20 个任务，至少覆盖三个 capability family：
 
-- 12 source/train tasks
-- 8 held-out tasks
-- at least two source examples and two held-out examples per measured capability
-- no identical entity/query, answer, or near-duplicate wording across arms
-- capability overlap required, exact template identity not required
+- 12 个 source/train
+- 8 个 held-out
+- 每个被评测 capability 至少有两个 source 和两个 held-out
+- 两个 arm 之间不能出现相同实体、query、答案或近重复措辞
+- 必须存在 capability overlap，但不要求 template 完全相同
 
-Freeze task IDs, rewritten dates if any, family labels, dataset commit, and judge configuration before
-running any source or held-out arm.
+在运行前冻结 task ID、修改后的日期、family label、数据集 commit 和 judge 配置。
 
-Use two explicitly separated evaluation tracks:
+实验应明确拆成两条 track：
 
-- **Within-template generalization:** same operation skeleton, disjoint entities and constraints.
-  This establishes whether the primitive mechanism works at all.
-- **Cross-template transfer:** different task endpoints with a preregistered shared intermediate
-  capability, such as GitHub repository discovery followed by held-out release or issue inspection.
+- **Within-template generalization：**操作骨架相同，但实体和约束不同。先证明 primitive
+  机制本身确实能够工作。
+- **Cross-template transfer：**最终任务目标不同，但预注册一个共享的实质性中间能力，
+  例如 GitHub repository discovery 迁移到 release 或 issue inspection。
 
-Do not combine the two tracks into one headline number. Cross-template transfer is the stronger
-claim and should report the exact shared capability expected before the run.
+两条 track 不能合并成一个 headline number。Cross-template 是更强的主张，运行前必须记录
+预期共享的 capability。
 
-### 3.3 Metrics
+### 3.3 指标
 
-Report separate quantities:
+需要分别报告：
 
-- Source WebJudge admission rate.
-- Sites/families reaching the minimum admission threshold.
-- Primitive build acceptance and rejection counts.
-- Primitive gate selection rate.
-- Treatment coverage: fraction of held-out tasks with `primitive_treatment=true`.
-- Scratch and routed WebJudge success.
-- Success conditional on treatment.
-- Lift on paired tasks, including regressions and safe skips.
-- Calls, tokens, wall-clock time, and site-infrastructure failure rate.
+- Source WebJudge admission rate。
+- 达到最低准入 family 数的站点比例。
+- Primitive build 的接受和拒绝数量。
+- Primitive gate selection rate。
+- Treatment coverage：`primitive_treatment=true` 的 held-out 比例。
+- Scratch 和 routed 的 WebJudge success。
+- 只在实际 treatment 任务上的成功率。
+- Paired lift、regression、rescue 和 safe skip。
+- Calls、tokens、wall-clock time 和站点基础设施失败率。
 
-The primary primitive result should be computed only on paired tasks where a primitive was actually
-selected. All-task routed success remains useful as a safety/system metric but is not a primitive
-effect estimate.
+Primitive 主结果只能在真正选择了 primitive 的 paired task 上计算。全任务 routed success
+可以作为系统安全指标，但不能作为 primitive effect estimate。
 
-## 4. Decision
+## 4. 结论
 
-Continue supporting OM2W, but move the next primitive-learning pilot to a carefully filtered
-WebVoyager subset. The desired evidence chain is:
+继续保留 OM2W 支持，但下一轮 primitive-learning pilot 应迁移到经过过滤的 WebVoyager
+subset。理想证据链是：
 
 ```text
-same-site capability examples
-  -> WebJudge-admitted source trajectories
-  -> cross-instance primitive
-  -> metadata gate selects it on a disjoint held-out instance
-  -> paired scratch/routed WebJudge comparison
+同站点、同 capability 的多个 source 实例
+  -> WebJudge 通过的 source trajectories
+  -> 跨实例 primitive
+  -> metadata gate 在不同 held-out 实例上选择 primitive
+  -> paired scratch/routed WebJudge 比较
 ```
 
-After this chain produces non-zero treatment coverage on WebVoyager, return to OM2W as a sparse,
-harder external validation set. If treatment coverage remains zero on a capability-overlapping
-WebVoyager split, the problem is then in primitive abstraction or routing rather than benchmark
-density.
+当 WebVoyager 上出现非零 treatment coverage 后，再回到任务稀疏、难度更高的 OM2W 做外部
+验证。如果在 capability-overlap 的 WebVoyager split 上仍然全部 skip，问题就不是 OM2W
+任务密度，而是 primitive abstraction 或 routing 本身。
