@@ -3,6 +3,8 @@
 Date: 2026-08-10
 Branch: `cross-task-primitives`
 
+[中文版本](cross_template_primitive_experiment_and_pipeline_2026-08-10_zh.md)
+
 ## 1. What is being evaluated
 
 The target setting is **cross task-template reuse within the same website**. A library is built from
