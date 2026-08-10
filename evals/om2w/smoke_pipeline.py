@@ -51,6 +51,9 @@ def latest_workspace(root, task_id):
 
 def solve_command(task, task_id, mode, runs, library, configs):
     text, website = task_text(task), task["website"]
+    configs = list(configs)
+    if configs and not any("base" in str(config) for config in configs):
+        configs.insert(0, "base.yaml")
     if mode == "scratch":
         command = [sys.executable, "-m", "webwright.run.cli", "main", "-t", text,
                    "--task-id", task_id, "--start-url", website, "-o", str(runs)]

@@ -16,6 +16,7 @@ def test_site_slug_and_commands(tmp_path):
     routed = P.solve_command(task, "t1", "routed", tmp_path, "lib", ["model.yaml"])
     assert "webwright.run.cli" in scratch
     assert "webwright.skill_factory" in routed
+    assert scratch[-4:] == ["-c", "base.yaml", "-c", "model.yaml"]
     assert "--primitive-site" in routed and "accuweather_com" in routed
 
 
