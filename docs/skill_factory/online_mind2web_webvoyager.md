@@ -169,7 +169,110 @@ Primary references:
 Task counts sum to 643. The range is 41--46 tasks per site, consistent with the paper's statement
 that each site contains roughly 40--45 tasks (the released Wolfram Alpha group has 46).
 
-### 2.3 What the concrete tasks imply for primitive learning
+### 2.3 Approximate template and cross-template distribution
+
+WebVoyager does not provide template or capability-family labels. The analysis below is therefore an
+audit-derived taxonomy, not an official annotation. It uses two views:
+
+1. Manual inspection of the operation skeleton required by every task on the most promising sites.
+2. A conservative lexical check: quoted entities and numbers are normalized, common instruction
+   words are removed, and each task's maximum token-Jaccard similarity to another task on the same
+   site is measured. This lexical score detects obvious near templates but misses semantic templates
+   whose entities are unquoted, so it is a lower bound rather than a cluster assignment.
+
+#### Lexical near-template lower bound
+
+| Site | Tasks | Median best-match similarity | Tasks with best match >= 0.35 | Tasks with best match >= 0.50 |
+| --- | ---: | ---: | ---: | ---: |
+| Allrecipes | 45 | 0.38 | 28 | 7 |
+| Amazon | 41 | 0.17 | 0 | 0 |
+| Apple | 43 | 0.25 | 12 | 8 |
+| ArXiv | 43 | 0.24 | 6 | 0 |
+| BBC News | 42 | 0.27 | 6 | 0 |
+| Booking | 44 | 0.27 | 7 | 0 |
+| Cambridge Dictionary | 43 | 0.57 | 31 | 25 |
+| Coursera | 42 | 0.23 | 8 | 2 |
+| ESPN | 44 | 0.27 | 16 | 12 |
+| GitHub | 41 | 0.38 | 24 | 10 |
+| Google Flights | 42 | 0.33 | 18 | 3 |
+| Google Map | 41 | 0.22 | 4 | 2 |
+| Google Search | 43 | 0.12 | 4 | 0 |
+| Hugging Face | 43 | 0.26 | 12 | 4 |
+| Wolfram Alpha | 46 | 0.12 | 0 | 0 |
+
+The low Amazon, Booking, Maps, and Wolfram scores do not mean those sites lack templates. Their
+entities, locations, dates, or mathematical expressions dominate the words and were not always
+quoted, while the browser operation skeleton remains highly repetitive.
+
+#### Manual operation-skeleton assessment
+
+| Distribution type | Sites | Approximate interpretation |
+| --- | --- | --- |
+| One dominant repeated skeleton | Allrecipes, Amazon, Booking, Google Flights, Google Map, Wolfram Alpha | Roughly three quarters or more of tasks repeat one form/search-result-detail flow with different entities and constraints |
+| One dominant family plus small side families | Cambridge Dictionary, Apple, BBC News, ESPN | A majority repeats lookup/detail or section/detail; the remainder covers grammar, configuration, standings, games, support, or marketing pages |
+| Several connected families | ArXiv, Coursera, GitHub, Hugging Face | Search/discovery, result filtering, entity detail, and documentation are distinct templates connected by reusable navigation primitives |
+| Shared shallow entry point but heterogeneous goals | Google Search | Most tasks share only issuing a search; downstream domains and evidence needs differ substantially |
+
+Approximate dominant-family observations from task-by-task inspection:
+
+- **Allrecipes:** 41 of 45 tasks follow recipe discovery/detail extraction. Output requirements vary
+  among ingredients, instructions, time, ratings, reviews, nutrition, storage, and latest review.
+  This is primarily a same-template parameterization set, with useful sub-template variation after
+  the recipe page is opened.
+- **Cambridge Dictionary:** roughly two dozen tasks are direct word lookup plus some combination of
+  definition, UK/US pronunciation, IPA, meaning, and example sentences. Eight tasks form a separate
+  grammar-page family; translation/thesaurus, quizzes/games, shop, and locale switching form smaller
+  families.
+- **GitHub:** repository discovery/search is the largest family. Repository inspection then branches
+  into contributors, releases, commits, changed files, issues, wiki, README, language, stars, and
+  forks. Pricing, Copilot, Skills, customer stories, and signup are separate site-content families.
+- **ArXiv:** the largest connected component contains keyword/category/date/author/journal-reference
+  search, result counts, latest-category browsing, and paper-detail extraction. Help/policy,
+  organization/blog, and store/cart tasks are separate families.
+- **Hugging Face:** model search/filter/rank and model-card extraction form the largest component.
+  Dataset search/detail, Spaces/inference interaction, documentation, blogs/daily papers, pricing,
+  and organization content form additional families.
+- **Coursera:** course discovery/filtering and named-course inspection dominate. Course details
+  branch into modules, duration, rating histograms, instructors, skills, and reviews. Specialization,
+  degree, partner, Plus/Business, and homepage browsing are related but distinct templates.
+
+#### Where genuine cross-template transfer exists
+
+The best cross-template sites are not necessarily those with the most near duplicates. They have a
+graph of different task endpoints connected through reusable intermediate browser states:
+
+```text
+GitHub repository search
+  -> repository page
+      -> contributors | releases | commits | issues | wiki | README
+
+ArXiv query/category browse
+  -> result list
+      -> paper abstract | versions | HTML | PDF-derived inspection
+
+Hugging Face model search/filter
+  -> model page
+      -> model metadata | model card | metrics | usage | linked Spaces
+
+Coursera course search/filter
+  -> course or specialization page
+      -> modules | reviews | instructor | skills | included courses
+```
+
+These are useful cross-template relationships because the held-out goal differs while a material
+intermediate capability remains shared. They are unlike the failed OM2W pilot, where the shared
+primitive often ended before the held-out task's main work began.
+
+By contrast:
+
+- Allrecipes and Cambridge Dictionary are excellent **same-template/generalized-parameter** test
+  beds, but a random split would be too easy and vulnerable to near-duplicate leakage.
+- Booking and Google Flights contain strong repeated templates, but stale dates and volatile live
+  results make them poor first experiments.
+- Google Search and Wolfram Alpha mostly test query formulation and answer extraction. A primitive
+  that only enters a query may reduce steps without demonstrating rich website skill reuse.
+
+### 2.4 What the concrete tasks imply for primitive learning
 
 WebVoyager contains several naturally repeated capabilities:
 
@@ -186,7 +289,7 @@ queries. Entities, dates, thresholds, and answers remain unseen, while the reusa
 present. This is a stricter and more informative test than random splitting, but less pathological
 than holding out a completely unrelated task family.
 
-### 2.4 Data-quality and leakage risks
+### 2.5 Data-quality and leakage risks
 
 - Many tasks are near-template paraphrases. A random task split will overstate generalization.
 - Reference answers include old ratings, review counts, prices, standings, model metadata, and
@@ -236,6 +339,16 @@ For each selected site, target 20 tasks across at least three capability familie
 
 Freeze task IDs, rewritten dates if any, family labels, dataset commit, and judge configuration before
 running any source or held-out arm.
+
+Use two explicitly separated evaluation tracks:
+
+- **Within-template generalization:** same operation skeleton, disjoint entities and constraints.
+  This establishes whether the primitive mechanism works at all.
+- **Cross-template transfer:** different task endpoints with a preregistered shared intermediate
+  capability, such as GitHub repository discovery followed by held-out release or issue inspection.
+
+Do not combine the two tracks into one headline number. Cross-template transfer is the stronger
+claim and should report the exact shared capability expected before the run.
 
 ### 3.3 Metrics
 
