@@ -1,0 +1,462 @@
+{
+  "site": "shopping_admin",
+  "primitive_pool": [
+    {
+      "primitive_id": "shopping_admin/list_product_review_records",
+      "method": "list_product_review_records",
+      "capability": "List product review records from Magento admin review listing pages for a requested scope, returning typed review identifiers and page-level pagination facts from the currently loaded listing page.",
+      "method_code": "async def list_product_review_records(self, scope: str, page_number: int | None = None) -> dict:\n    import re\n\n    scope_to_path = {\n        \"all\": \"/admin/review/product/index/\",\n        \"pending\": \"/admin/review/product/pending/\",\n    }\n    if scope not in scope_to_path:\n        raise ValueError(\"scope must be one of: all, pending\")\n    if page_number is not None:\n        raise ValueError(\"page_number is not supported by current evidence for this primitive\")\n\n    await self.page.goto(scope_to_path[scope], wait_until=\"networkidle\")\n    html = await self.page.content()\n    review_ids = sorted(set(re.findall(r\"/admin/review/product/edit/id/(\\d+)/\", html)))\n    text = re.sub(r\"<[^>]+>\", \" \", html)\n    pager_match = re.search(r\"of\\s+(\\d+)\\s+Next page\", text, re.I)\n    total_pages = int(pager_match.group(1)) if pager_match else None\n\n    return {\n        \"scope\": scope,\n        \"page_number\": page_number,\n        \"records\": [{\"review_id\": review_id} for review_id in review_ids],\n        \"pagination\": {\n            \"total_pages\": total_pages,\n            \"is_paginated\": total_pages is not None,\n        },\n        \"completeness\": {\n            \"page_scope\": \"current_listing_page\",\n            \"is_complete_result_set\": False,\n        },\n    }\n",
+      "owns": [
+        "Navigating to Magento admin product review listing pages for supported scopes after authentication",
+        "Owning the mapping from stable review-list scope names to listing endpoints",
+        "Parsing review edit links on the listing page into stable review identifiers",
+        "Parsing page-level pagination facts exposed on the listing page",
+        "Returning typed page records plus pagination/completeness metadata for the currently loaded scope page"
+      ],
+      "does_not_own": [
+        "Authenticating into Magento admin",
+        "Choosing which scope is relevant to a user task",
+        "Counting, aggregating, or comparing reviews across pages or scopes",
+        "Inventing unsupported pagination navigation mechanics beyond the evidenced current-page fetch",
+        "Formatting a final answer"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string",
+            "enum": [
+              "all",
+              "pending"
+            ],
+            "description": "Which Magento admin review listing scope to open."
+          },
+          "page_number": {
+            "type": "integer",
+            "nullable": true,
+            "description": "1-based listing page number. Present for interface consistency, but navigation to arbitrary listing pages is not supported by current evidence and must be null."
+          }
+        },
+        "required": [
+          "scope"
+        ]
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string"
+          },
+          "page_number": {
+            "type": "integer",
+            "nullable": true
+          },
+          "records": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "review_id": {
+                  "type": "string",
+                  "description": "Stable Magento review identifier parsed from /admin/review/product/edit/id/<id>/ links."
+                }
+              },
+              "required": [
+                "review_id"
+              ]
+            }
+          },
+          "pagination": {
+            "type": "object",
+            "properties": {
+              "total_pages": {
+                "type": "integer",
+                "nullable": true
+              },
+              "is_paginated": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "total_pages",
+              "is_paginated"
+            ]
+          },
+          "completeness": {
+            "type": "object",
+            "properties": {
+              "page_scope": {
+                "type": "string",
+                "enum": [
+                  "current_listing_page"
+                ]
+              },
+              "is_complete_result_set": {
+                "type": "boolean",
+                "description": "False because current evidence only demonstrates acquisition of the currently loaded listing page, not complete traversal."
+              }
+            },
+            "required": [
+              "page_scope",
+              "is_complete_result_set"
+            ]
+          }
+        },
+        "required": [
+          "scope",
+          "page_number",
+          "records",
+          "pagination",
+          "completeness"
+        ]
+      },
+      "requires": [
+        "Authenticated Magento admin browser session"
+      ],
+      "provides": [
+        "Typed review listing records for one requested review scope page",
+        "Page-level pagination metadata for the requested review listing"
+      ],
+      "supported_patterns": [
+        "List review IDs from All Reviews",
+        "List review IDs from Pending Reviews",
+        "Inspect whether a review listing appears paginated"
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task77_t277",
+          "template_id": "277",
+          "code_quote": "all_html = opener.open(ALL_URL, timeout=30).read().decode('utf-8', 'ignore')\nall_ids = sorted(set(re.findall(r'/admin/review/product/edit/id/(\\d+)/', all_html)))\nall_pages = re.search(r'of\\s+(\\d+)\\s+Next page', re.sub(r'<[^>]+>', ' ', all_html), re.I)\n...\npending_html = opener.open(PENDING_URL, timeout=30).read().decode('utf-8', 'ignore')\npending_ids = sorted(set(re.findall(r'/admin/review/product/edit/id/(\\d+)/', pending_html)))\npager = re.search(r'of\\s+(\\d+)\\s+Next page', re.sub(r'<[^>]+>', ' ', pending_html), re.I)",
+          "explanation": "Generalized the workflow's hard-coded All Reviews and Pending Reviews fetches into a scope input while preserving only the evidenced acquisition boundary: load one listing page for that scope, parse review IDs from edit links, and read pager-derived page facts. Removed the workflow-owned counting of pending reviews and did not invent arbitrary page-number navigation.",
+          "evidence_match_mode": "attributed_nonverbatim"
+        }
+      ]
+    },
+    {
+      "primitive_id": "shopping_admin/list_product_reviews_from_admin_grid_page",
+      "method": "list_product_reviews_from_admin_grid_page",
+      "capability": "Fetch the shopping admin product reviews grid with an optional product-name filter and return typed review records visible on the current grid page, together with page-level pagination and completeness facts.",
+      "method_code": "async def list_product_reviews_from_admin_grid_page(self, product_name: str | None = None) -> dict:\n    import re\n\n    await self.page.goto(\"/admin/review/product/\", wait_until=\"networkidle\")\n    if product_name is not None:\n        name_filter = self.page.locator(\"#reviewGrid_filter_name\")\n        await name_filter.fill(product_name)\n        await name_filter.press(\"Enter\")\n        await self.page.wait_for_load_state(\"networkidle\")\n\n    rows = self.page.locator(\"tbody tr\")\n    row_count = await rows.count()\n    records = []\n    for i in range(row_count):\n        row = rows.nth(i)\n        cells = row.locator(\"td\")\n        cell_count = await cells.count()\n        if cell_count < 5:\n            continue\n        review_id = (await cells.nth(1).inner_text()).strip()\n        title = (await cells.nth(4).inner_text()).strip()\n        if review_id:\n            records.append({\n                \"review_id\": review_id,\n                \"title\": title,\n            })\n\n    html = await self.page.content()\n    text = re.sub(r\"<[^>]+>\", \" \", html)\n    pager_match = re.search(r\"of\\s+(\\d+)\\s+Next page\", text, re.I)\n    total_pages = int(pager_match.group(1)) if pager_match else None\n\n    return {\n        \"applied_product_name_filter\": product_name,\n        \"records\": records,\n        \"pagination\": {\n            \"total_pages\": total_pages,\n            \"is_paginated\": total_pages is not None,\n        },\n        \"completeness\": {\n            \"page_scope\": \"current_grid_page\",\n            \"is_complete_result_set\": False,\n        },\n    }\n",
+      "owns": [
+        "Navigating to the admin product reviews grid after authentication",
+        "Applying the product-name filter in the reviews grid when requested",
+        "Enumerating review rows visible on the current grid page",
+        "Parsing typed review fields visible in each grid row",
+        "Parsing page-level pagination facts exposed on the filtered or unfiltered grid page",
+        "Returning current-page records with pagination/completeness metadata"
+      ],
+      "does_not_own": [
+        "Authenticating into the admin site",
+        "Assuming the current grid page contains the complete filtered result set",
+        "Opening individual review detail pages",
+        "Extracting star rating from review detail pages",
+        "Filtering reviews by rating threshold",
+        "Aggregating or formatting the final task answer"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "product_name": {
+            "type": "string",
+            "nullable": true,
+            "description": "Product name text to enter into the reviews grid product-name filter. If null, returns the current first-loaded grid page without applying a product-name filter."
+          }
+        },
+        "required": []
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "applied_product_name_filter": {
+            "type": "string",
+            "nullable": true
+          },
+          "records": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "review_id": {
+                  "type": "string",
+                  "description": "Admin review identifier parsed from the grid row."
+                },
+                "title": {
+                  "type": "string",
+                  "description": "Review title parsed from the grid row."
+                }
+              },
+              "required": [
+                "review_id",
+                "title"
+              ]
+            }
+          },
+          "pagination": {
+            "type": "object",
+            "properties": {
+              "total_pages": {
+                "type": "integer",
+                "nullable": true
+              },
+              "is_paginated": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "total_pages",
+              "is_paginated"
+            ]
+          },
+          "completeness": {
+            "type": "object",
+            "properties": {
+              "page_scope": {
+                "type": "string",
+                "enum": [
+                  "current_grid_page"
+                ]
+              },
+              "is_complete_result_set": {
+                "type": "boolean",
+                "description": "False because the evidence only demonstrates acquisition from the currently loaded grid page and does not demonstrate traversing all grid pages."
+              }
+            },
+            "required": [
+              "page_scope",
+              "is_complete_result_set"
+            ]
+          }
+        },
+        "required": [
+          "applied_product_name_filter",
+          "records",
+          "pagination",
+          "completeness"
+        ]
+      },
+      "requires": [
+        "Authenticated Magento admin browser session"
+      ],
+      "provides": [
+        "Typed review records visible on the current admin reviews grid page",
+        "Page-level pagination metadata for the current reviews grid page"
+      ],
+      "supported_patterns": [
+        "List review IDs and titles from the current reviews grid page",
+        "Apply a product-name filter before reading current-page review rows",
+        "Collect current-page review IDs for later detail inspection"
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task215_t249",
+          "template_id": "249",
+          "code_quote": "await safe_goto(page, 'http://ec2-18-223-172-69.us-east-2.compute.amazonaws.com:7780/admin/review/product/', wait_until='networkidle')\nname_filter = page.locator('#reviewGrid_filter_name')\nawait name_filter.fill(TARGET_PRODUCT)\nawait name_filter.press('Enter')\n...\nrid_text = await row.locator('td').nth(1).inner_text()\ntitle_text = await row.locator('td').nth(4).inner_text()\nreviews_to_check.append({'rid': rid_text.strip(), 'title': title_text.strip()})",
+          "explanation": "Generalized the workflow's hard-coded target product into an optional product_name input and preserved the acquisition boundary at the reviews grid page itself: apply the grid filter, iterate visible rows, and parse typed row fields. Unlike the rejected version, this does not claim completeness for all matching reviews, does not re-filter rows by has_text beyond the site's filter control, and returns explicit pagination/completeness facts for the current grid page only.",
+          "evidence_match_mode": "attributed_nonverbatim"
+        }
+      ]
+    },
+    {
+      "primitive_id": "shopping_admin/get_product_review_detail_from_admin",
+      "method": "get_product_review_detail_from_admin",
+      "capability": "Open a product review detail page in the shopping admin by review id and extract structured review detail fields including product name and selected star rating.",
+      "method_code": "async def get_product_review_detail_from_admin(self, review_id: str) -> dict:\n    detail_url = f\"/admin/review/product/edit/id/{review_id}/\"\n    await self.page.goto(detail_url, wait_until=\"networkidle\")\n\n    product_name = (await self.page.locator('a[href*=\"catalog/product/edit\"], .admin__field:has-text(\"Product\") .admin__field-value').first.inner_text()).strip()\n    checked_id = await self.page.locator('input[type=\"radio\"]:checked').first.get_attribute('id')\n    rating = int(checked_id.split('_')[-1]) if checked_id else None\n\n    return {\n        \"review\": {\n            \"review_id\": review_id,\n            \"product_name\": product_name,\n            \"rating\": rating,\n        }\n    }\n",
+      "owns": [
+        "Constructing and navigating to the admin review detail URL for a given review id",
+        "Reading the associated product name from the review detail page",
+        "Reading the selected star rating from the checked rating control",
+        "Returning structured review detail data for a single review"
+      ],
+      "does_not_own": [
+        "Authenticating into the admin site",
+        "Discovering review ids from the review grid",
+        "Filtering by product or rating threshold",
+        "Aggregating multiple review details into a task answer",
+        "Formatting the final response"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "review_id": {
+            "type": "string",
+            "description": "Admin review identifier used in the review detail URL."
+          }
+        },
+        "required": [
+          "review_id"
+        ]
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "review": {
+            "type": "object",
+            "properties": {
+              "review_id": {
+                "type": "string",
+                "description": "Admin review identifier used to open the page."
+              },
+              "product_name": {
+                "type": "string",
+                "description": "Product name shown on the review detail page."
+              },
+              "rating": {
+                "type": "integer",
+                "nullable": true,
+                "description": "Selected star rating parsed from the checked rating control, if present."
+              }
+            },
+            "required": [
+              "review_id",
+              "product_name",
+              "rating"
+            ]
+          }
+        },
+        "required": [
+          "review"
+        ]
+      },
+      "requires": [
+        "Authenticated Magento admin browser session"
+      ],
+      "provides": [
+        "Structured review detail fields for one Magento admin review"
+      ],
+      "supported_patterns": [
+        "Inspect a specific review's product association",
+        "Inspect a specific review's selected star rating"
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task215_t249",
+          "template_id": "249",
+          "code_quote": "detail_url = f'http://.../admin/review/product/edit/id/{rid}/'\nawait safe_goto(page, detail_url, wait_until='networkidle')\nproduct = (await page.locator('a[href*=\"catalog/product/edit\"], .admin__field:has-text(\"Product\") .admin__field-value').first.inner_text()).strip()\nchecked_id = await page.locator('input[type=\"radio\"]:checked').first.get_attribute('id')\nrating = checked_id.split('_')[-1] if checked_id else ''",
+          "explanation": "Generalized the workflow's per-review inspection into a reusable detail-fetch primitive keyed by review_id. Preserved only objective fields shown on the page: associated product name and selected star rating. Excluded task-specific filtering against a target product and threshold.",
+          "evidence_match_mode": "attributed_nonverbatim"
+        }
+      ]
+    },
+    {
+      "primitive_id": "shopping_admin/get_sales_orders_report_rows",
+      "method": "get_sales_orders_report_rows",
+      "capability": "Retrieve Magento admin Sales Orders report rows for a specified date range, period granularity, and optional order-status filtering, parsed into typed report records.",
+      "method_code": "async def get_sales_orders_report_rows(self, period_type: str, from_date: str, to_date: str, show_order_statuses: str, order_status: str | None = None) -> dict:\n    import re\n\n    await self.page.goto(\"/admin/reports/report_sales/sales/\", wait_until=\"domcontentloaded\")\n    await self.page.select_option(\"#sales_report_period_type\", period_type)\n    await self.page.select_option(\"#sales_report_show_order_statuses\", show_order_statuses)\n    if order_status is not None:\n        await self.page.select_option(\"#sales_report_order_statuses\", order_status)\n    await self.page.fill(\"#sales_report_from\", from_date)\n    await self.page.fill(\"#sales_report_to\", to_date)\n    await self.page.click(\"#filter_form_submit\")\n    await self.page.wait_for_load_state(\"networkidle\")\n\n    rows = await self.page.locator(\"table.data-grid tbody tr\").evaluate_all(\n        \"trs => trs.map(tr => Array.from(tr.querySelectorAll('td')).map(td => td.innerText.trim()))\"\n    )\n\n    records = []\n    for row in rows:\n        if len(row) < 2:\n            continue\n        period_label = row[0]\n        orders_count = int(row[1])\n        period_month = None\n        period_year = None\n        match = re.match(r\"^(\\d+)/(\\d{4})$\", period_label)\n        if match:\n            period_month = int(match.group(1))\n            period_year = int(match.group(2))\n        records.append({\n            \"period_label\": period_label,\n            \"period_month\": period_month,\n            \"period_year\": period_year,\n            \"orders_count\": orders_count,\n        })\n\n    return {\n        \"records\": records,\n        \"row_count\": len(records),\n    }\n",
+      "owns": [
+        "Navigating to the Magento admin Sales Orders report page after authentication",
+        "Setting report filter controls including period type, date range, and order status mode/status value",
+        "Submitting the report filter form",
+        "Reading the report result table and parsing each row into typed records",
+        "Preserving the report period label and parsed temporal components exposed by the table"
+      ],
+      "does_not_own": [
+        "Logging in to the site",
+        "Choosing task-specific months to return",
+        "Restricting output to January through May unless requested via inputs",
+        "Aggregating beyond the rows already provided by the report",
+        "Formatting a final answer for the user"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "period_type": {
+            "type": "string",
+            "enum": [
+              "day",
+              "month",
+              "year"
+            ],
+            "description": "Report period granularity selected in the Sales Orders report filter."
+          },
+          "from_date": {
+            "type": "string",
+            "description": "Start date entered into the report filter, in the site's accepted date format such as M/D/YYYY."
+          },
+          "to_date": {
+            "type": "string",
+            "description": "End date entered into the report filter, in the site's accepted date format such as M/D/YYYY."
+          },
+          "show_order_statuses": {
+            "type": "string",
+            "description": "Value for the 'Show Order Statuses' control, such as the mode for specified statuses."
+          },
+          "order_status": {
+            "type": "string",
+            "nullable": true,
+            "description": "Order status value to filter by when statuses are specified, for example complete."
+          }
+        },
+        "required": [
+          "period_type",
+          "from_date",
+          "to_date",
+          "show_order_statuses"
+        ]
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "records": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "period_label": {
+                  "type": "string",
+                  "description": "Raw period text from the first report column, for example 1/2023."
+                },
+                "period_month": {
+                  "type": "integer",
+                  "nullable": true,
+                  "description": "Parsed month number when the period label is monthly and parseable."
+                },
+                "period_year": {
+                  "type": "integer",
+                  "nullable": true,
+                  "description": "Parsed year when present in the period label."
+                },
+                "orders_count": {
+                  "type": "integer",
+                  "description": "Count value from the report row."
+                }
+              },
+              "required": [
+                "period_label",
+                "period_month",
+                "period_year",
+                "orders_count"
+              ]
+            }
+          },
+          "row_count": {
+            "type": "integer",
+            "description": "Number of parsed report rows returned from the visible report table."
+          }
+        },
+        "required": [
+          "records",
+          "row_count"
+        ]
+      },
+      "requires": [
+        "Authenticated Magento admin browser session"
+      ],
+      "provides": [
+        "Typed Sales Orders report rows for the requested filter settings"
+      ],
+      "supported_patterns": [
+        "Retrieve monthly order-count report rows for a date range",
+        "Retrieve order-count report rows filtered to a specific order status"
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task108_t270",
+          "template_id": "270",
+          "code_quote": "await page.goto('http://.../admin/reports/report_sales/sales/', { waitUntil: 'domcontentloaded' });\nawait page.selectOption('#sales_report_period_type', 'month');\nawait page.selectOption('#sales_report_show_order_statuses', '1');\nawait page.selectOption('#sales_report_order_statuses', 'complete');\nawait page.fill('#sales_report_from', '1/1/2023');\nawait page.fill('#sales_report_to', '5/31/2023');\nawait page.click('#filter_form_submit');\nconst rows = await page.locator('table.data-grid tbody tr').evaluateAll(trs => trs.map(tr => Array.from(tr.querySelectorAll('td')).map(td => td.innerText.trim())));",
+          "explanation": "Generalized the workflow's hard-coded report settings into filter inputs while preserving the site operation: configure the Sales Orders report, run it, and parse visible report rows into typed records. Excluded task-specific month-name formatting and final answer shaping.",
+          "evidence_match_mode": "attributed_nonverbatim"
+        }
+      ]
+    }
+  ]
+}

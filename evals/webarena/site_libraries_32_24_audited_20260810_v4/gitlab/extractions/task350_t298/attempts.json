@@ -1,0 +1,157 @@
+[
+  {
+    "attempt": 1,
+    "proposal": {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task350_t298::list_project_members",
+          "proposed_method": "list_project_members",
+          "capability": "List members who have access to a GitLab project by reading the project's members page and parsing structured member records.",
+          "owns": [
+            "Authenticate to GitLab with username/password and session cookie handling required to access the members page",
+            "Accept a project identifier/path and construct the corresponding project members page URL",
+            "Fetch the project members page and parse the embedded structured members data",
+            "Return typed member records including stable identity and access metadata actually exposed by the page"
+          ],
+          "does_not_own": [
+            "Searching for which repository to inspect based on task-specific text like 'prism-theme'",
+            "Filtering out the current user or otherwise applying task-specific inclusion/exclusion rules",
+            "Ranking, aggregation, or answer formatting for the final response"
+          ],
+          "input_contract": {
+            "base_url": {
+              "type": "string",
+              "description": "Base GitLab instance URL, e.g. http://host:port"
+            },
+            "username": {
+              "type": "string",
+              "description": "GitLab login username"
+            },
+            "password": {
+              "type": "string",
+              "description": "GitLab login password"
+            },
+            "project_path": {
+              "type": "string",
+              "description": "Project path beginning with '/', e.g. /namespace/repo"
+            }
+          },
+          "output_contract": {
+            "type": "object",
+            "properties": {
+              "project_path": {
+                "type": "string"
+              },
+              "members": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "username": {
+                      "type": "string|null",
+                      "description": "GitLab username from member.user.username"
+                    },
+                    "name": {
+                      "type": "string|null",
+                      "description": "Display name from member.user.name"
+                    },
+                    "access_level": {
+                      "type": "string|null",
+                      "description": "Human-readable access level from member.access_level.string_value"
+                    },
+                    "member_type": {
+                      "type": "string|null",
+                      "description": "Member type from member.type"
+                    }
+                  }
+                }
+              },
+              "source_url": {
+                "type": "string",
+                "description": "Resolved members page URL used for retrieval"
+              }
+            }
+          },
+          "source_evidence": {
+            "workflow_id": "task350_t298",
+            "template_id": "298",
+            "code_quote": "members_url = project_path + '/-/project_members'\nr = sess.get(urljoin(BASE, members_url))\n...\nm = re.search(r'data-members-data=\"([^\"]+)\"', html)\ndecoded = htmlmod.unescape(encoded)\ndata = json.loads(decoded)\nmembers = data['user']['members']\n...\nall_members.append({\n    'username': uname,\n    'name': user.get('name'),\n    'access_level': (member.get('access_level') or {}).get('string_value'),\n    'type': member.get('type'),\n})",
+            "explanation": "The workflow demonstrates a reusable GitLab website operation: given an authenticated session and a concrete project path, open the project's members page and parse structured member records from the page's embedded data blob. The generalized primitive parameterizes the hard-coded base URL, credentials, and project path, and removes the task-specific post-processing that excluded the current user and only returned usernames.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        },
+        {
+          "candidate_id": "task350_t298::search_personal_projects_by_name",
+          "proposed_method": "search_personal_projects_by_name",
+          "capability": "Search a user's personal GitLab projects by name from the dashboard projects page and return matching project records parsed from the HTML links.",
+          "owns": [
+            "Authenticate to GitLab with username/password and session cookie handling required to access the dashboard projects page",
+            "Fetch the personal projects search page with a caller-supplied name query",
+            "Parse project links for projects in the authenticated user's namespace from the returned HTML",
+            "Return project path and displayed text for discovered projects"
+          ],
+          "does_not_own": [
+            "Choosing the correct project among multiple matches for a task",
+            "Inferring fuzzy task intent beyond the provided query string",
+            "Opening the project members page or analyzing project access"
+          ],
+          "input_contract": {
+            "base_url": {
+              "type": "string",
+              "description": "Base GitLab instance URL, e.g. http://host:port"
+            },
+            "username": {
+              "type": "string",
+              "description": "GitLab login username"
+            },
+            "password": {
+              "type": "string",
+              "description": "GitLab login password"
+            },
+            "query": {
+              "type": "string",
+              "description": "Project name search string to send as the name parameter"
+            }
+          },
+          "output_contract": {
+            "type": "object",
+            "properties": {
+              "query": {
+                "type": "string"
+              },
+              "projects": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "project_path": {
+                      "type": "string",
+                      "description": "Relative GitLab project path such as /namespace/repo"
+                    },
+                    "display_name": {
+                      "type": "string",
+                      "description": "Visible anchor text associated with the project link"
+                    }
+                  }
+                }
+              },
+              "source_url": {
+                "type": "string",
+                "description": "Resolved dashboard search URL used for retrieval"
+              }
+            }
+          },
+          "source_evidence": {
+            "workflow_id": "task350_t298",
+            "template_id": "298",
+            "code_quote": "r = sess.get(urljoin(BASE, '/dashboard/projects?name=prism-theme&personal=true&sort=name_asc'))\n...\ndef extract_projects(html: str):\n    projects = []\n    for href, text in re.findall(r'<a[^>]+href=\"([^\"]+)\"[^>]*>(.*?)</a>', html, re.S | re.I):\n        clean = re.sub(r'<[^>]+>', ' ', text)\n        clean = re.sub(r'\\s+', ' ', htmlmod.unescape(clean)).strip()\n        if href.startswith('/byteblaze/') and '/-/' not in href:\n            projects.append((href, clean))",
+            "explanation": "The workflow demonstrates a reusable website read capability on GitLab's dashboard projects page: execute a personal-project search by name and parse project links from HTML. Generalization replaces the hard-coded query string and username namespace assumption with caller parameters/authenticated context, while preserving the actually demonstrated acquisition boundary of project path plus displayed name.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        }
+      ]
+    },
+    "errors": []
+  }
+]

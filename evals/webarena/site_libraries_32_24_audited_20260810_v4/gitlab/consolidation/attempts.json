@@ -1,0 +1,309 @@
+[
+  {
+    "attempt": 1,
+    "proposal": {
+      "operations": [
+        {
+          "op": "KEEP",
+          "source": "gitlab/list_repository_commits",
+          "feature": "commits"
+        },
+        {
+          "op": "KEEP",
+          "source": "gitlab/list_project_members",
+          "feature": "members"
+        },
+        {
+          "op": "KEEP",
+          "source": "gitlab/list_repository_branch_contributors",
+          "feature": "contributors"
+        },
+        {
+          "op": "KEEP",
+          "source": "gitlab/inspect_project_page_availability",
+          "feature": "projects"
+        },
+        {
+          "op": "MERGE",
+          "sources": [
+            "gitlab/list_dashboard_projects",
+            "gitlab/get_project_overview_metrics"
+          ],
+          "feature": "projects",
+          "replacement": {
+            "primitive_id": "gitlab/projects/list_dashboard_projects",
+            "method": "list_dashboard_projects",
+            "capability": "List visible GitLab dashboard project records, optionally applying the built-in Personal scope, and return parsed project card counters plus visible overview metrics when present on the dashboard card.",
+            "method_code": "def list_dashboard_projects(self, base_url: str, scope: str | None = None) -> dict:\n    import re\n\n    url = base_url.rstrip(\"/\") + \"/dashboard/projects\"\n    self.page.goto(url, wait_until=\"domcontentloaded\")\n\n    applied_scope = None\n    if scope == \"personal\":\n        self.page.get_by_role(\"link\", name=\"Personal\").click()\n        self.page.wait_for_load_state(\"domcontentloaded\")\n        applied_scope = \"personal\"\n\n    items = self.page.locator(\"main .projects-list > li\")\n    count = items.count()\n    records = []\n\n    for i in range(count):\n        li = items.nth(i)\n        text = (li.inner_text() or \"\").strip()\n        links = li.locator(\"a\").evaluate_all(\"els => els.map(a => ({text:(a.innerText||'').trim(), href:a.getAttribute('href')}))\")\n        title_link = None\n        for link in links:\n            link_text = (link.get(\"text\") or \"\").strip()\n            href = link.get(\"href\")\n            if link_text and \"/\" in link_text and href and \"/-/\" not in href:\n                title_link = link\n                break\n\n        counts_match = re.search(r\"\\n\\s*(\\d+)\\s*\\n\\s*(\\d+)\\s*\\n\\s*(\\d+)\\s*\\n\\s*(\\d+)\\s*\\n\\s*Updated\", \"\\n\" + text + \"\\n\")\n        if not title_link or not counts_match:\n            continue\n\n        stars_count, forks_count, merge_requests_count, issues_count = map(int, counts_match.groups())\n        project_url = title_link.get(\"href\")\n        if project_url and project_url.startswith(\"/\"):\n            absolute_url = base_url.rstrip(\"/\") + project_url\n        else:\n            absolute_url = project_url\n\n        id_match = re.search(r\"Project ID:\\s*(\\d+)\", text)\n        visible_star_match = re.search(r\"\\bStar\\s*(\\d+)\\b\", text)\n\n        records.append({\n            \"project_path\": title_link.get(\"text\"),\n            \"project_url\": absolute_url,\n            \"relative_project_url\": project_url,\n            \"project_id\": int(id_match.group(1)) if id_match else None,\n            \"stars_count\": stars_count,\n            \"forks_count\": forks_count,\n            \"merge_requests_count\": merge_requests_count,\n            \"issues_count\": issues_count,\n            \"visible_overview_stars_count\": int(visible_star_match.group(1)) if visible_star_match else None,\n        })\n\n    return {\n        \"records\": records,\n        \"completeness\": {\n            \"scope_applied\": applied_scope,\n            \"pagination_complete\": False,\n        },\n        \"source_url\": self.page.url,\n    }\n",
+            "owns": [
+              "Navigating to the dashboard projects page",
+              "Optionally activating a built-in dashboard scope tab such as Personal",
+              "Parsing visible project list items into typed project summary records",
+              "Extracting stable project identity shown in the list, including displayed project path text and project URL",
+              "Extracting visible numeric counters exposed on each project card: stars, forks, merge requests, and issues",
+              "Parsing any visible project overview metrics already present in each dashboard card without opening project detail pages"
+            ],
+            "does_not_own": [
+              "Choosing which scope/filter to use for a user task beyond exposing a parameter",
+              "Filtering records by business logic such as stars == 0",
+              "Opening each project detail page",
+              "Aggregating, ranking, or formatting final answers"
+            ],
+            "input_contract": {
+              "base_url": {
+                "type": "string",
+                "description": "Base GitLab instance URL."
+              },
+              "scope": {
+                "type": "string",
+                "required": false,
+                "enum": [
+                  "personal"
+                ],
+                "description": "Optional built-in dashboard projects scope to activate. Evidence demonstrates 'personal'."
+              }
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "records": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "project_path": {
+                        "type": "string",
+                        "description": "Displayed namespace/project identifier from the project card."
+                      },
+                      "project_url": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "relative_project_url": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "project_id": {
+                        "type": "integer",
+                        "nullable": true,
+                        "description": "Visible GitLab project ID if present directly on the dashboard card text."
+                      },
+                      "stars_count": {
+                        "type": "integer"
+                      },
+                      "forks_count": {
+                        "type": "integer"
+                      },
+                      "merge_requests_count": {
+                        "type": "integer"
+                      },
+                      "issues_count": {
+                        "type": "integer"
+                      },
+                      "visible_overview_stars_count": {
+                        "type": "integer",
+                        "nullable": true,
+                        "description": "Visible Star count if separately present in the dashboard card text."
+                      }
+                    }
+                  }
+                },
+                "completeness": {
+                  "type": "object",
+                  "properties": {
+                    "scope_applied": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "pagination_complete": {
+                      "type": "boolean",
+                      "description": "False unless pagination is explicitly handled."
+                    }
+                  }
+                },
+                "source_url": {
+                  "type": "string"
+                }
+              }
+            },
+            "requires": [
+              "authenticated_gitlab_session"
+            ],
+            "provides": [
+              "gitlab.dashboard_projects_listed"
+            ],
+            "supported_patterns": [
+              "List currently visible dashboard project cards",
+              "Apply Personal scope tab before parsing",
+              "Return per-project counters shown in the UI",
+              "Capture any project ID or visible Star count already exposed in the dashboard listing without extra navigation"
+            ],
+            "source_evidence": [
+              {
+                "primitive_id": "gitlab/list_dashboard_projects",
+                "workflow_id": "task172_t289",
+                "template_id": "289",
+                "code_quote": "await page.goto(f'{START_URL}/dashboard/projects', wait_until='domcontentloaded')\nawait page.get_by_role('link', name='Personal').click()\n...\nitems = page.locator('main .projects-list > li')\n...\ntext = (await li.inner_text()).strip()\nlinks = await li.locator('a').evaluate_all(\"els => els.map(a => ({text:(a.innerText||'').trim(), href:a.getAttribute('href')}))\")\n...\nm = re.search(r'\\n\\s*(\\d+)\\s*\\n\\s*(\\d+)\\s*\\n\\s*(\\d+)\\s*\\n\\s*(\\d+)\\s*\\n\\s*Updated', '\\n' + text + '\\n')\n...\nstars, forks, mrs, issues = map(int, m.groups())",
+                "explanation": "Preserves the demonstrated dashboard listing acquisition and card counter parsing as the primary boundary."
+              },
+              {
+                "primitive_id": "gitlab/get_project_overview_metrics",
+                "workflow_id": "task172_t289",
+                "template_id": "289",
+                "code_quote": "await page.goto(f'{START_URL}{href}', wait_until='domcontentloaded')\nbody = await page.locator('body').inner_text()\nid_match = re.search(r'Project ID:\\s*(\\d+)', body)\nstar_match = re.search(r'\\bStar\\s*(\\d+)\\b', body)\nproject_id = int(id_match.group(1)) if id_match else None\nstar_count = int(star_match.group(1)) if star_match else None",
+                "explanation": "Only the typed metric shapes are reused here, generalized narrowly to metrics visible in already-inspected dashboard card text so the primitive remains a single-page listing primitive and avoids detail-page fanout."
+              }
+            ]
+          },
+          "reason": "Both primitives belong to the same projects feature and overlap on typed project metadata extraction. The merged primitive keeps the dashboard listing boundary cohesive and incorporates overview metric parsing only when such signals are already visible on that page, avoiding a workflow-like per-project crawl."
+        },
+        {
+          "op": "MERGE",
+          "sources": [
+            "gitlab/list_dashboard_issues_by_actor_and_state",
+            "gitlab/get_issue_detail_state"
+          ],
+          "feature": "issues",
+          "replacement": {
+            "primitive_id": "gitlab/issues/get_issue_detail_state",
+            "method": "get_issue_detail_state",
+            "capability": "Open a GitLab issue detail page and return typed issue state derived from stable page signals plus page identity metadata.",
+            "method_code": "def get_issue_detail_state(self, issue_url: str) -> dict:\n    import re\n\n    self.page.goto(issue_url, wait_until=\"domcontentloaded\")\n    body = self.page.locator(\"body\").inner_text()\n    page_title = self.page.title()\n\n    has_open_label = bool(re.search(r\"\\bOpen\\b\", body))\n    has_close_issue_action = \"Close issue\" in body\n    has_closed_label = bool(re.search(r\"\\bClosed\\b\", body))\n    has_reopen_issue_action = \"Reopen issue\" in body\n\n    if has_closed_label and has_reopen_issue_action:\n        state = \"closed\"\n    elif has_open_label and has_close_issue_action:\n        state = \"opened\"\n    else:\n        state = \"unknown\"\n\n    return {\n        \"web_url\": self.page.url,\n        \"page_title\": page_title,\n        \"state\": state,\n        \"state_signals\": {\n            \"has_open_label\": has_open_label,\n            \"has_close_issue_action\": has_close_issue_action,\n            \"has_closed_label\": has_closed_label,\n            \"has_reopen_issue_action\": has_reopen_issue_action,\n        },\n    }\n",
+            "owns": [
+              "Navigating to a GitLab issue detail page",
+              "Reading stable issue detail page signals for open/closed state",
+              "Returning typed issue page identity and state signals"
+            ],
+            "does_not_own": [
+              "Searching for candidate issues",
+              "Filtering by title substring",
+              "Choosing among multiple candidate issues",
+              "Interpreting closed as a final task-specific boolean answer"
+            ],
+            "input_contract": {
+              "issue_url": {
+                "type": "string",
+                "description": "Absolute or site-relative URL to a GitLab issue detail page."
+              }
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "web_url": {
+                  "type": "string"
+                },
+                "page_title": {
+                  "type": "string"
+                },
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "opened",
+                    "closed",
+                    "unknown"
+                  ]
+                },
+                "state_signals": {
+                  "type": "object",
+                  "properties": {
+                    "has_open_label": {
+                      "type": "boolean"
+                    },
+                    "has_close_issue_action": {
+                      "type": "boolean"
+                    },
+                    "has_closed_label": {
+                      "type": "boolean"
+                    },
+                    "has_reopen_issue_action": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            },
+            "requires": [
+              "authenticated_gitlab_session"
+            ],
+            "provides": [
+              "gitlab.issue_state_retrieved"
+            ],
+            "supported_patterns": [
+              "Inspect a known issue page",
+              "Return typed opened/closed/unknown state"
+            ],
+            "source_evidence": [
+              {
+                "primitive_id": "gitlab/get_issue_detail_state",
+                "workflow_id": "task175_t310",
+                "template_id": "310",
+                "code_quote": "await page.goto(target.href, { waitUntil: 'domcontentloaded' });\nconst body = await page.locator('body').innerText();\nconst title = await page.title();\nconst isOpen = /\\bOpen\\b/.test(body) && /Close issue/.test(body);\nconst isClosed = /\\bClosed\\b/.test(body) && /Reopen issue/.test(body);",
+                "explanation": "Preserves the issue-detail inspection primitive unchanged as the cohesive issue-page primitive."
+              },
+              {
+                "primitive_id": "gitlab/list_dashboard_issues_by_actor_and_state",
+                "workflow_id": "task175_t310",
+                "template_id": "310",
+                "code_quote": "const starts = [\n  BASE + '/dashboard/issues?author_username=byteblaze&state=all',\n  BASE + '/dashboard/issues?assignee_username=byteblaze&state=all'\n];\n...\nconst issueLinks = await page.locator('a').evaluateAll(els => els.map(e => ({ text:(e.innerText||'').trim(), href:e.href })).filter(x => x.text && /\\/issues\\/\\d+$/.test(x.href)));",
+                "explanation": "Its output is issue discovery rather than issue-state inspection. To keep the primitive/workflow boundary clean and avoid combining cross-page search with detail interpretation into one feature contract, this evidence is subsumed as upstream workflow context rather than preserved as a separate primitive."
+              }
+            ]
+          },
+          "reason": "The issue primitives come from one workflow, but they represent two different levels: dashboard search and detail inspection. To keep a cohesive primitive pool and avoid proliferating thin discovery primitives that are mostly workflow orchestration, retain the detail inspection primitive as the canonical issues primitive and consume the dashboard-listing source into this consolidated issues feature."
+        }
+      ]
+    },
+    "errors": [
+      "operations[4].replacements[0]: source_evidence may cite each workflow at most once",
+      "operations[5].replacements[0]: source_evidence may cite each workflow at most once"
+    ]
+  },
+  {
+    "attempt": 2,
+    "proposal": {
+      "operations": [
+        {
+          "op": "KEEP",
+          "source": "gitlab/list_repository_commits",
+          "feature": "commits"
+        },
+        {
+          "op": "KEEP",
+          "source": "gitlab/list_project_members",
+          "feature": "members"
+        },
+        {
+          "op": "KEEP",
+          "source": "gitlab/list_repository_branch_contributors",
+          "feature": "contributors"
+        },
+        {
+          "op": "KEEP",
+          "source": "gitlab/inspect_project_page_availability",
+          "feature": "projects"
+        },
+        {
+          "op": "KEEP",
+          "source": "gitlab/list_dashboard_projects",
+          "feature": "projects"
+        },
+        {
+          "op": "KEEP",
+          "source": "gitlab/get_project_overview_metrics",
+          "feature": "projects"
+        },
+        {
+          "op": "KEEP",
+          "source": "gitlab/list_dashboard_issues_by_actor_and_state",
+          "feature": "issues"
+        },
+        {
+          "op": "KEEP",
+          "source": "gitlab/get_issue_detail_state",
+          "feature": "issues"
+        }
+      ]
+    },
+    "errors": []
+  }
+]

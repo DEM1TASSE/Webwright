@@ -57,9 +57,10 @@ def validate_split(split, dataset):
     errors = []
     if source_templates & heldout_templates:
         errors.append("source and heldout intent_template_id sets overlap")
-    if len(heldout_ids) < split["gate"]["minimum_instances"]:
+    gate = split.get("gate") or {}
+    if len(heldout_ids) < gate.get("minimum_instances", 1):
         errors.append("too few heldout instances")
-    if len(heldout_templates) < split["gate"]["minimum_heldout_templates"]:
+    if len(heldout_templates) < gate.get("minimum_heldout_templates", 1):
         errors.append("too few heldout templates")
     for tid in heldout_ids:
         task = tasks.get(tid)
@@ -229,10 +230,10 @@ def evaluator_provenance(eval_python):
 
 
 def prepare_routed_hint(task, library, *, primitive_record_path=None, route_fn=None):
-    """Run the real workflow-first router without launching the browser agent.
+    """Run the primitive-only cross-template router without launching the browser agent.
 
-    A cross-template workflow is always an adaptation prior, never executed directly. This also
-    makes the experiment independent of executable-grade workflow differences.
+    Related workflows are not adaptation priors: every non-exact task passes through primitive
+    metadata selection and then either receives full method code or runs from scratch.
     """
     if route_fn is None:
         from webwright.skill_factory.route import route as route_fn
@@ -252,7 +253,7 @@ def prepare_routed_hint(task, library, *, primitive_record_path=None, route_fn=N
         recommend_fn=cross_template_recommend,
         primitive_site=task["sites"][0],
         primitive_record_path=primitive_record_path,
-        cross_template_workflow_first=True,
+        cross_template_workflow_first=False,
     )
 
 
@@ -299,8 +300,36 @@ def run_one(args, split, dataset, config):
     )
     prompt = (f"Complete this web task.\n\nGoal: {task['intent']}\n"
               f"Start URL: {url}{login}{schema_note}{ANSWER_SPEC}")
+    development_hint = ""
+    if args.development_hint_file:
+        if not args.allow_any_task:
+            raise ValueError("--development-hint-file requires --allow-any-task")
+        development_hint = Path(args.development_hint_file).read_text(encoding="utf-8").strip()
+        prompt = ("## Development capability probe (not a primitive and not an answer)\n"
+                  + development_hint
+                  + "\nUse this only as a site-acquisition hypothesis. Verify it against the website, "
+                    "generate the complete standalone solution yourself, and do not assume any "
+                    "task answer from this hint.\n\n" + prompt)
     offered = []
     route_out = None
+    scratch_plan = None
+    if args.scratch_first:
+        configure_router_model(args.model_config)
+        from webwright.skill_factory.audited_primitive_retrieve import (
+            draft_scratch_plan, render_frozen_scratch_plan,
+        )
+        plan_path = Path(args.runs) / f"task{args.task_id}.scratch_plan.json"
+        if plan_path.exists():
+            scratch_plan = load_json(plan_path)
+            if scratch_plan.get("task") != task["intent"]:
+                raise ValueError(f"scratch plan task mismatch: {plan_path}")
+        else:
+            scratch_plan = draft_scratch_plan(task["intent"], site=site)
+            plan_path.parent.mkdir(parents=True, exist_ok=True)
+            plan_path.write_text(json.dumps(scratch_plan, ensure_ascii=False, indent=2) + "\n",
+                                 encoding="utf-8")
+        if mode == "scratch":
+            prompt = render_frozen_scratch_plan(scratch_plan) + prompt
     if mode == "oracle":
         from webwright.skill_factory.primitive_retrieve import (
             render_primitive_hint, retrieve_primitives, write_retrieval_record,
@@ -320,6 +349,29 @@ def run_one(args, split, dataset, config):
         write_retrieval_record(
             Path(args.runs) / f"{key}.primitive_retrieval.json",
             retrieval,
+            task=task["intent"],
+        )
+    elif mode == "primitive":
+        configure_router_model(args.model_config)
+        from webwright.skill_factory.audited_primitive_retrieve import (
+            render_audited_primitive_hint,
+            retrieve_audited_primitives,
+            write_audited_retrieval,
+        )
+        retrieval = retrieve_audited_primitives(
+            task["intent"], args.candidate_library, site=site, max_primitives=5,
+            scratch_plan=scratch_plan,
+        )
+        prompt = render_audited_primitive_hint(
+            retrieval, include_code=not args.primitive_metadata_only,
+        ) + "\n" + prompt
+        offered = retrieval.sources
+        route_out = {
+            "route_stage": "primitive", "route_decision": retrieval.decision,
+            "reason": retrieval.reason, "remaining_gap": retrieval.remaining_gap,
+        }
+        write_audited_retrieval(
+            Path(args.runs) / f"{key}.primitive_retrieval.json", retrieval,
             task=task["intent"],
         )
     elif mode == "routed":
@@ -407,6 +459,8 @@ def run_one(args, split, dataset, config):
         "declared_used_primitives": declared,
         "declared_primitive_coverage": declared_coverage,
         "code_incorporated_primitives": used,
+        "development_hint_file": args.development_hint_file or None,
+        "primitive_metadata_only": bool(args.primitive_metadata_only),
         "run_dir": str(run_dir) if run_dir else None,
     }
     result_path.parent.mkdir(parents=True, exist_ok=True)
@@ -417,9 +471,8 @@ def run_one(args, split, dataset, config):
 def summarize(split, results_dir, routed_library):
     records = {p.stem: load_json(p) for p in Path(results_dir).glob("task*_*.json")}
     heldout_ids = [tid for x in split["heldout"] for tid in x["task_ids"]]
-    comparison_mode = "routed" if any(
-        key.endswith("_routed") for key in records
-    ) else "oracle"
+    comparison_mode = next((mode for mode in ("primitive", "routed", "oracle")
+                            if any(key.endswith(f"_{mode}") for key in records)), "oracle")
     pairs, wins, losses = [], [], []
     for tid in heldout_ids:
         base = records.get(f"task{tid}_scratch")
@@ -440,13 +493,17 @@ def summarize(split, results_dir, routed_library):
         if base["correct"] and not treatment["correct"]:
             losses.append(pair)
     win_templates = {x["template"] for x in wins}
-    gate = split["gate"]
+    gate = split.get("gate") or {}
     complete = len(pairs) == len(heldout_ids)
-    go = (complete and len(wins) - len(losses) >= gate["go_if_win_minus_loss_at_least"]
-          and len(win_templates) >= gate["minimum_templates_with_wins"])
+    go = (complete and len(wins) - len(losses) >= gate.get("go_if_win_minus_loss_at_least", 1)
+          and len(win_templates) >= gate.get("minimum_templates_with_wins", 1))
     treatment_runs = [x for x in records.values() if x.get("mode") == comparison_mode]
-    from webwright.skill_factory.primitive_catalog import PrimitiveCatalog
-    catalog_size = len(PrimitiveCatalog(routed_library, split["site"]).list())
+    if comparison_mode == "primitive":
+        from webwright.skill_factory.audited_primitive_retrieve import load_candidate_index
+        catalog_size = len(load_candidate_index(routed_library, split["site"])["primitives"])
+    else:
+        from webwright.skill_factory.primitive_catalog import PrimitiveCatalog
+        catalog_size = len(PrimitiveCatalog(routed_library, split["site"]).list())
     by_template = {}
     for pair in pairs:
         row = by_template.setdefault(str(pair["template"]), {"pairs": 0, "wins": 0, "losses": 0})
@@ -499,7 +556,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=["validate", "plan", "run", "table"])
     parser.add_argument("task_id", nargs="?", type=int)
-    parser.add_argument("mode", nargs="?", choices=["scratch", "routed", "oracle"])
+    parser.add_argument("mode", nargs="?", choices=["scratch", "primitive", "routed", "oracle"])
     parser.add_argument("--split", default=str(HERE / "cross_task_split.json"))
     parser.add_argument("--dataset", default=os.environ.get("WEBARENA_DATASET", ""))
     parser.add_argument("--config", default=os.environ.get("WEBARENA_CONFIG", ""))
@@ -508,6 +565,11 @@ def main(argv=None):
         "--routed-library",
         default=str(HERE / "generated_oracle_library"),
         help="Frozen workflow + generated primitive library used by routed mode.",
+    )
+    parser.add_argument(
+        "--candidate-library",
+        default=str(HERE / "audited_site_library_v2"),
+        help="Audited candidate site packages used only by primitive mode.",
     )
     parser.add_argument(
         "--oracle-primitive-id",
@@ -521,12 +583,31 @@ def main(argv=None):
     parser.add_argument("--eval-python", default=sys.executable)
     parser.add_argument("--timeout", type=int, default=900)
     parser.add_argument("--force", action="store_true")
+    parser.add_argument(
+        "--development-hint-file",
+        help="Development probes only: prepend a non-code capability hypothesis. Requires "
+             "--allow-any-task and is recorded in the result.",
+    )
+    parser.add_argument(
+        "--scratch-first", action="store_true",
+        help="Pilot only: freeze one task-only scratch plan for both arms and permit primitives "
+             "only as contract-checked local step patches.",
+    )
+    parser.add_argument(
+        "--primitive-metadata-only", action="store_true",
+        help="Development ablation only: route normally but withhold selected primitive code.",
+    )
     parser.add_argument("--allow-any-task", action="store_true",
                         help="Development probes only: permit a task outside the frozen split.")
     args = parser.parse_args(argv)
+    if args.primitive_metadata_only and not args.allow_any_task:
+        raise SystemExit("--primitive-metadata-only requires --allow-any-task")
     split = load_json(args.split)
     if args.command == "table":
-        summary = summarize(split, args.results, args.routed_library)
+        library = args.candidate_library if any(
+            Path(args.results).glob("task*_primitive.json")
+        ) else args.routed_library
+        summary = summarize(split, args.results, library)
         summary_path = Path(args.results) / "summary.json"
         summary_path.parent.mkdir(parents=True, exist_ok=True)
         summary_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")

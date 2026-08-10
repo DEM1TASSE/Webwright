@@ -1,0 +1,195 @@
+{
+  "decision": "CANDIDATES",
+  "candidates": [
+    {
+      "candidate_id": "task175_t310::list_dashboard_issues_by_actor_and_state",
+      "proposed_method": "list_dashboard_issues_by_actor_and_state",
+      "capability": "List GitLab dashboard issue records for a specified actor filter and issue state, with pagination and typed issue links.",
+      "owns": [
+        "Navigating to GitLab dashboard issue listing pages",
+        "Applying actor-specific dashboard filters via URL parameters such as author_username or assignee_username",
+        "Applying issue state filter via URL parameter such as state=all",
+        "Extracting issue link records from each results page",
+        "Following pagination via the Next link / rel=\"next\"",
+        "Returning pagination/completeness information"
+      ],
+      "does_not_own": [
+        "Filtering issues by task-specific title substring like \"dependency\"",
+        "Combining multiple actor queries into one semantic result",
+        "Choosing the latest updated issue",
+        "Determining an issue's open/closed state from the issue detail page",
+        "Producing the final boolean answer"
+      ],
+      "input_contract": {
+        "page": "Playwright page object",
+        "actor_filter": {
+          "type": "object",
+          "description": "Exactly one dashboard actor filter to apply.",
+          "properties": {
+            "filter_type": {
+              "type": "string",
+              "enum": [
+                "author_username",
+                "assignee_username"
+              ]
+            },
+            "username": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "filter_type",
+            "username"
+          ]
+        },
+        "state": {
+          "type": "string",
+          "description": "Issue state filter shown in dashboard URL.",
+          "enum": [
+            "opened",
+            "closed",
+            "all"
+          ]
+        },
+        "page_number": {
+          "type": "integer",
+          "description": "1-based dashboard results page number to retrieve; parameterized from pagination rather than hard-coding the first page."
+        }
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "issues": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "title": {
+                  "type": "string"
+                },
+                "web_url": {
+                  "type": "string",
+                  "description": "Absolute URL of the issue detail page."
+                }
+              },
+              "required": [
+                "title",
+                "web_url"
+              ]
+            }
+          },
+          "page_number": {
+            "type": "integer"
+          },
+          "next_page_number": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Next page if a Next control is present; null otherwise."
+          },
+          "has_next_page": {
+            "type": "boolean"
+          },
+          "is_complete": {
+            "type": "boolean",
+            "description": "False when only one page of a paginated listing was retrieved."
+          }
+        },
+        "required": [
+          "issues",
+          "page_number",
+          "next_page_number",
+          "has_next_page",
+          "is_complete"
+        ]
+      },
+      "source_evidence": {
+        "workflow_id": "task175_t310",
+        "template_id": "310",
+        "code_quote": "const starts = [\n  BASE + '/dashboard/issues?author_username=byteblaze&state=all',\n  BASE + '/dashboard/issues?assignee_username=byteblaze&state=all'\n];\n...\nawait page.goto(url, { waitUntil: 'domcontentloaded' });\nconst issueLinks = await page.locator('a').evaluateAll(els => els.map(e => ({ text:(e.innerText||'').trim(), href:e.href })).filter(x => x.text && /\\/issues\\/\\d+$/.test(x.href)));\n...\nconst nextHref = await page.locator('a[rel=\"next\"], a').evaluateAll(els => {\n  const found = els.find(e => (e.getAttribute('rel')||'') === 'next' || (e.innerText||'').trim() === 'Next');\n  return found ? found.href : '';\n});",
+        "explanation": "The workflow demonstrates a reusable listing primitive over GitLab's dashboard issues pages: it parameterizes actor filters in the query string, retrieves typed issue link records (title plus issue URL), and traverses pagination using the Next control. The task-specific substring filter on title should be removed from the primitive, while the typed extraction boundary actually demonstrated is preserved.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    },
+    {
+      "candidate_id": "task175_t310::get_issue_detail_state",
+      "proposed_method": "get_issue_detail_state",
+      "capability": "Open a GitLab issue detail page and return its typed state and stable identity fields exposed by the page.",
+      "owns": [
+        "Navigating to a GitLab issue detail page",
+        "Reading stable issue detail page signals for open/closed state",
+        "Returning typed issue record fields directly exposed at the issue page boundary"
+      ],
+      "does_not_own": [
+        "Searching for candidate issues",
+        "Filtering by title substring",
+        "Choosing among multiple candidate issues",
+        "Interpreting closed as a task-specific boolean answer format beyond returning state"
+      ],
+      "input_contract": {
+        "page": "Playwright page object",
+        "issue_url": {
+          "type": "string",
+          "description": "Absolute or site-relative URL to a GitLab issue detail page."
+        }
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "web_url": {
+            "type": "string"
+          },
+          "page_title": {
+            "type": "string",
+            "description": "Browser/page title as exposed by the issue detail page."
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "opened",
+              "closed",
+              "unknown"
+            ]
+          },
+          "state_signals": {
+            "type": "object",
+            "properties": {
+              "has_open_label": {
+                "type": "boolean"
+              },
+              "has_close_issue_action": {
+                "type": "boolean"
+              },
+              "has_closed_label": {
+                "type": "boolean"
+              },
+              "has_reopen_issue_action": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "has_open_label",
+              "has_close_issue_action",
+              "has_closed_label",
+              "has_reopen_issue_action"
+            ]
+          }
+        },
+        "required": [
+          "web_url",
+          "page_title",
+          "state",
+          "state_signals"
+        ]
+      },
+      "source_evidence": {
+        "workflow_id": "task175_t310",
+        "template_id": "310",
+        "code_quote": "await page.goto(target.href, { waitUntil: 'domcontentloaded' });\nconst body = await page.locator('body').innerText();\nconst title = await page.title();\nconst isOpen = /\\bOpen\\b/.test(body) && /Close issue/.test(body);\nconst isClosed = /\\bClosed\\b/.test(body) && /Reopen issue/.test(body);",
+        "explanation": "The workflow demonstrates reading an issue detail page and deriving typed state from stable displayed semantics on the page. Generalizing this removes the task's final boolean formatting, but preserves the demonstrated page-level acquisition of issue URL, page title, and open/closed state signals.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    }
+  ]
+}

@@ -1,0 +1,891 @@
+{
+  "site": "gitlab",
+  "batch": [
+    {
+      "id": "task306_t321",
+      "task_id": 306,
+      "template_id": 321,
+      "intent": "How many commits did Anthony make between August 2022 through September 2022 in the current repository?",
+      "site": "gitlab",
+      "code": "import asyncio\nimport json\nimport urllib.parse\nimport urllib.request\nfrom pathlib import Path\nfrom playwright.async_api import async_playwright\n\nROOT = Path(__file__).resolve().parent\nRUN_DIR = ROOT / 'final_runs' / 'run_1'\nSS_DIR = RUN_DIR / 'screenshots'\nLOG_PATH = RUN_DIR / 'final_script_log.txt'\nRUN_SCRIPT_PATH = RUN_DIR / 'final_script.py'\nAGENT_RESPONSE_PATH = ROOT / 'agent_response.json'\nSTART_URL = 'http://ec2-18-223-172-69.us-east-2.compute.amazonaws.com:8023/a11yproject/a11yproject.com'\nCOMMITS_URL = START_URL + '/-/commits/main'\nAPI_BASE = 'http://ec2-18-223-172-69.us-east-2.compute.amazonaws.com:8023/api/v4/projects/174/repository/commits'\nSINCE = '2022-08-01T00:00:00Z'\nUNTIL = '2022-09-30T23:59:59Z'\nTARGET_AUTHOR_TOKEN = 'Anthony'\n\n\ndef log(msg: str):\n    with LOG_PATH.open('a', encoding='utf-8') as f:\n        f.write(msg + '\\n')\n    print(msg)\n\n\ndef fetch_commits():\n    params = {'since': SINCE, 'until': UNTIL, 'per_page': '100'}\n    url = API_BASE + '?' + urllib.parse.urlencode(params)\n    with urllib.request.urlopen(url) as r:\n        payload = json.loads(r.read().decode('utf-8'))\n        headers = dict(r.headers.items())\n    return url, payload, headers\n\n\nasync def main():\n    RUN_DIR.mkdir(parents=True, exist_ok=True)\n    SS_DIR.mkdir(parents=True, exist_ok=True)\n    LOG_PATH.write_text('', encoding='utf-8')\n    RUN_SCRIPT_PATH.write_text(Path(__file__).read_text(encoding='utf-8'), encoding='utf-8')\n\n    async with async_playwright() as p:\n        browser = await p.chromium.launch(headless=True)\n        context = await browser.new_context(viewport={'width': 1280, 'height': 1800})\n        page = await context.new_page()\n\n        log('step 1 action: Open the repository landing page to confirm the current repository context.')\n        await page.goto(START_URL, wait_until='domcontentloaded')\n        log(f'step 1 evidence: URL={page.url} TITLE={await page.title()}')\n        await page.screenshot(path=str(SS_DIR / 'final_execution_1_repository_home.png'))\n\n        log('step 2 action: Open the repository commits page to verify the commit history page for the current repository.')\n        await page.goto(COMMITS_URL, wait_until='domcontentloaded')\n        body_text = await page.locator('body').inner_text()\n        log(f'step 2 evidence: URL={page.url} TITLE={await page.title()} BODY_SNIPPET={body_text[:1200].replace(chr(10), \" | \")}')\n        await page.screenshot(path=str(SS_DIR / 'final_execution_2_commits_page.png'))\n\n        log('step 3 action: Query the repository commits API for commits authored between 2022-08-01 and 2022-09-30 inclusive.')\n        api_url, commits, headers = fetch_commits()\n        log(f'step 3 evidence: API_URL={api_url} X-Page={headers.get(\"X-Page\")} X-Per-Page={headers.get(\"X-Per-Page\")} X-Next-Page={headers.get(\"X-Next-Page\")} TOTAL_RETURNED={len(commits)}')\n        anthony_commits = [c for c in commits if TARGET_AUTHOR_TOKEN.lower() in c.get('author_name', '').lower()]\n        log('step 3 evidence: Matching commits with author token Anthony in date window:')\n        if anthony_commits:\n            for c in anthony_commits:\n                log(f\"MATCH authored_date={c.get('authored_date')} author_name={c.get('author_name')} short_id={c.get('short_id')} title={c.get('title')}\")\n        else:\n            log('MATCH none')\n        count = len(anthony_commits)\n        log(f'step 4 action: Determine the total count of Anthony commits in the date window. RESULT_COUNT={count}')\n\n        result_page = f'''<html><body style=\"font-family:Arial,sans-serif;padding:24px;\">\n        <h1>Computed Result</h1>\n        <p>Repository: The A11Y Project / a11yproject.com</p>\n        <p>Date range: August 1, 2022 through September 30, 2022</p>\n        <p>Author token used for filtering API results: Anthony</p>\n        <p>Total commits returned in date range: {len(commits)}</p>\n        <p>Anthony commits in date range: <strong>{count}</strong></p>\n        <pre>{json.dumps([{'authored_date': c.get('authored_date'), 'author_name': c.get('author_name'), 'short_id': c.get('short_id'), 'title': c.get('title')} for c in anthony_commits], indent=2)}</pre>\n        </body></html>'''\n        await page.set_content(result_page)\n        await page.screenshot(path=str(SS_DIR / 'final_execution_3_computed_result.png'))\n\n        agent_response = {\n            'task_type': 'RETRIEVE',\n            'status': 'SUCCESS',\n            'retrieved_data': [count],\n            'error_details': None,\n        }\n        AGENT_RESPONSE_PATH.write_text(json.dumps(agent_response), encoding='utf-8')\n        log(f'step 5 action: Write agent_response.json with retrieved_data={[count]} and error_details=null.')\n        log(f'FINAL_RESPONSE: {json.dumps(agent_response)}')\n        await browser.close()\n\nasyncio.run(main())\n",
+      "record_path": "evals/webarena/train_32_results/gitlab/task306_scratch.json"
+    },
+    {
+      "id": "task785_t316",
+      "task_id": 785,
+      "template_id": 316,
+      "intent": "Get the email address of the contributor who has the most commits to branch gh-page in the current repository",
+      "site": "gitlab",
+      "code": "import json, os, shutil, subprocess, textwrap, zlib, struct\nfrom pathlib import Path\nfrom collections import Counter\nimport requests\n\nWORKSPACE = Path(os.environ.get('WORKSPACE_DIR', os.getcwd()))\nFINAL_RUNS = WORKSPACE / 'final_runs'\nFINAL_RUNS.mkdir(exist_ok=True)\nexisting = sorted([int(p.name.split('_')[1]) for p in FINAL_RUNS.glob('run_*') if p.name.split('_')[1].isdigit()])\nrun_id = (existing[-1] + 1) if existing else 1\nRUN_DIR = FINAL_RUNS / f'run_{run_id}'\nSS_DIR = RUN_DIR / 'screenshots'\nRUN_DIR.mkdir(parents=True, exist_ok=True)\nSS_DIR.mkdir(parents=True, exist_ok=True)\nLOG = RUN_DIR / 'final_script_log.txt'\nshutil.copy2(WORKSPACE / 'final_script.py', RUN_DIR / 'final_script.py') if (WORKSPACE / 'final_script.py').exists() else None\nLOG.write_text('')\n\ndef log(msg):\n    with LOG.open('a', encoding='utf-8') as f:\n        f.write(msg + '\\n')\n    print(msg)\n\ndef run(cmd, cwd=None):\n    r = subprocess.run(cmd, cwd=cwd, text=True, capture_output=True, check=True)\n    return r.stdout.strip()\n\ndef make_png(path: Path, text: str):\n    lines = text.splitlines() or ['']\n    char_w, char_h, scale, margin = 6, 8, 2, 20\n    width = max(1280, max(len(line) for line in lines) * char_w * scale + margin * 2)\n    height = min(1800, max(200, len(lines) * char_h * scale + margin * 2))\n    img = bytearray([255, 255, 255, 255] * width * height)\n    font = {\n        ' ': [0,0,0,0,0,0,0,0], '-':[0,0,0,31,0,0,0,0], '.':[0,0,0,0,0,12,12,0], ':':[0,12,12,0,12,12,0,0], '/':[1,2,4,8,16,32,64,128], '@':[30,33,45,45,47,16,30,0], '_':[0,0,0,0,0,0,0,63], '<':[6,12,24,48,24,12,6,0], '>':[24,12,6,3,6,12,24,0], '#':[10,31,10,10,31,10,0,0], '|':[12,12,12,12,12,12,12,0], '`':[12,6,0,0,0,0,0,0]\n    }\n    digits = {\n        '0':[30,33,35,37,41,49,30,0],'1':[12,28,12,12,12,12,63,0],'2':[30,33,1,6,24,32,63,0],'3':[30,33,1,14,1,33,30,0],\n        '4':[4,12,20,36,63,4,4,0],'5':[63,32,62,1,1,33,30,0],'6':[14,16,32,62,33,33,30,0],'7':[63,1,2,4,8,16,16,0],\n        '8':[30,33,33,30,33,33,30,0],'9':[30,33,33,31,1,2,28,0]\n    }\n    upper = {\n        'A':[30,33,33,63,33,33,33,0],'B':[62,33,33,62,33,33,62,0],'C':[30,33,32,32,32,33,30,0],'D':[60,34,33,33,33,34,60,0],\n        'E':[63,32,32,62,32,32,63,0],'F':[63,32,32,62,32,32,32,0],'G':[30,33,32,39,33,33,30,0],'H':[33,33,33,63,33,33,33,0],\n        'I':[63,12,12,12,12,12,63,0],'J':[7,2,2,2,2,34,28,0],'K':[33,34,36,56,36,34,33,0],'L':[32,32,32,32,32,32,63,0],\n        'M':[33,51,45,33,33,33,33,0],'N':[33,49,41,37,35,33,33,0],'O':[30,33,33,33,33,33,30,0],'P':[62,33,33,62,32,32,32,0],\n        'Q':[30,33,33,33,37,34,29,0],'R':[62,33,33,62,36,34,33,0],'S':[31,32,32,30,1,1,62,0],'T':[63,12,12,12,12,12,12,0],\n        'U':[33,33,33,33,33,33,30,0],'V':[33,33,33,33,18,18,12,0],'W':[33,33,33,33,45,51,33,0],'X':[33,18,12,12,12,18,33,0],\n        'Y':[33,18,12,12,12,12,12,0],'Z':[63,2,4,8,16,32,63,0]\n    }\n    lower = {k.lower():v for k,v in upper.items()}\n    lower.update({'a':[0,0,30,1,31,33,31,0],'b':[32,32,46,49,33,49,46,0],'c':[0,0,30,33,32,33,30,0],'d':[1,1,29,35,33,35,29,0],\n                  'e':[0,0,30,33,63,32,30,0],'f':[14,16,16,62,16,16,16,0],'g':[0,0,29,35,35,29,1,30],'h':[32,32,46,49,33,33,33,0],\n                  'i':[12,0,28,12,12,12,30,0],'j':[6,0,6,6,6,38,38,28],'k':[32,32,34,36,56,36,34,0],'l':[28,12,12,12,12,12,30,0],\n                  'm':[0,0,54,41,41,41,41,0],'n':[0,0,46,49,33,33,33,0],'o':[0,0,30,33,33,33,30,0],'p':[0,0,46,49,49,46,32,32],\n                  'q':[0,0,29,35,35,29,1,1],'r':[0,0,46,49,32,32,32,0],'s':[0,0,31,32,30,1,62,0],'t':[16,16,62,16,16,16,14,0],\n                  'u':[0,0,33,33,33,35,29,0],'v':[0,0,33,33,18,18,12,0],'w':[0,0,33,33,41,41,22,0],'x':[0,0,33,18,12,18,33,0],\n                  'y':[0,0,33,33,35,29,1,30],'z':[0,0,63,2,12,16,63,0]})\n    font.update(digits); font.update(upper); font.update(lower)\n    def put_pixel(x,y):\n        if 0 <= x < width and 0 <= y < height:\n            i = (y*width + x) * 4\n            img[i:i+4] = bytes((0,0,0,255))\n    y = margin\n    for line in lines:\n        if y + char_h*scale >= height - margin: break\n        x = margin\n        for ch in line[:100]:\n            glyph = font.get(ch, font.get('?',[30,33,2,4,8,0,8,0]))\n            for row,bits in enumerate(glyph):\n                for col in range(6):\n                    if bits & (1 << (5-col)):\n                        for sy in range(scale):\n                            for sx in range(scale):\n                                put_pixel(x + col*scale + sx, y + row*scale + sy)\n            x += char_w * scale\n            if x >= width - margin - char_w*scale: break\n        y += char_h * scale\n    raw = bytearray()\n    stride = width * 4\n    for yy in range(height):\n        raw.append(0)\n        start = yy * stride\n        raw.extend(img[start:start+stride])\n    def chunk(tag, data):\n        return struct.pack('!I', len(data)) + tag + data + struct.pack('!I', zlib.crc32(tag + data) & 0xffffffff)\n    png = b'\\x89PNG\\r\\n\\x1a\\n' + chunk(b'IHDR', struct.pack('!2I5B', width, height, 8, 6, 0, 0, 0)) + chunk(b'IDAT', zlib.compress(bytes(raw), 9)) + chunk(b'IEND', b'')\n    path.write_bytes(png)\n\nrepo_url = 'http://ec2-18-223-172-69.us-east-2.compute.amazonaws.com:8023/CellularPrivacy/Android-IMSI-Catcher-Detector.git'\nrepo_dir = WORKSPACE / '.tmp' / f'final_repo_run_{run_id}'\nif repo_dir.exists():\n    shutil.rmtree(repo_dir)\nlog('step 1 action: clone repository mirror to inspect branches and commit history')\nrun(['git','clone','--mirror',repo_url,str(repo_dir)])\nrefs = run(['git','for-each-ref','--format=%(refname:short)'], cwd=repo_dir).splitlines()\nmatching = [r for r in refs if 'gh-page' in r]\nstep1_text = 'Repository: CellularPrivacy/Android-IMSI-Catcher-Detector\\nMatching refs for gh-page query:\\n' + '\\n'.join(matching or ['<none>'])\nmake_png(SS_DIR / 'final_execution_1_branch_evidence.png', step1_text)\nlog('step 2 action: verify target branch ref; repository contains gh-pages which is the only ref matching the task branch text gh-page')\nbranch = 'gh-pages' if 'gh-pages' in matching else ('gh-pages' if 'gh-pages' in refs else None)\nif not branch:\n    raise RuntimeError('No branch matching gh-page or gh-pages found')\nshortlog = run(['git','shortlog','-sne',branch], cwd=repo_dir)\nemail_lines = run(['bash','-lc',f\"git log {branch} --format='%ae' | sort | uniq -c | sort -nr | head -n 10\"], cwd=repo_dir)\nstep2_text = f'Target branch used: {branch}\\n\\nTop contributors by name/email (git shortlog -sne):\\n{shortlog}\\n\\nTop commit-email counts:\\n{email_lines}'\nmake_png(SS_DIR / 'final_execution_2_top_contributor_counts.png', step2_text)\nlog('step 3 action: determine most frequent commit email on gh-pages from git log email counts and confirm top contributor ranking')\nemails = run(['git','log',branch,'--format=%ae'], cwd=repo_dir).splitlines()\ncounts = Counter(emails)\nemail, count = counts.most_common(1)[0]\nrecent = run(['git','log',branch,\"--format=%H | %an | %ae | %s\",'-n','12'], cwd=repo_dir)\nstep3_text = f'Most frequent commit email on {branch}: {email} ({count} commits)\\n\\nRecent commits on branch:\\n{recent}'\nmake_png(SS_DIR / 'final_execution_3_email_result.png', step3_text)\nhtml = requests.get('http://ec2-18-223-172-69.us-east-2.compute.amazonaws.com:8023/CellularPrivacy/Android-IMSI-Catcher-Detector', timeout=20).text\nagent = {\"task_type\":\"RETRIEVE\",\"status\":\"SUCCESS\",\"retrieved_data\":[email],\"error_details\":None}\n(WORKSPACE / 'agent_response.json').write_text(json.dumps(agent), encoding='utf-8')\nlog(f'step 4 action: write agent_response.json with retrieved email {email}')\nlog('step 5 action: final response data saved for evaluator')\nlog('FINAL_EMAIL: ' + email)\n",
+      "record_path": "evals/webarena/train_32_results/gitlab/task785_scratch.json"
+    },
+    {
+      "id": "task350_t298",
+      "task_id": 350,
+      "template_id": 298,
+      "intent": "Get the usernames of other users who have access to my repo prism-theme",
+      "site": "gitlab",
+      "code": "import json, os, re, shutil, sys, html as htmlmod\nfrom pathlib import Path\nfrom urllib.parse import urljoin\n\nimport requests\n\nBASE = 'http://ec2-18-223-172-69.us-east-2.compute.amazonaws.com:8023'\nUSERNAME = 'byteblaze'\nPASSWORD = 'hello1234'\nWORKSPACE = Path(os.environ.get('WORKSPACE_DIR', Path(__file__).resolve().parent))\n\n\ndef next_run_dir(root: Path) -> Path:\n    final_runs = root / 'final_runs'\n    final_runs.mkdir(exist_ok=True)\n    existing = []\n    for p in final_runs.glob('run_*'):\n        try:\n            existing.append(int(p.name.split('_')[1]))\n        except Exception:\n            pass\n    run_id = max(existing, default=0) + 1\n    run_dir = final_runs / f'run_{run_id:03d}'\n    (run_dir / 'screenshots').mkdir(parents=True, exist_ok=True)\n    return run_dir\n\n\ndef write_png_with_text(path: Path, text: str):\n    try:\n        from PIL import Image, ImageDraw\n        img = Image.new('RGB', (1280, 1800), 'white')\n        draw = ImageDraw.Draw(img)\n        y = 20\n        for line in text.splitlines():\n            if y > 1760:\n                break\n            draw.text((20, y), line[:150], fill='black')\n            y += 22\n        img.save(path)\n        return\n    except Exception:\n        pass\n    png_b64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a7z8AAAAASUVORK5CYII='\n    import base64\n    path.write_bytes(base64.b64decode(png_b64))\n\n\ndef log_write(log_path: Path, message: str):\n    with log_path.open('a', encoding='utf-8') as f:\n        f.write(message + '\\n')\n    print(message)\n\n\ndef extract_projects(html: str):\n    projects = []\n    for href, text in re.findall(r'<a[^>]+href=\"([^\"]+)\"[^>]*>(.*?)</a>', html, re.S | re.I):\n        clean = re.sub(r'<[^>]+>', ' ', text)\n        clean = re.sub(r'\\s+', ' ', htmlmod.unescape(clean)).strip()\n        if href.startswith('/byteblaze/') and '/-/' not in href:\n            projects.append((href, clean))\n    out = []\n    seen = set()\n    for href, clean in projects:\n        if href not in seen:\n            seen.add(href)\n            out.append((href, clean))\n    return out\n\n\ndef parse_members_blob(html: str):\n    m = re.search(r'data-members-data=\"([^\"]+)\"', html)\n    if not m:\n        raise RuntimeError('Could not find data-members-data blob on members page')\n    encoded = m.group(1)\n    decoded = htmlmod.unescape(encoded)\n    data = json.loads(decoded)\n    members = data['user']['members']\n    usernames = []\n    all_members = []\n    for member in members:\n        user = member.get('user') or {}\n        uname = user.get('username')\n        all_members.append({\n            'username': uname,\n            'name': user.get('name'),\n            'access_level': (member.get('access_level') or {}).get('string_value'),\n            'type': member.get('type'),\n        })\n        if uname and uname != USERNAME:\n            usernames.append(uname)\n    return usernames, all_members, decoded\n\n\ndef main():\n    run_dir = next_run_dir(WORKSPACE)\n    screenshots = run_dir / 'screenshots'\n    log_path = run_dir / 'final_script_log.txt'\n    log_path.write_text('', encoding='utf-8')\n    shutil.copy2(Path(__file__), run_dir / 'final_script.py')\n\n    step = 1\n    sess = requests.Session()\n\n    log_write(log_path, f'step {step} action: open sign-in page and capture login form details')\n    r = sess.get(urljoin(BASE, '/users/sign_in'))\n    (run_dir / 'signin_page.html').write_text(r.text, encoding='utf-8')\n    token_match = re.search(r'name=\"authenticity_token\" value=\"([^\"]+)\"', r.text)\n    if not token_match:\n        raise RuntimeError('authenticity_token not found on sign-in page')\n    token = token_match.group(1)\n    write_png_with_text(screenshots / f'final_execution_{step}_login_page.png', f'URL: {r.url}\\nTitle: Sign in · GitLab\\nFound login form and authenticity token.\\nWill authenticate as {USERNAME}.')\n\n    step += 1\n    log_write(log_path, f'step {step} action: submit credentials for byteblaze and confirm dashboard access')\n    r = sess.post(urljoin(BASE, '/users/sign_in'), data={\n        'authenticity_token': token,\n        'user[login]': USERNAME,\n        'user[password]': PASSWORD,\n        'user[remember_me]': '0',\n    }, allow_redirects=True)\n    (run_dir / 'post_login_dashboard.html').write_text(r.text, encoding='utf-8')\n    title = re.search(r'<title>(.*?)</title>', r.text, re.S)\n    write_png_with_text(screenshots / f'final_execution_{step}_after_login.png', f'URL: {r.url}\\nTitle: {(title.group(1).strip() if title else \"unknown\")}\\nAuthenticated session established for byteblaze.')\n\n    step += 1\n    log_write(log_path, f'step {step} action: search byteblaze-owned projects for prism-theme repo name evidence and select matching repository')\n    r = sess.get(urljoin(BASE, '/dashboard/projects?name=prism-theme&personal=true&sort=name_asc'))\n    (run_dir / 'project_search.html').write_text(r.text, encoding='utf-8')\n    projects = extract_projects(r.text)\n    prism_projects = [href for href, clean in projects if 'prism-theme' in href.lower() or 'prism-theme' in clean.lower()]\n    if not prism_projects:\n        raise RuntimeError('No owned prism-theme-like project found for byteblaze')\n    project_path = prism_projects[0]\n    write_png_with_text(screenshots / f'final_execution_{step}_project_search.png', 'Owned projects matching prism-theme:\\n' + '\\n'.join(prism_projects))\n    log_write(log_path, f'selected project path: {project_path}')\n\n    step += 1\n    members_url = project_path + '/-/project_members'\n    log_write(log_path, f'step {step} action: open project members page that lists users with access to the repository')\n    r = sess.get(urljoin(BASE, members_url))\n    (run_dir / 'project_members.html').write_text(r.text, encoding='utf-8')\n    usernames, all_members, decoded_blob = parse_members_blob(r.text)\n    (run_dir / 'project_members_data.json').write_text(json.dumps(all_members, indent=2), encoding='utf-8')\n    evidence_lines = [f'Project members page: {urljoin(BASE, members_url)}', 'All parsed members:']\n    for m in all_members:\n        evidence_lines.append(f\"- username={m['username']} name={m['name']} access={m['access_level']} type={m['type']}\")\n    evidence_lines.append('Other users with access (excluding byteblaze): ' + json.dumps(usernames))\n    write_png_with_text(screenshots / f'final_execution_{step}_members_page.png', '\\n'.join(evidence_lines))\n    log_write(log_path, 'parsed members: ' + json.dumps(all_members))\n    log_write(log_path, 'retrieved other usernames: ' + json.dumps(usernames))\n\n    step += 1\n    status = 'SUCCESS' if usernames is not None else 'NOT_FOUND_ERROR'\n    response = {\n        'task_type': 'RETRIEVE',\n        'status': status,\n        'retrieved_data': usernames,\n        'error_details': None,\n    }\n    (WORKSPACE / 'agent_response.json').write_text(json.dumps(response), encoding='utf-8')\n    log_write(log_path, f'step {step} action: write agent_response.json with retrieved usernames')\n    write_png_with_text(screenshots / f'final_execution_{step}_final_response.png', json.dumps(response, indent=2))\n    log_write(log_path, 'final response: ' + json.dumps(response))\n    print(f'RUN_DIR={run_dir}')\n\n\nif __name__ == '__main__':\n    main()\n",
+      "record_path": "evals/webarena/train_32_results/gitlab/task350_scratch.json"
+    },
+    {
+      "id": "task317_t324",
+      "task_id": 317,
+      "template_id": 324,
+      "intent": "Get the names and number of commits of the top 3 contributors (by commit count) to metaseq repo. Return a list of objects with keys \"first_name\", \"last_name\", and \"number_of_commits\".",
+      "site": "gitlab",
+      "code": "import asyncio\nimport json\nimport re\nimport shutil\nfrom pathlib import Path\nfrom playwright.async_api import async_playwright\n\nWORKSPACE = Path(__file__).resolve().parent\nRUN_DIR = WORKSPACE / \"final_runs\" / \"run_1\"\nSCREENSHOTS = RUN_DIR / \"screenshots\"\nLOG_PATH = RUN_DIR / \"final_script_log.txt\"\nAGENT_RESPONSE = WORKSPACE / \"agent_response.json\"\nSTART_URL = \"http://ec2-18-223-172-69.us-east-2.compute.amazonaws.com:8023\"\nUSERNAME = \"byteblaze\"\nPASSWORD = \"hello1234\"\n\n\ndef log(msg: str):\n    print(msg)\n    with LOG_PATH.open(\"a\", encoding=\"utf-8\") as f:\n        f.write(msg + \"\\n\")\n\n\ndef split_name(full_name: str):\n    parts = full_name.split()\n    if len(parts) >= 2:\n        return parts[0], \" \".join(parts[1:])\n    return full_name, \"\"\n\n\nasync def main():\n    RUN_DIR.mkdir(parents=True, exist_ok=True)\n    SCREENSHOTS.mkdir(parents=True, exist_ok=True)\n    LOG_PATH.write_text(\"\", encoding=\"utf-8\")\n    shutil.copy2(WORKSPACE / \"final_script.py\", RUN_DIR / \"final_script.py\")\n\n    async with async_playwright() as p:\n        browser = await p.chromium.launch(headless=True)\n        context = await browser.new_context(viewport={\"width\": 1280, \"height\": 1800})\n        page = await context.new_page()\n\n        log(\"step 1 action: open GitLab sign-in page and authenticate with provided credentials\")\n        await page.goto(f\"{START_URL}/users/sign_in\", wait_until=\"domcontentloaded\")\n        await page.get_by_label(\"Username or email\").fill(USERNAME)\n        await page.get_by_label(\"Password\").fill(PASSWORD)\n        await page.get_by_role(\"button\", name=\"Sign in\").click()\n        await page.wait_for_load_state(\"networkidle\")\n        await page.screenshot(path=str(SCREENSHOTS / \"final_execution_1_after_login.png\"))\n        log(f\"after login url: {page.url}\")\n        log(f\"after login title: {await page.title()}\")\n\n        log(\"step 2 action: navigate directly to the metaseq repository contributors page for branch main\")\n        target = f\"{START_URL}/root/metaseq/-/graphs/main\"\n        await page.goto(target, wait_until=\"networkidle\")\n        await page.screenshot(path=str(SCREENSHOTS / \"final_execution_2_contributors_page_top.png\"))\n        log(f\"contributors url: {page.url}\")\n        log(f\"contributors title: {await page.title()}\")\n\n        body_text = await page.locator(\"main\").inner_text()\n        log(\"captured main text excerpt:\")\n        log(body_text[:5000])\n\n        pattern = re.compile(r\"([A-Za-z][A-Za-z0-9.'\\-\\[\\] ]*[A-Za-z0-9\\]])\\n\\n(\\d+) commits? \\(\")\n        matches = pattern.findall(body_text)\n        contributors = []\n        seen = set()\n        for name, commits in matches:\n            clean = \" \".join(name.split())\n            key = (clean, int(commits))\n            if key in seen:\n                continue\n            seen.add(key)\n            contributors.append((clean, int(commits)))\n        top3 = contributors[:3]\n        log(f\"parsed top3 raw: {top3}\")\n\n        js_rows = await page.locator(\"main\").evaluate(\"el => el.innerText\")\n        log(\"step 3 action: parse the top three contributors by commit count from the visible contributors ranking\")\n        log(js_rows[:3000])\n\n        response = []\n        for name, commits in top3:\n            first, last = split_name(name)\n            response.append({\"first_name\": first, \"last_name\": last, \"number_of_commits\": commits})\n\n        await page.locator(\"text=Susan Zhang\").first.scroll_into_view_if_needed()\n        await page.screenshot(path=str(SCREENSHOTS / \"final_execution_3_top_contributors_visible.png\"))\n\n        AGENT_RESPONSE.write_text(json.dumps({\n            \"task_type\": \"RETRIEVE\",\n            \"status\": \"SUCCESS\",\n            \"retrieved_data\": response,\n            \"error_details\": None\n        }, indent=2), encoding=\"utf-8\")\n        log(\"step 4 action: write agent_response.json with the retrieved top 3 contributors and commit counts\")\n        log(\"final retrieved_data: \" + json.dumps(response, ensure_ascii=False))\n\n        await browser.close()\n\nasyncio.run(main())\n",
+      "record_path": "evals/webarena/train_32_results/gitlab/task317_scratch.json"
+    },
+    {
+      "id": "task789_t328",
+      "task_id": 789,
+      "template_id": 328,
+      "intent": "Open an issue with title \"WebAgent Support Plan\" to ask the team if they have any plan on supporting Webagent in the next quater in the respository huggingface dataset.",
+      "site": "gitlab",
+      "code": "import asyncio\nimport json\nfrom pathlib import Path\nfrom playwright.async_api import async_playwright\n\nWORKSPACE = Path('/home/t-demiwang/project/Code-Web-Skills/external/webwright/evals/webarena/train_32_runs/gitlab/task789_scratch_20260807_212955')\nBASE = 'http://ec2-18-223-172-69.us-east-2.compute.amazonaws.com:8023'\nUSERNAME = 'byteblaze'\nPASSWORD = 'hello1234'\n\nrun_root = WORKSPACE / 'final_runs'\nrun_root.mkdir(exist_ok=True)\nexisting = [int(p.name.split('_')[-1]) for p in run_root.glob('run_*') if p.name.split('_')[-1].isdigit()]\nrun_id = max(existing, default=0) + 1\nRUN_DIR = run_root / f'run_{run_id:03d}'\nSS_DIR = RUN_DIR / 'screenshots'\nRUN_DIR.mkdir(parents=True, exist_ok=True)\nSS_DIR.mkdir(parents=True, exist_ok=True)\nLOG = RUN_DIR / 'final_script_log.txt'\nLOG.write_text('')\n\n\ndef log(msg: str):\n    print(msg)\n    with LOG.open('a', encoding='utf-8') as f:\n        f.write(msg + '\\n')\n\n\nasync def main():\n    log('Task coverage: objective evidence gathering for repository availability and issue-creation feasibility. Uncovered capability without repository existence/access: opening and submitting a new issue in huggingface/dataset.')\n    async with async_playwright() as p:\n        browser = await p.chromium.launch(headless=True)\n        context = await browser.new_context(viewport={'width': 1280, 'height': 1800})\n        page = await context.new_page()\n\n        log('step 1 action: open sign-in page and authenticate with provided credentials')\n        await page.goto(BASE + '/users/sign_in', wait_until='domcontentloaded')\n        await page.get_by_label('Username or email').fill(USERNAME)\n        await page.get_by_label('Password').fill(PASSWORD)\n        await page.screenshot(path=str(SS_DIR / 'final_execution_1_signin_page.png'))\n        await page.get_by_role('button', name='Sign in').click()\n        await page.wait_for_load_state('domcontentloaded')\n        log(f'Post-login URL: {page.url}')\n        log(f'Post-login title: {await page.title()}')\n        await page.screenshot(path=str(SS_DIR / 'final_execution_2_after_login_dashboard.png'))\n\n        log('step 2 action: navigate directly to expected repository path /huggingface/dataset to verify availability')\n        await page.goto(BASE + '/huggingface/dataset', wait_until='domcontentloaded')\n        repo_body = await page.locator('body').inner_text()\n        log(f'Repo URL: {page.url}')\n        log(f'Repo title: {await page.title()}')\n        log('Repo body snippet: ' + repo_body[:500].replace('\\n', ' | '))\n        await page.screenshot(path=str(SS_DIR / 'final_execution_3_repo_not_found.png'))\n\n        log('step 3 action: search projects for huggingface to verify whether repository exists under accessible projects')\n        await page.goto(BASE + '/search?search=huggingface&group_id=&project_id=&snippets=false&repository_ref=', wait_until='domcontentloaded')\n        search1 = await page.locator('body').inner_text()\n        log(f'Search huggingface title: {await page.title()}')\n        log('Search huggingface body snippet: ' + search1[:500].replace('\\n', ' | '))\n        await page.screenshot(path=str(SS_DIR / 'final_execution_4_search_huggingface_zero_projects.png'))\n\n        log('step 4 action: search projects for dataset to verify whether repository exists under accessible projects')\n        await page.goto(BASE + '/search?search=dataset&group_id=&project_id=&snippets=false&repository_ref=', wait_until='domcontentloaded')\n        search2 = await page.locator('body').inner_text()\n        log(f'Search dataset title: {await page.title()}')\n        log('Search dataset body snippet: ' + search2[:500].replace('\\n', ' | '))\n        await page.screenshot(path=str(SS_DIR / 'final_execution_5_search_dataset_zero_projects.png'))\n\n        log('step 5 action: open project dashboard sorted by name to confirm visible accessible repositories do not include huggingface/dataset')\n        await page.goto(BASE + '/?sort=name_asc', wait_until='domcontentloaded')\n        dashboard_body = await page.locator('body').inner_text()\n        links = await page.locator('a').evaluate_all(\"els => els.map(e => ({text:(e.innerText||e.textContent||'').trim(), href:e.href})).filter(x => x.text)\")\n        project_candidates = [x for x in links if x['href'].startswith(BASE + '/') and '/-/' not in x['href'] and x['href'].count('/') >= 4]\n        log(f'Visible project candidate count: {len(project_candidates)}')\n        for item in project_candidates[:20]:\n            log(f'Visible project candidate: {item}')\n        log('Dashboard body snippet: ' + dashboard_body[:800].replace('\\n', ' | '))\n        await page.screenshot(path=str(SS_DIR / 'final_execution_6_dashboard_project_list.png'))\n\n        conclusion = 'Repository huggingface/dataset is not accessible/found for the provided account, so opening the requested issue is blocked by site state. Returning NOT_FOUND_ERROR.'\n        log('step 6 action: record blocker conclusion and write required response artifact')\n        log('Final response: ' + conclusion)\n\n        await browser.close()\n\n    agent_response = {\n        'task_type': 'RETRIEVE',\n        'status': 'NOT_FOUND_ERROR',\n        'retrieved_data': None,\n        'error_details': None,\n    }\n    (WORKSPACE / 'agent_response.json').write_text(json.dumps(agent_response))\n    log('Wrote agent_response.json with NOT_FOUND_ERROR and null retrieved_data')\n    (RUN_DIR / 'final_script.py').write_text(Path(__file__).read_text())\n\n\nif __name__ == '__main__':\n    asyncio.run(main())\n",
+      "record_path": "evals/webarena/train_32_results/gitlab/task789_scratch.json"
+    },
+    {
+      "id": "task172_t289",
+      "task_id": 172,
+      "template_id": 289,
+      "intent": "Get the project ID(s) of my personal project(s) that received no stars",
+      "site": "gitlab",
+      "code": "import asyncio, json, os, re, shutil\nfrom pathlib import Path\nfrom playwright.async_api import async_playwright\n\nWORKSPACE = Path(os.environ.get('WORKSPACE_DIR', Path(__file__).resolve().parent))\nRUN_DIR = WORKSPACE / 'final_runs' / 'run_1'\nSCREENSHOTS = RUN_DIR / 'screenshots'\nLOG_PATH = RUN_DIR / 'final_script_log.txt'\nAGENT_RESPONSE = WORKSPACE / 'agent_response.json'\nSTART_URL = 'http://ec2-18-223-172-69.us-east-2.compute.amazonaws.com:8023'\nUSERNAME = 'byteblaze'\nPASSWORD = 'hello1234'\n\n\ndef log(msg: str):\n    print(msg)\n    with LOG_PATH.open('a', encoding='utf-8') as f:\n        f.write(msg + '\\n')\n\n\nasync def screenshot(page, step_num: int, action: str):\n    await page.screenshot(path=str(SCREENSHOTS / f'final_execution_{step_num}_{action}.png'))\n\n\nasync def main():\n    if RUN_DIR.exists():\n        shutil.rmtree(RUN_DIR)\n    SCREENSHOTS.mkdir(parents=True, exist_ok=True)\n    LOG_PATH.write_text('', encoding='utf-8')\n    shutil.copy2(WORKSPACE / 'final_script.py', RUN_DIR / 'final_script.py')\n\n    async with async_playwright() as p:\n        browser = await p.chromium.launch(headless=True)\n        context = await browser.new_context(viewport={'width': 1280, 'height': 1800})\n        page = await context.new_page()\n\n        step = 1\n        log(f'step {step} action: open start URL and log in with provided credentials if sign-in page is shown')\n        await page.goto(START_URL, wait_until='domcontentloaded')\n        await page.wait_for_timeout(1500)\n        if '/users/sign_in' in page.url:\n            await page.get_by_role('textbox', name='Username or email').fill(USERNAME)\n            await page.get_by_role('textbox', name='Password').fill(PASSWORD)\n            await page.get_by_role('button', name='Sign in').click()\n            await page.wait_for_load_state('domcontentloaded')\n            await page.wait_for_timeout(2000)\n        await screenshot(page, step, 'login_complete')\n\n        step += 1\n        log(f'step {step} action: navigate to dashboard projects and apply the dedicated Personal filter to show only personal projects')\n        await page.goto(f'{START_URL}/dashboard/projects', wait_until='domcontentloaded')\n        await page.wait_for_timeout(1500)\n        await page.get_by_role('link', name='Personal').click()\n        await page.wait_for_load_state('domcontentloaded')\n        await page.wait_for_timeout(2000)\n        await screenshot(page, step, 'personal_projects_filtered')\n\n        step += 1\n        log(f'step {step} action: inspect personal project list items, verify star counts from the UI, and collect zero-star personal project paths')\n        items = page.locator('main .projects-list > li')\n        count = await items.count()\n        zero_star_paths = []\n        for i in range(count):\n            li = items.nth(i)\n            text = (await li.inner_text()).strip()\n            links = await li.locator('a').evaluate_all(\"els => els.map(a => ({text:(a.innerText||'').trim(), href:a.getAttribute('href')}))\")\n            title_link = next((x for x in links if x['text'] and '/' in x['text'] and not x['text'].isdigit()), None)\n            m = re.search(r'\\n\\s*(\\d+)\\s*\\n\\s*(\\d+)\\s*\\n\\s*(\\d+)\\s*\\n\\s*(\\d+)\\s*\\n\\s*Updated', '\\n' + text + '\\n')\n            if title_link and m:\n                stars, forks, mrs, issues = map(int, m.groups())\n                log(f'project list item: {title_link[\"text\"]} | stars={stars} forks={forks} merge_requests={mrs} issues={issues}')\n                if stars == 0:\n                    zero_star_paths.append((title_link['text'], title_link['href']))\n        log(f'zero-star personal projects from list UI: {zero_star_paths}')\n        await screenshot(page, step, 'zero_star_candidates_visible')\n\n        ids = []\n        for name, href in zero_star_paths:\n            step += 1\n            log(f'step {step} action: open {name} project page and read the visible Project ID while confirming Star count remains 0')\n            await page.goto(f'{START_URL}{href}', wait_until='domcontentloaded')\n            await page.wait_for_timeout(1500)\n            body = await page.locator('body').inner_text()\n            id_match = re.search(r'Project ID:\\s*(\\d+)', body)\n            star_match = re.search(r'\\bStar\\s*(\\d+)\\b', body)\n            project_id = int(id_match.group(1)) if id_match else None\n            star_count = int(star_match.group(1)) if star_match else None\n            log(f'opened {name} | visible_project_id={project_id} | visible_star_count={star_count} | url={page.url}')\n            if project_id is not None and star_count == 0:\n                ids.append(project_id)\n            safe = re.sub(r'[^a-z0-9]+', '_', name.lower()).strip('_')[:60]\n            await screenshot(page, step, f'project_id_{safe}')\n\n        ids = sorted(ids)\n        result = {\n            'task_type': 'RETRIEVE',\n            'status': 'SUCCESS' if ids else 'NOT_FOUND_ERROR',\n            'retrieved_data': ids if ids else None,\n            'error_details': None,\n        }\n        AGENT_RESPONSE.write_text(json.dumps(result), encoding='utf-8')\n        log(f'final retrieved project ids: {ids}')\n        log(f'agent_response.json: {json.dumps(result)}')\n        await browser.close()\n\nasyncio.run(main())\n",
+      "record_path": "evals/webarena/train_32_results/gitlab/task172_scratch.json"
+    },
+    {
+      "id": "task175_t310",
+      "task_id": 175,
+      "template_id": 310,
+      "intent": "Get whether my latest updated issue with \"dependency\" in its title is closed. Return a boolean (true if closed, false if opened).",
+      "site": "gitlab",
+      "code": "const fs = require('fs');\nconst path = require('path');\nconst { chromium } = require('/home/t-demiwang/.npm/_npx/e41f203b7505f1fb/node_modules/playwright');\n\nconst WORKSPACE = process.env.WORKSPACE_DIR || process.cwd();\nconst BASE = 'http://ec2-18-223-172-69.us-east-2.compute.amazonaws.com:8023';\n\nfunction nextRunDir() {\n  const finalRuns = path.join(WORKSPACE, 'final_runs');\n  fs.mkdirSync(finalRuns, { recursive: true });\n  const ids = fs.readdirSync(finalRuns)\n    .map(name => /^run_(\\d+)$/.exec(name))\n    .filter(Boolean)\n    .map(m => parseInt(m[1], 10));\n  const next = (ids.length ? Math.max(...ids) : 0) + 1;\n  const dir = path.join(finalRuns, `run_${String(next).padStart(3, '0')}`);\n  fs.mkdirSync(dir, { recursive: true });\n  fs.mkdirSync(path.join(dir, 'screenshots'), { recursive: true });\n  return dir;\n}\n\n(async() => {\n  const runDir = nextRunDir();\n  const shotsDir = path.join(runDir, 'screenshots');\n  const logPath = path.join(runDir, 'final_script_log.txt');\n  fs.writeFileSync(logPath, '');\n  const log = (msg) => { fs.appendFileSync(logPath, msg + '\\n'); console.log(msg); };\n  fs.copyFileSync(path.join(WORKSPACE, 'final_script.py'), path.join(runDir, 'final_script.py'));\n\n  let step = 1;\n  const browser = await chromium.launch({ headless: true });\n  const context = await browser.newContext({ viewport: { width: 1280, height: 1800 } });\n  const page = await context.newPage();\n  async function snap(name) { await page.screenshot({ path: path.join(shotsDir, `final_execution_${step}_${name}.png`) }); }\n\n  try {\n    log(`step ${step} action: open start URL and authenticate as byteblaze`);\n    await page.goto(BASE + '/users/sign_in', { waitUntil: 'domcontentloaded' });\n    await page.locator('input[name=\"user[login]\"]').fill('byteblaze');\n    await page.locator('input[name=\"user[password]\"]').fill('hello1234');\n    await Promise.all([page.waitForLoadState('domcontentloaded'), page.getByRole('button', { name: /sign in/i }).click()]);\n    await page.waitForTimeout(1200);\n    await snap('login_success');\n    log(`login landed at ${page.url()} title=${await page.title()}`);\n    step++;\n\n    const starts = [\n      BASE + '/dashboard/issues?author_username=byteblaze&state=all',\n      BASE + '/dashboard/issues?assignee_username=byteblaze&state=all'\n    ];\n    const visited = new Set();\n    const matches = [];\n\n    for (const start of starts) {\n      let url = start;\n      while (url && !visited.has(url)) {\n        visited.add(url);\n        await page.goto(url, { waitUntil: 'domcontentloaded' });\n        await page.waitForTimeout(1200);\n        const body = await page.locator('body').innerText();\n        const issueLinks = await page.locator('a').evaluateAll(els => els.map(e => ({ text:(e.innerText||'').trim(), href:e.href })).filter(x => x.text && /\\/issues\\/\\d+$/.test(x.href)));\n        const exact = issueLinks.filter(x => x.text.toLowerCase().includes('dependency'));\n        if (exact.length) {\n          log(`step ${step} action: found exact title-substring match(es) on ${url}: ${exact.map(x => x.text + ' -> ' + x.href).join(' | ')}`);\n          await snap('matching_issue_list');\n          step++;\n          for (const m of exact) {\n            matches.push({ source:url, title:m.text, href:m.href });\n          }\n        }\n        const nextHref = await page.locator('a[rel=\"next\"], a').evaluateAll(els => {\n          const found = els.find(e => (e.getAttribute('rel')||'') === 'next' || (e.innerText||'').trim() === 'Next');\n          return found ? found.href : '';\n        });\n        url = nextHref && nextHref !== page.url() ? nextHref : '';\n      }\n    }\n\n    const unique = [];\n    const seen = new Set();\n    for (const m of matches) {\n      if (!seen.has(m.href)) { seen.add(m.href); unique.push(m); }\n    }\n    if (!unique.length) {\n      fs.writeFileSync(path.join(WORKSPACE, 'agent_response.json'), JSON.stringify({ task_type:'RETRIEVE', status:'NOT_FOUND_ERROR', retrieved_data:null, error_details:null }));\n      log('No exact issue title containing the substring \"dependency\" was found.');\n      log('Final answer: NOT_FOUND_ERROR');\n      await browser.close();\n      return;\n    }\n\n    const target = unique[0];\n    log(`step ${step} action: open the matched issue detail page to verify state: ${target.title} ${target.href}`);\n    await page.goto(target.href, { waitUntil: 'domcontentloaded' });\n    await page.waitForTimeout(1500);\n    await snap('issue_detail_state');\n    const body = await page.locator('body').innerText();\n    const title = await page.title();\n    const isOpen = /\\bOpen\\b/.test(body) && /Close issue/.test(body);\n    const isClosed = /\\bClosed\\b/.test(body) && /Reopen issue/.test(body);\n    const answer = isClosed ? true : false;\n    log(`issue title=${title}`);\n    log(`issue state signals: isOpen=${isOpen} isClosed=${isClosed}`);\n    log(`step ${step} action: derive final boolean answer true if closed else false; determined answer=${answer}`);\n    step++;\n\n    const response = { task_type:'RETRIEVE', status:'SUCCESS', retrieved_data:[answer], error_details:null };\n    fs.writeFileSync(path.join(WORKSPACE, 'agent_response.json'), JSON.stringify(response));\n    log(`step ${step} action: write agent_response.json with retrieved_data [${answer}]`);\n    await snap('final_confirmation');\n    log(`Final response boolean: ${answer}`);\n\n    await browser.close();\n  } catch (err) {\n    log('ERROR: ' + err.stack);\n    await browser.close();\n    process.exit(1);\n  }\n})();\n",
+      "record_path": "evals/webarena/train_32_results/gitlab/task175_scratch.json"
+    }
+  ],
+  "extractions": [
+    {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task306_t321::list_repository_commits",
+          "proposed_method": "list_repository_commits",
+          "capability": "List commit records for a GitLab repository over an optional time window via the repository commits endpoint.",
+          "owns": [
+            "Constructing the GitLab repository commits endpoint from a project identifier",
+            "Applying optional commit-list query parameters demonstrated by the workflow: since, until, per_page",
+            "Fetching commit data from the GitLab commits endpoint",
+            "Parsing the JSON response into typed commit records",
+            "Preserving pagination/completeness signals exposed by response headers"
+          ],
+          "does_not_own": [
+            "Filtering commits to a task-specific author token",
+            "Counting commits for a specific person",
+            "Ranking, summarizing, or formatting the final answer",
+            "Determining the current repository from browser context when a project identifier is not provided"
+          ],
+          "input_contract": {
+            "project_id": {
+              "type": "integer",
+              "description": "GitLab project identifier used in the /api/v4/projects/{project_id}/repository/commits endpoint."
+            },
+            "since": {
+              "type": "string",
+              "description": "Optional ISO-8601 lower bound for commit authored/committed time filtering, as accepted by the GitLab commits endpoint.",
+              "required": false
+            },
+            "until": {
+              "type": "string",
+              "description": "Optional ISO-8601 upper bound for commit authored/committed time filtering, as accepted by the GitLab commits endpoint.",
+              "required": false
+            },
+            "per_page": {
+              "type": "integer",
+              "description": "Optional page size for the commit list request.",
+              "required": false
+            },
+            "page_number": {
+              "type": "integer",
+              "description": "Optional pagination page number for the commit list request when retrieving a specific page.",
+              "required": false
+            }
+          },
+          "output_contract": {
+            "commits": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "description": "Full commit SHA."
+                  },
+                  "short_id": {
+                    "type": "string",
+                    "description": "Short commit identifier."
+                  },
+                  "title": {
+                    "type": "string",
+                    "description": "Commit title/summary."
+                  },
+                  "author_name": {
+                    "type": "string",
+                    "description": "Displayed author name from the commit record."
+                  },
+                  "authored_date": {
+                    "type": "string",
+                    "description": "Authored timestamp returned by GitLab."
+                  }
+                }
+              },
+              "description": "Commit records returned for the requested repository and query parameters."
+            },
+            "pagination": {
+              "type": "object",
+              "properties": {
+                "page_number": {
+                  "type": "integer",
+                  "nullable": true
+                },
+                "per_page": {
+                  "type": "integer",
+                  "nullable": true
+                },
+                "next_page": {
+                  "type": "integer",
+                  "nullable": true
+                }
+              },
+              "description": "Pagination/completeness information parsed from GitLab response headers when present."
+            }
+          },
+          "source_evidence": {
+            "workflow_id": "task306_t321",
+            "template_id": "321",
+            "code_quote": "API_BASE = 'http://.../api/v4/projects/174/repository/commits'\nparams = {'since': SINCE, 'until': UNTIL, 'per_page': '100'}\nurl = API_BASE + '?' + urllib.parse.urlencode(params)\nwith urllib.request.urlopen(url) as r:\n    payload = json.loads(r.read().decode('utf-8'))\n    headers = dict(r.headers.items())\n...\nlog(f'step 3 evidence: API_URL={api_url} X-Page={headers.get(\"X-Page\")} X-Per-Page={headers.get(\"X-Per-Page\")} X-Next-Page={headers.get(\"X-Next-Page\")} TOTAL_RETURNED={len(commits)}')\n...\nfor c in anthony_commits:\n    log(f\"MATCH authored_date={c.get('authored_date')} author_name={c.get('author_name')} short_id={c.get('short_id')} title={c.get('title')}\")",
+            "explanation": "The workflow directly demonstrates a reusable GitLab site operation: calling the repository commits endpoint for a given project with date-window parameters, parsing the JSON array of commit objects, and reading pagination headers. The hard-coded project id and date bounds should be parameterized. The author-token filtering and counting are task-specific workflow logic and should not be part of the primitive, but the stable commit fields actually consumed from the fetched records (authored_date, author_name, short_id, title) plus objective commit identity (id) should be preserved in the typed output.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        }
+      ]
+    },
+    {
+      "decision": "SKIP",
+      "candidates": [],
+      "skip_category": "NON_WEBSITE",
+      "reason": "The workflow does not demonstrate a reusable GitLab website capability. It solves the task by cloning the repository mirror and using local git commands (`git clone --mirror`, `git shortlog`, `git log`) against the repository URL, with only an unused final `requests.get(...)` to the site root that is not parsed into typed website records. Per policy, local git/filesystem operations are not website primitives."
+    },
+    {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task350_t298::list_project_members",
+          "proposed_method": "list_project_members",
+          "capability": "List members who have access to a GitLab project by reading the project's members page and parsing structured member records.",
+          "owns": [
+            "Authenticate to GitLab with username/password and session cookie handling required to access the members page",
+            "Accept a project identifier/path and construct the corresponding project members page URL",
+            "Fetch the project members page and parse the embedded structured members data",
+            "Return typed member records including stable identity and access metadata actually exposed by the page"
+          ],
+          "does_not_own": [
+            "Searching for which repository to inspect based on task-specific text like 'prism-theme'",
+            "Filtering out the current user or otherwise applying task-specific inclusion/exclusion rules",
+            "Ranking, aggregation, or answer formatting for the final response"
+          ],
+          "input_contract": {
+            "base_url": {
+              "type": "string",
+              "description": "Base GitLab instance URL, e.g. http://host:port"
+            },
+            "username": {
+              "type": "string",
+              "description": "GitLab login username"
+            },
+            "password": {
+              "type": "string",
+              "description": "GitLab login password"
+            },
+            "project_path": {
+              "type": "string",
+              "description": "Project path beginning with '/', e.g. /namespace/repo"
+            }
+          },
+          "output_contract": {
+            "type": "object",
+            "properties": {
+              "project_path": {
+                "type": "string"
+              },
+              "members": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "username": {
+                      "type": "string|null",
+                      "description": "GitLab username from member.user.username"
+                    },
+                    "name": {
+                      "type": "string|null",
+                      "description": "Display name from member.user.name"
+                    },
+                    "access_level": {
+                      "type": "string|null",
+                      "description": "Human-readable access level from member.access_level.string_value"
+                    },
+                    "member_type": {
+                      "type": "string|null",
+                      "description": "Member type from member.type"
+                    }
+                  }
+                }
+              },
+              "source_url": {
+                "type": "string",
+                "description": "Resolved members page URL used for retrieval"
+              }
+            }
+          },
+          "source_evidence": {
+            "workflow_id": "task350_t298",
+            "template_id": "298",
+            "code_quote": "members_url = project_path + '/-/project_members'\nr = sess.get(urljoin(BASE, members_url))\n...\nm = re.search(r'data-members-data=\"([^\"]+)\"', html)\ndecoded = htmlmod.unescape(encoded)\ndata = json.loads(decoded)\nmembers = data['user']['members']\n...\nall_members.append({\n    'username': uname,\n    'name': user.get('name'),\n    'access_level': (member.get('access_level') or {}).get('string_value'),\n    'type': member.get('type'),\n})",
+            "explanation": "The workflow demonstrates a reusable GitLab website operation: given an authenticated session and a concrete project path, open the project's members page and parse structured member records from the page's embedded data blob. The generalized primitive parameterizes the hard-coded base URL, credentials, and project path, and removes the task-specific post-processing that excluded the current user and only returned usernames.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        },
+        {
+          "candidate_id": "task350_t298::search_personal_projects_by_name",
+          "proposed_method": "search_personal_projects_by_name",
+          "capability": "Search a user's personal GitLab projects by name from the dashboard projects page and return matching project records parsed from the HTML links.",
+          "owns": [
+            "Authenticate to GitLab with username/password and session cookie handling required to access the dashboard projects page",
+            "Fetch the personal projects search page with a caller-supplied name query",
+            "Parse project links for projects in the authenticated user's namespace from the returned HTML",
+            "Return project path and displayed text for discovered projects"
+          ],
+          "does_not_own": [
+            "Choosing the correct project among multiple matches for a task",
+            "Inferring fuzzy task intent beyond the provided query string",
+            "Opening the project members page or analyzing project access"
+          ],
+          "input_contract": {
+            "base_url": {
+              "type": "string",
+              "description": "Base GitLab instance URL, e.g. http://host:port"
+            },
+            "username": {
+              "type": "string",
+              "description": "GitLab login username"
+            },
+            "password": {
+              "type": "string",
+              "description": "GitLab login password"
+            },
+            "query": {
+              "type": "string",
+              "description": "Project name search string to send as the name parameter"
+            }
+          },
+          "output_contract": {
+            "type": "object",
+            "properties": {
+              "query": {
+                "type": "string"
+              },
+              "projects": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "project_path": {
+                      "type": "string",
+                      "description": "Relative GitLab project path such as /namespace/repo"
+                    },
+                    "display_name": {
+                      "type": "string",
+                      "description": "Visible anchor text associated with the project link"
+                    }
+                  }
+                }
+              },
+              "source_url": {
+                "type": "string",
+                "description": "Resolved dashboard search URL used for retrieval"
+              }
+            }
+          },
+          "source_evidence": {
+            "workflow_id": "task350_t298",
+            "template_id": "298",
+            "code_quote": "r = sess.get(urljoin(BASE, '/dashboard/projects?name=prism-theme&personal=true&sort=name_asc'))\n...\ndef extract_projects(html: str):\n    projects = []\n    for href, text in re.findall(r'<a[^>]+href=\"([^\"]+)\"[^>]*>(.*?)</a>', html, re.S | re.I):\n        clean = re.sub(r'<[^>]+>', ' ', text)\n        clean = re.sub(r'\\s+', ' ', htmlmod.unescape(clean)).strip()\n        if href.startswith('/byteblaze/') and '/-/' not in href:\n            projects.append((href, clean))",
+            "explanation": "The workflow demonstrates a reusable website read capability on GitLab's dashboard projects page: execute a personal-project search by name and parse project links from HTML. Generalization replaces the hard-coded query string and username namespace assumption with caller parameters/authenticated context, while preserving the actually demonstrated acquisition boundary of project path plus displayed name.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        }
+      ]
+    },
+    {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task317_t324::list_repository_branch_contributors",
+          "proposed_method": "list_repository_branch_contributors",
+          "capability": "List contributors for a GitLab repository branch from the repository contributors/graphs page, including commit counts and ranking order as displayed.",
+          "owns": [
+            "Navigate to a GitLab repository branch contributors page using instance base URL, project path, and branch name",
+            "Read the contributors ranking content from the page",
+            "Parse displayed contributor entries into typed records with contributor identity, commit count, and displayed rank/order",
+            "Return a partial list reflecting page-displayed ordering when the caller limits results"
+          ],
+          "does_not_own": [
+            "Signing in or session creation outside whatever browser/session is already provided",
+            "Choosing top N contributors as a task-level filtering policy unless passed explicitly as a limit",
+            "Splitting full names into first/last name",
+            "Cross-page aggregation, deduplication across branches, or subjective interpretation of contributor importance"
+          ],
+          "input_contract": {
+            "base_url": {
+              "type": "string",
+              "description": "Base URL of the GitLab instance, e.g. https://gitlab.example.com"
+            },
+            "project_path": {
+              "type": "string",
+              "description": "Namespace/project path, e.g. root/metaseq"
+            },
+            "branch_name": {
+              "type": "string",
+              "description": "Branch whose contributors graph page should be read, e.g. main"
+            },
+            "limit": {
+              "type": "integer",
+              "required": false,
+              "description": "Optional maximum number of contributor records to return in displayed rank order"
+            }
+          },
+          "output_contract": {
+            "type": "object",
+            "properties": {
+              "contributors": {
+                "type": "array",
+                "description": "Contributor records in the same ranking order shown on the branch contributors page",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "rank": {
+                      "type": "integer",
+                      "description": "1-based displayed order parsed from the page sequence"
+                    },
+                    "full_name": {
+                      "type": "string",
+                      "description": "Contributor name as displayed on the page"
+                    },
+                    "commit_count": {
+                      "type": "integer",
+                      "description": "Number of commits shown for that contributor on the selected branch"
+                    }
+                  }
+                }
+              },
+              "is_partial": {
+                "type": "boolean",
+                "description": "True when a caller-supplied limit truncates the displayed contributor list; otherwise false based on the acquired page content"
+              }
+            }
+          },
+          "source_evidence": {
+            "workflow_id": "task317_t324",
+            "template_id": "324",
+            "code_quote": "target = f\"{START_URL}/root/metaseq/-/graphs/main\"\nawait page.goto(target, wait_until=\"networkidle\")\nbody_text = await page.locator(\"main\").inner_text()\npattern = re.compile(r\"([A-Za-z][A-Za-z0-9.'\\-\\[\\] ]*[A-Za-z0-9\\]])\\n\\n(\\d+) commits? \\(\")\nmatches = pattern.findall(body_text)\n...\ncontributors.append((clean, int(commits)))\ntop3 = contributors[:3]",
+            "explanation": "The workflow demonstrates a reusable GitLab website read capability: given a repository path and branch, it opens the branch contributors/graphs page and parses contributor entries with commit counts from the displayed page text. The hard-coded instance URL, project path, branch name, and task-specific top-3 truncation can be parameterized. The reusable primitive should preserve the objectively displayed contributor full name, commit count, and ranking order rather than the workflow's task-specific first/last-name split.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        }
+      ]
+    },
+    {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task789_t328::search_gitlab_projects",
+          "proposed_method": "search_gitlab_projects",
+          "capability": "search GitLab projects via the site search UI and return typed project search results with completeness metadata",
+          "owns": [
+            "Navigate to GitLab search URL with a parameterized query string",
+            "Read the rendered search results page content",
+            "Parse whether project results are present or absent from the page",
+            "Return typed search-result records and completeness/availability metadata derived from the visible page state"
+          ],
+          "does_not_own": [
+            "Authenticating to GitLab",
+            "Choosing the search query for a task",
+            "Deciding whether a missing project blocks a downstream task",
+            "Opening issues or performing any repository mutation",
+            "Returning raw page text without parsing"
+          ],
+          "input_contract": {
+            "page": "Playwright page already authenticated to the GitLab instance",
+            "query": "string search query",
+            "scope": {
+              "type": "string",
+              "description": "optional search scope selector if supported by the same search URL pattern; evidence shows global project search page usage"
+            },
+            "page_number": {
+              "type": "integer",
+              "description": "optional search results page number if pagination is available"
+            }
+          },
+          "output_contract": {
+            "query": "string echoed search query",
+            "results": [
+              {
+                "project_path": "string project namespace/path when visible",
+                "project_name": "string visible project name when distinguishable",
+                "url": "string absolute project URL"
+              }
+            ],
+            "result_state": {
+              "type": "string",
+              "enum": [
+                "HAS_RESULTS",
+                "NO_RESULTS",
+                "UNKNOWN"
+              ]
+            },
+            "page_number": "integer current results page if known",
+            "is_complete_page": "boolean indicating whether this output represents only the inspected search page",
+            "source_url": "string URL used for the search results page"
+          },
+          "source_evidence": {
+            "workflow_id": "task789_t328",
+            "template_id": "328",
+            "code_quote": "await page.goto(BASE + '/search?search=huggingface&group_id=&project_id=&snippets=false&repository_ref=', wait_until='domcontentloaded')\nsearch1 = await page.locator('body').inner_text()\n...\nawait page.goto(BASE + '/search?search=dataset&group_id=&project_id=&snippets=false&repository_ref=', wait_until='domcontentloaded')\nsearch2 = await page.locator('body').inner_text()",
+            "explanation": "The workflow demonstrates the stable GitLab website search URL shape with a parameterized `search` term and inspects the rendered page to determine whether matching projects exist. Generalizing this yields a reusable site primitive that executes project search and parses typed project result records or a no-results state, rather than returning raw body text.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        },
+        {
+          "candidate_id": "task789_t328::inspect_gitlab_project_availability",
+          "proposed_method": "inspect_gitlab_project_availability",
+          "capability": "check whether a GitLab project page is accessible at a namespace/project path and return typed availability metadata",
+          "owns": [
+            "Navigate directly to a parameterized GitLab project URL by namespace/project path",
+            "Inspect rendered page semantics indicating project accessibility or not-found state",
+            "Return typed availability metadata for the requested project path",
+            "Capture canonical inspected URL/title metadata exposed at the same acquisition boundary"
+          ],
+          "does_not_own": [
+            "Authenticating to GitLab",
+            "Searching for alternate repositories if the path is unavailable",
+            "Creating issues or any other project mutation",
+            "Task-level reasoning about what to do when a project is inaccessible"
+          ],
+          "input_contract": {
+            "page": "Playwright page already authenticated to the GitLab instance",
+            "namespace": "string project/group namespace",
+            "project_name": "string repository slug"
+          },
+          "output_contract": {
+            "requested_path": "string namespace/project requested",
+            "project_url": "string inspected URL",
+            "page_title": "string page title after navigation",
+            "availability": {
+              "type": "string",
+              "enum": [
+                "ACCESSIBLE",
+                "NOT_FOUND_OR_INACCESSIBLE",
+                "UNKNOWN"
+              ]
+            }
+          },
+          "source_evidence": {
+            "workflow_id": "task789_t328",
+            "template_id": "328",
+            "code_quote": "await page.goto(BASE + '/huggingface/dataset', wait_until='domcontentloaded')\nrepo_body = await page.locator('body').inner_text()\nlog(f'Repo URL: {page.url}')\nlog(f'Repo title: {await page.title()}')\nlog('Repo body snippet: ' + repo_body[:500].replace('\\n', ' | '))",
+            "explanation": "The workflow directly visits a project path and inspects the resulting page URL, title, and body content to determine that the repository is unavailable/inaccessible. This supports a reusable primitive for project availability inspection at a known namespace/project path.",
+            "evidence_match_mode": "exact"
+          }
+        },
+        {
+          "candidate_id": "task789_t328::list_visible_gitlab_projects",
+          "proposed_method": "list_visible_gitlab_projects",
+          "capability": "list visible GitLab projects from the dashboard/projects page and return typed project records for the inspected page",
+          "owns": [
+            "Navigate to the GitLab projects/dashboard listing with a parameterized sort option",
+            "Extract visible links from the page",
+            "Filter links into likely project URLs using stable GitLab path semantics demonstrated in the workflow",
+            "Return typed visible project records for the inspected page with completeness limited to that page"
+          ],
+          "does_not_own": [
+            "Authenticating to GitLab",
+            "Inferring invisible or additional projects beyond the inspected page",
+            "Task-specific filtering such as looking for one particular repository",
+            "Cross-page aggregation unless additional pages are explicitly traversed"
+          ],
+          "input_contract": {
+            "page": "Playwright page already authenticated to the GitLab instance",
+            "sort": {
+              "type": "string",
+              "description": "optional sort parameter; evidence shows `name_asc`"
+            },
+            "page_number": {
+              "type": "integer",
+              "description": "optional dashboard/list page number if applicable"
+            }
+          },
+          "output_contract": {
+            "source_url": "string inspected dashboard/list URL",
+            "sort": "string applied sort if known",
+            "projects": [
+              {
+                "project_path": "string namespace/project path inferred from URL",
+                "url": "string absolute project URL",
+                "link_text": "string visible anchor text"
+              }
+            ],
+            "page_number": "integer current page if known",
+            "is_complete_page": "boolean false when only the current visible page was inspected"
+          },
+          "source_evidence": {
+            "workflow_id": "task789_t328",
+            "template_id": "328",
+            "code_quote": "await page.goto(BASE + '/?sort=name_asc', wait_until='domcontentloaded')\nlinks = await page.locator('a').evaluate_all(\"els => els.map(e => ({text:(e.innerText||e.textContent||'').trim(), href:e.href})).filter(x => x.text)\")\nproject_candidates = [x for x in links if x['href'].startswith(BASE + '/') and '/-/' not in x['href'] and x['href'].count('/') >= 4]",
+            "explanation": "The workflow demonstrates a reusable UI extraction pattern on the GitLab projects/dashboard page: visit the listing page, collect anchors, and identify visible project links via GitLab URL structure. Generalized, this becomes a primitive that returns typed project records from the inspected listing page rather than task-specific conclusions.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        }
+      ]
+    },
+    {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task172_t289::list_dashboard_projects",
+          "proposed_method": "list_dashboard_projects",
+          "capability": "List project records from the GitLab dashboard projects page with applied built-in scope/filter tabs by parsing project list UI cards into typed records.",
+          "owns": [
+            "Navigate to the dashboard projects page.",
+            "Optionally activate a built-in dashboard scope tab such as Personal.",
+            "Parse each visible project list item into typed project summary records.",
+            "Extract stable project identity shown in the list, including project path text and project relative URL.",
+            "Extract visible numeric counters exposed on each project card: stars, forks, merge requests, and issues."
+          ],
+          "does_not_own": [
+            "Choosing which scope/filter to use for a user task beyond exposing a parameter.",
+            "Filtering records by business logic such as 'stars == 0'.",
+            "Opening each project detail page.",
+            "Aggregating, ranking, or formatting final answers."
+          ],
+          "input_contract": {
+            "page": "Playwright page object already authenticated for GitLab.",
+            "scope": {
+              "type": "string",
+              "enum": [
+                "personal"
+              ],
+              "description": "Built-in dashboard projects scope tab to activate before parsing. Evidence demonstrates 'personal'."
+            }
+          },
+          "output_contract": {
+            "records": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "project_path": {
+                    "type": "string",
+                    "description": "Displayed namespace/project identifier from the project card."
+                  },
+                  "project_url": {
+                    "type": "string",
+                    "description": "Relative or absolute URL to the project page as exposed by the title link."
+                  },
+                  "stars_count": {
+                    "type": "integer"
+                  },
+                  "forks_count": {
+                    "type": "integer"
+                  },
+                  "merge_requests_count": {
+                    "type": "integer"
+                  },
+                  "issues_count": {
+                    "type": "integer"
+                  }
+                }
+              }
+            },
+            "completeness": {
+              "type": "object",
+              "properties": {
+                "scope_applied": {
+                  "type": "string"
+                },
+                "pagination_complete": {
+                  "type": "boolean",
+                  "description": "Whether all matching projects across pages are known to have been collected. Evidence only supports the current visible page, so this should be false unless pagination is explicitly handled."
+                }
+              }
+            }
+          },
+          "source_evidence": {
+            "workflow_id": "task172_t289",
+            "template_id": "289",
+            "code_quote": "await page.goto(f'{START_URL}/dashboard/projects'...)\nawait page.get_by_role('link', name='Personal').click()\nitems = page.locator('main .projects-list > li')\n...\ntext = (await li.inner_text()).strip()\nlinks = await li.locator('a').evaluate_all(\"els => els.map(a => ({text:(a.innerText||'').trim(), href:a.getAttribute('href')}))\")\ntitle_link = next((x for x in links if x['text'] and '/' in x['text'] and not x['text'].isdigit()), None)\nm = re.search(r'\\\\n\\\\s*(\\\\d+)\\\\s*\\\\n\\\\s*(\\\\d+)\\\\s*\\\\n\\\\s*(\\\\d+)\\\\s*\\\\n\\\\s*(\\\\d+)\\\\s*\\\\n\\\\s*Updated', '\\\\n' + text + '\\\\n')\n...\nstars, forks, mrs, issues = map(int, m.groups())",
+            "explanation": "The workflow demonstrates a reusable UI-parsing operation on GitLab's dashboard project list: navigate to dashboard/projects, activate the Personal scope tab, and parse each project card into structured records containing project identity and visible counters. Hard-coded task logic like selecting zero-star projects should be removed; the primitive should return all parsed records from the visible results set with explicit completeness semantics.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        },
+        {
+          "candidate_id": "task172_t289::get_project_overview_metrics",
+          "proposed_method": "get_project_overview_metrics",
+          "capability": "Open a GitLab project overview page and extract visible project metadata such as project ID and star count from the rendered page text.",
+          "owns": [
+            "Navigate to a project page by URL.",
+            "Parse the rendered project overview/body text for visible project metadata.",
+            "Return typed project metadata records including project ID and visible star count."
+          ],
+          "does_not_own": [
+            "Discovering which project URLs to inspect.",
+            "Deciding whether a project satisfies task-specific conditions such as having zero stars.",
+            "Collecting data across multiple projects as a final task result."
+          ],
+          "input_contract": {
+            "page": "Playwright page object already authenticated for GitLab.",
+            "project_url": {
+              "type": "string",
+              "description": "Project page URL, relative or absolute, to open."
+            }
+          },
+          "output_contract": {
+            "record": {
+              "type": "object",
+              "properties": {
+                "project_url": {
+                  "type": "string"
+                },
+                "project_id": {
+                  "type": "integer",
+                  "nullable": true,
+                  "description": "Visible GitLab project ID if present on the page."
+                },
+                "stars_count": {
+                  "type": "integer",
+                  "nullable": true,
+                  "description": "Visible star count if present on the page."
+                }
+              }
+            }
+          },
+          "source_evidence": {
+            "workflow_id": "task172_t289",
+            "template_id": "289",
+            "code_quote": "await page.goto(f'{START_URL}{href}', wait_until='domcontentloaded')\nbody = await page.locator('body').inner_text()\nid_match = re.search(r'Project ID:\\\\s*(\\\\d+)', body)\nstar_match = re.search(r'\\\\bStar\\\\s*(\\\\d+)\\\\b', body)\nproject_id = int(id_match.group(1)) if id_match else None\nstar_count = int(star_match.group(1)) if star_match else None",
+            "explanation": "The workflow repeatedly performs the same reusable acquisition step on project detail pages: open a project and parse visible overview text into typed metadata. The task-specific confirmation that stars equal zero should be excluded; the reusable capability is page-level extraction of project ID and visible star count for any provided project URL.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        }
+      ]
+    },
+    {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task175_t310::list_dashboard_issues_by_actor_and_state",
+          "proposed_method": "list_dashboard_issues_by_actor_and_state",
+          "capability": "List GitLab dashboard issue records for a specified actor filter and issue state, with pagination and typed issue links.",
+          "owns": [
+            "Navigating to GitLab dashboard issue listing pages",
+            "Applying actor-specific dashboard filters via URL parameters such as author_username or assignee_username",
+            "Applying issue state filter via URL parameter such as state=all",
+            "Extracting issue link records from each results page",
+            "Following pagination via the Next link / rel=\"next\"",
+            "Returning pagination/completeness information"
+          ],
+          "does_not_own": [
+            "Filtering issues by task-specific title substring like \"dependency\"",
+            "Combining multiple actor queries into one semantic result",
+            "Choosing the latest updated issue",
+            "Determining an issue's open/closed state from the issue detail page",
+            "Producing the final boolean answer"
+          ],
+          "input_contract": {
+            "page": "Playwright page object",
+            "actor_filter": {
+              "type": "object",
+              "description": "Exactly one dashboard actor filter to apply.",
+              "properties": {
+                "filter_type": {
+                  "type": "string",
+                  "enum": [
+                    "author_username",
+                    "assignee_username"
+                  ]
+                },
+                "username": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "filter_type",
+                "username"
+              ]
+            },
+            "state": {
+              "type": "string",
+              "description": "Issue state filter shown in dashboard URL.",
+              "enum": [
+                "opened",
+                "closed",
+                "all"
+              ]
+            },
+            "page_number": {
+              "type": "integer",
+              "description": "1-based dashboard results page number to retrieve; parameterized from pagination rather than hard-coding the first page."
+            }
+          },
+          "output_contract": {
+            "type": "object",
+            "properties": {
+              "issues": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "title": {
+                      "type": "string"
+                    },
+                    "web_url": {
+                      "type": "string",
+                      "description": "Absolute URL of the issue detail page."
+                    }
+                  },
+                  "required": [
+                    "title",
+                    "web_url"
+                  ]
+                }
+              },
+              "page_number": {
+                "type": "integer"
+              },
+              "next_page_number": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "Next page if a Next control is present; null otherwise."
+              },
+              "has_next_page": {
+                "type": "boolean"
+              },
+              "is_complete": {
+                "type": "boolean",
+                "description": "False when only one page of a paginated listing was retrieved."
+              }
+            },
+            "required": [
+              "issues",
+              "page_number",
+              "next_page_number",
+              "has_next_page",
+              "is_complete"
+            ]
+          },
+          "source_evidence": {
+            "workflow_id": "task175_t310",
+            "template_id": "310",
+            "code_quote": "const starts = [\n  BASE + '/dashboard/issues?author_username=byteblaze&state=all',\n  BASE + '/dashboard/issues?assignee_username=byteblaze&state=all'\n];\n...\nawait page.goto(url, { waitUntil: 'domcontentloaded' });\nconst issueLinks = await page.locator('a').evaluateAll(els => els.map(e => ({ text:(e.innerText||'').trim(), href:e.href })).filter(x => x.text && /\\/issues\\/\\d+$/.test(x.href)));\n...\nconst nextHref = await page.locator('a[rel=\"next\"], a').evaluateAll(els => {\n  const found = els.find(e => (e.getAttribute('rel')||'') === 'next' || (e.innerText||'').trim() === 'Next');\n  return found ? found.href : '';\n});",
+            "explanation": "The workflow demonstrates a reusable listing primitive over GitLab's dashboard issues pages: it parameterizes actor filters in the query string, retrieves typed issue link records (title plus issue URL), and traverses pagination using the Next control. The task-specific substring filter on title should be removed from the primitive, while the typed extraction boundary actually demonstrated is preserved.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        },
+        {
+          "candidate_id": "task175_t310::get_issue_detail_state",
+          "proposed_method": "get_issue_detail_state",
+          "capability": "Open a GitLab issue detail page and return its typed state and stable identity fields exposed by the page.",
+          "owns": [
+            "Navigating to a GitLab issue detail page",
+            "Reading stable issue detail page signals for open/closed state",
+            "Returning typed issue record fields directly exposed at the issue page boundary"
+          ],
+          "does_not_own": [
+            "Searching for candidate issues",
+            "Filtering by title substring",
+            "Choosing among multiple candidate issues",
+            "Interpreting closed as a task-specific boolean answer format beyond returning state"
+          ],
+          "input_contract": {
+            "page": "Playwright page object",
+            "issue_url": {
+              "type": "string",
+              "description": "Absolute or site-relative URL to a GitLab issue detail page."
+            }
+          },
+          "output_contract": {
+            "type": "object",
+            "properties": {
+              "web_url": {
+                "type": "string"
+              },
+              "page_title": {
+                "type": "string",
+                "description": "Browser/page title as exposed by the issue detail page."
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "opened",
+                  "closed",
+                  "unknown"
+                ]
+              },
+              "state_signals": {
+                "type": "object",
+                "properties": {
+                  "has_open_label": {
+                    "type": "boolean"
+                  },
+                  "has_close_issue_action": {
+                    "type": "boolean"
+                  },
+                  "has_closed_label": {
+                    "type": "boolean"
+                  },
+                  "has_reopen_issue_action": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "has_open_label",
+                  "has_close_issue_action",
+                  "has_closed_label",
+                  "has_reopen_issue_action"
+                ]
+              }
+            },
+            "required": [
+              "web_url",
+              "page_title",
+              "state",
+              "state_signals"
+            ]
+          },
+          "source_evidence": {
+            "workflow_id": "task175_t310",
+            "template_id": "310",
+            "code_quote": "await page.goto(target.href, { waitUntil: 'domcontentloaded' });\nconst body = await page.locator('body').innerText();\nconst title = await page.title();\nconst isOpen = /\\bOpen\\b/.test(body) && /Close issue/.test(body);\nconst isClosed = /\\bClosed\\b/.test(body) && /Reopen issue/.test(body);",
+            "explanation": "The workflow demonstrates reading an issue detail page and deriving typed state from stable displayed semantics on the page. Generalizing this removes the task's final boolean formatting, but preserves the demonstrated page-level acquisition of issue URL, page title, and open/closed state signals.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        }
+      ]
+    }
+  ],
+  "catalog_index": [],
+  "retrieved_primitives": []
+}

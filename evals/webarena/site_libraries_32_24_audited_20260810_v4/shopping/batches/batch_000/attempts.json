@@ -1,0 +1,1784 @@
+[
+  {
+    "attempt": 1,
+    "proposal": {
+      "operations": [
+        {
+          "operation": "ADD",
+          "replacement": {
+            "primitive_id": "shopping/extract_product_reviews_from_product_page",
+            "method": "extract_product_reviews_from_product_page",
+            "capability": "Open a shopping product page's Reviews tab and return structured review records parsed from the rendered review content on that page.",
+            "method_code": "import re\nfrom typing import Any, Dict, List\nfrom urllib.parse import urljoin\n\nasync def extract_product_reviews_from_product_page(self, url: str) -> Dict[str, Any]:\n    await self.page.goto(url, wait_until=\"networkidle\")\n    await self.page.locator('#tab-label-reviews, #tab-label-reviews-title').first.click()\n    await self.page.wait_for_timeout(2500)\n    body_text = await self.page.locator('body').inner_text()\n    reviews = self._parse_product_reviews_from_text(body_text)\n    return {\n        \"product_url\": self.page.url,\n        \"reviews\": reviews,\n        \"review_source\": \"product_reviews_tab_rendered_text\",\n    }\n\ndef _normalize_review_text(self, value: str) -> str:\n    return re.sub(r\"\\s+\", \" \", value).strip()\n\ndef _parse_product_reviews_from_text(self, raw_text: str) -> List[Dict[str, Any]]:\n    text = raw_text.replace(\"\\r\", \"\")\n    pattern = re.compile(\n        r\"(?P<title>.+?)\\nRating\\s*\\n(?P<rating>\\d+)%\\s*\\n(?P<body>.*?)\\nReview by (?P<name>.+?)\\n\\nPosted on (?P<date>.+?)(?=\\n\\n.+?\\nRating\\s*\\n\\d+%\\s*\\n|\\Z)\",\n        re.S,\n    )\n    reviews: List[Dict[str, Any]] = []\n    for match in pattern.finditer(text):\n        reviews.append({\n            \"title\": self._normalize_review_text(match.group(\"title\")),\n            \"rating_percent\": int(self._normalize_review_text(match.group(\"rating\"))),\n            \"body\": self._normalize_review_text(match.group(\"body\")),\n            \"reviewer_name\": self._normalize_review_text(match.group(\"name\")),\n            \"posted_date\": self._normalize_review_text(match.group(\"date\")),\n        })\n    return reviews\n",
+            "owns": [
+              "Navigate to a product page URL on the shopping site",
+              "Open the Reviews tab using the site's review-tab selectors",
+              "Read rendered page text after the reviews content is loaded",
+              "Parse repeated review blocks into structured review records",
+              "Return objective review fields shown in the rendered reviews: title, rating percent, body, reviewer name, and posted date"
+            ],
+            "does_not_own": [
+              "Classifying reviews into task-specific categories such as customer-service complaints",
+              "Keyword-based complaint or sentiment judgments",
+              "Selecting only matching reviewers for a final answer",
+              "Formatting task response payloads"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "url": {
+                  "type": "string",
+                  "description": "Absolute or site-relative URL of a shopping product page."
+                }
+              },
+              "required": [
+                "url"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "product_url": {
+                  "type": "string",
+                  "description": "Resolved product page URL after navigation."
+                },
+                "review_source": {
+                  "type": "string",
+                  "enum": [
+                    "product_reviews_tab_rendered_text"
+                  ]
+                },
+                "reviews": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "title": {
+                        "type": "string"
+                      },
+                      "rating_percent": {
+                        "type": "integer",
+                        "description": "Displayed rating percentage for the review."
+                      },
+                      "body": {
+                        "type": "string"
+                      },
+                      "reviewer_name": {
+                        "type": "string"
+                      },
+                      "posted_date": {
+                        "type": "string",
+                        "description": "Displayed posted-on date text."
+                      }
+                    },
+                    "required": [
+                      "title",
+                      "rating_percent",
+                      "body",
+                      "reviewer_name",
+                      "posted_date"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "product_url",
+                "review_source",
+                "reviews"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "shopping.product_page.reviews_loaded"
+            ],
+            "supported_patterns": [
+              "Open a product page directly by URL and extract all rendered reviews from the Reviews tab",
+              "Return typed review records for downstream workflow filtering or analysis"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task26_t222",
+                "template_id": "222",
+                "code_quote": "await page.goto(START_URL, wait_until=\"networkidle\")\nawait page.locator('#tab-label-reviews, #tab-label-reviews-title').first.click()\nawait page.wait_for_timeout(2500)\nbody_text = await page.locator('body').inner_text()\n...\ndef parse_reviews(raw_text: str) -> List[Dict[str, str]]:\n    pattern = re.compile(\n        r\"(?P<title>.+?)\\\\nRating\\\\s*\\\\n(?P<rating>\\\\d+)%\\\\s*\\\\n(?P<body>.*?)\\\\nReview by (?P<name>.+?)\\\\n\\\\nPosted on (?P<date>.+?)(?=\\\\n\\\\n.+?\\\\nRating\\\\s*\\\\n\\\\d+%\\\\s*\\\\n|\\\\Z)\",\n        re.S,\n    )",
+                "explanation": "Generalized the hard-coded product URL into an input and kept the demonstrated site operation of opening the Reviews tab, reading rendered text, and parsing repeated review blocks into typed review records. Excluded the workflow's downstream service-complaint classification because that is task logic."
+              }
+            ]
+          }
+        },
+        {
+          "operation": "ADD",
+          "replacement": {
+            "primitive_id": "shopping/search_products_results_page",
+            "method": "search_products_results_page",
+            "capability": "Submit a catalog search on the shopping site and return typed product records visible on the resulting search results page.",
+            "method_code": "import re\nfrom typing import Any, Dict, List\n\nasync def search_products_results_page(self, query: str) -> Dict[str, Any]:\n    await self.page.goto(\"/\", wait_until=\"domcontentloaded\")\n    await self.page.get_by_placeholder('Search entire store here...').fill(query)\n    await self.page.get_by_role('button', name='Search').click()\n    await self.page.wait_for_load_state('domcontentloaded')\n    await self.page.wait_for_timeout(2500)\n\n    products = await self.page.locator('li.product-item').evaluate_all(\"\"\"\n    els => els.map(el => {\n      const name = el.querySelector('.product-item-link')?.textContent?.trim() || '';\n      const price = el.querySelector('.price')?.textContent?.trim() || '';\n      const href = el.querySelector('.product-item-link')?.getAttribute('href') || '';\n      return {name, price, href};\n    }).filter(x => x.name)\n    \"\"\")\n\n    parsed_products: List[Dict[str, Any]] = []\n    for item in products:\n        price_text = (item.get('price') or '').replace('$', '').replace(',', '').strip()\n        price_amount = None\n        if price_text:\n            try:\n                price_amount = float(price_text)\n            except Exception:\n                price_amount = None\n        parsed_products.append({\n            \"name\": item.get('name', '').strip(),\n            \"price_amount\": price_amount,\n            \"product_url\": item.get('href') or None,\n        })\n\n    return {\n        \"query\": query,\n        \"results_page_url\": self.page.url,\n        \"products\": parsed_products,\n        \"completeness\": \"visible_results_only\",\n    }\n",
+            "owns": [
+              "Navigate to the shopping site home page",
+              "Submit a query through the site search box",
+              "Read visible product cards from the search results page",
+              "Parse stable displayed fields from each visible result card into typed records",
+              "State that returned records are limited to the visible results page when pagination is not explored"
+            ],
+            "does_not_own": [
+              "Task-specific semantic filtering such as identifying Canon photo printers",
+              "Excluding accessories or supplies based on workflow intent",
+              "Computing min/max price ranges or other aggregates",
+              "Claiming completeness across multiple search result pages without pagination evidence",
+              "Ranking, comparison, or final answer formatting"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "query": {
+                  "type": "string",
+                  "description": "Search query to submit in the store search box."
+                }
+              },
+              "required": [
+                "query"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "query": {
+                  "type": "string"
+                },
+                "results_page_url": {
+                  "type": "string"
+                },
+                "completeness": {
+                  "type": "string",
+                  "enum": [
+                    "visible_results_only"
+                  ],
+                  "description": "Only products visible on the loaded search results page are returned."
+                },
+                "products": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string",
+                        "description": "Displayed product name."
+                      },
+                      "price_amount": {
+                        "type": [
+                          "number",
+                          "null"
+                        ],
+                        "description": "Displayed product price parsed as a number when available."
+                      },
+                      "product_url": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "Href from the product card when present."
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "price_amount",
+                      "product_url"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "query",
+                "results_page_url",
+                "completeness",
+                "products"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "shopping.search_results_page.loaded"
+            ],
+            "supported_patterns": [
+              "Search the store catalog and collect visible result-card facts",
+              "Return current-page product records for downstream filtering or aggregation"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task126_t159",
+                "template_id": "159",
+                "code_quote": "await page.get_by_placeholder('Search entire store here...').fill('Canon photo printer')\nawait page.get_by_role('button', name='Search').click()\n...\nproducts = await page.locator('li.product-item').evaluate_all(\"\"\"\nels => els.map(el => {\n  const name = el.querySelector('.product-item-link')?.textContent?.trim() || '';\n  const price = el.querySelector('.price')?.textContent?.trim() || '';\n  return {name, price};\n}).filter(x => x.name)\n\"\"\")",
+                "explanation": "Generalized the hard-coded query into an input while preserving the demonstrated site operation: submit a search and parse visible result cards. Kept only objective product fields shown at extraction time and explicitly marked completeness as limited to the visible current results page because the source workflow did not paginate."
+              }
+            ]
+          }
+        },
+        {
+          "operation": "ADD",
+          "replacement": {
+            "primitive_id": "shopping/extract_contact_phone_numbers_from_contact_page",
+            "method": "extract_contact_phone_numbers_from_contact_page",
+            "capability": "Navigate from the shopping site homepage to the Contact Us page via the footer link and extract displayed phone numbers from the rendered page text.",
+            "method_code": "import re\nfrom typing import Any, Dict, List\n\nasync def extract_contact_phone_numbers_from_contact_page(self, base_url: str, contact_link_name: str = 'Contact Us') -> Dict[str, Any]:\n    await self.page.goto(base_url.rstrip('/') + '/', wait_until='domcontentloaded')\n    await self.page.wait_for_timeout(1500)\n    footer_link = self.page.locator('footer').get_by_role('link', name=contact_link_name).first\n    await footer_link.scroll_into_view_if_needed()\n    await footer_link.click()\n    await self.page.wait_for_load_state('domcontentloaded')\n    await self.page.wait_for_timeout(1500)\n\n    body_text = await self.page.locator('body').inner_text()\n    phone_numbers = self._parse_phone_numbers_from_text(body_text)\n    return {\n        'contact_page_url': self.page.url,\n        'page_title': await self.page.title(),\n        'phone_numbers': phone_numbers,\n    }\n\ndef _parse_phone_numbers_from_text(self, text: str) -> List[Dict[str, str]]:\n    phone_regex = re.compile(r'(?:\\+?1[-.\\s]?)?(?:\\(?\\d{3}\\)?[-.\\s]?\\d{3}[-.\\s]?\\d{4})')\n    matches = phone_regex.findall(text)\n    return [{'raw_number': match} for match in matches]\n",
+            "owns": [
+              "Open the shopping site homepage",
+              "Follow the visible footer Contact Us link",
+              "Read rendered contact-page body text",
+              "Parse displayed phone-number strings from visible text",
+              "Return reached page metadata together with all parsed phone numbers in encounter order"
+            ],
+            "does_not_own": [
+              "Deciding which parsed number is the customer service number beyond page context",
+              "Exploring arbitrary alternate navigation paths not demonstrated by the source workflow",
+              "Returning raw page text or DOM",
+              "Task-level answer phrasing or not-found response formatting"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "base_url": {
+                  "type": "string",
+                  "description": "Shopping site base URL, such as the site origin."
+                },
+                "contact_link_name": {
+                  "type": "string",
+                  "description": "Accessible name of the footer contact link to follow.",
+                  "default": "Contact Us"
+                }
+              },
+              "required": [
+                "base_url"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "contact_page_url": {
+                  "type": "string",
+                  "description": "URL of the reached contact page."
+                },
+                "page_title": {
+                  "type": "string",
+                  "description": "Title of the reached contact page."
+                },
+                "phone_numbers": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "raw_number": {
+                        "type": "string",
+                        "description": "Phone number text as displayed on the page."
+                      }
+                    },
+                    "required": [
+                      "raw_number"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "contact_page_url",
+                "page_title",
+                "phone_numbers"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "shopping.contact_page.loaded"
+            ],
+            "supported_patterns": [
+              "Navigate to a site's contact/help page through the footer Contact Us link",
+              "Extract displayed phone numbers for downstream selection"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task313_t134",
+                "template_id": "134",
+                "code_quote": "await page.goto(base + '/', { waitUntil: 'domcontentloaded' })\n...\nconst footerLink = page.locator('footer').getByRole('link', { name: 'Contact Us' }).first();\nawait footerLink.scrollIntoViewIfNeeded();\nawait footerLink.click();\n...\nconst bodyText = (await page.locator('body').innerText()).replace(/\\s+/g, ' ');\nconst matches = bodyText.match(phoneRegex);",
+                "explanation": "Generalized the workflow into a reusable primitive that navigates via the demonstrated footer Contact Us path and parses all displayed phone numbers from the contact page text. Excluded the workflow's task-specific choice of the first match and customer-service interpretation."
+              }
+            ]
+          }
+        },
+        {
+          "operation": "ADD",
+          "replacement": {
+            "primitive_id": "shopping/list_customer_orders",
+            "method": "list_customer_orders",
+            "capability": "Sign in to a shopping customer account, open the My Orders page, and return typed order summary records from the visible orders table.",
+            "method_code": "from typing import Any, Dict, List\nfrom urllib.parse import urljoin\n\nasync def list_customer_orders(self, username: str, password: str, page_number: int = 1) -> Dict[str, Any]:\n    await self.page.goto('/customer/account/login/', wait_until='domcontentloaded')\n    await self.page.locator('input[name=\"login[username]\"]').fill(username)\n    await self.page.locator('input[name=\"login[password]\"]').fill(password)\n    await self.page.get_by_role('button', name='Sign In').click()\n    await self.page.wait_for_load_state('domcontentloaded')\n\n    await self.page.get_by_role('link', name='My Orders').click()\n    await self.page.wait_for_load_state('domcontentloaded')\n\n    rows = await self.page.locator('table tbody tr').all()\n    orders: List[Dict[str, Any]] = []\n    for row in rows:\n        row_text = (await row.inner_text()).strip()\n        detail_href = await row.get_by_role('link', name='View Order').get_attribute('href')\n        orders.append({\n            'order_number': self._extract_order_number_from_orders_row(row_text),\n            'order_date_text': self._extract_short_date_from_orders_row(row_text),\n            'status': self._extract_status_from_orders_row(row_text),\n            'detail_url': urljoin(self.page.url, detail_href) if detail_href else None,\n        })\n\n    return {\n        'orders_page_url': self.page.url,\n        'page_number': page_number,\n        'completeness': 'visible_results_only',\n        'orders': orders,\n    }\n\ndef _extract_order_number_from_orders_row(self, row_text: str) -> str:\n    import re\n    match = re.search(r'\\b(\\d{9})\\b', row_text)\n    return match.group(1) if match else ''\n\ndef _extract_short_date_from_orders_row(self, row_text: str) -> str:\n    import re\n    match = re.search(r'\\b\\d{1,2}/\\d{1,2}/\\d{2}\\b', row_text)\n    return match.group(0) if match else ''\n\ndef _extract_status_from_orders_row(self, row_text: str) -> str:\n    known_statuses = ['Pending', 'Processing', 'Complete', 'Closed', 'Canceled', 'Cancelled', 'Holded']\n    for status in known_statuses:\n        if status in row_text:\n            return status\n    return ''\n",
+            "owns": [
+              "Authenticate with customer credentials using the sign-in form",
+              "Navigate from the signed-in account area to My Orders",
+              "Parse each visible order row in the orders table into structured summary records",
+              "Return stable summary fields demonstrated in the workflow: order number, displayed short date text, status, and order-detail URL",
+              "Report that results are limited to the visible orders page when pagination is not explored"
+            ],
+            "does_not_own": [
+              "Filtering orders by month or status",
+              "Summing refunds or other monetary aggregates across orders",
+              "Interpreting cancellation/refund policy",
+              "Claiming account-wide completeness without pagination evidence"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "username": {
+                  "type": "string",
+                  "description": "Customer account username or email."
+                },
+                "password": {
+                  "type": "string",
+                  "description": "Customer account password."
+                },
+                "page_number": {
+                  "type": "integer",
+                  "description": "Requested orders listing page number; current evidence demonstrates only the visible orders page.",
+                  "default": 1
+                }
+              },
+              "required": [
+                "username",
+                "password"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "orders_page_url": {
+                  "type": "string"
+                },
+                "page_number": {
+                  "type": "integer"
+                },
+                "completeness": {
+                  "type": "string",
+                  "enum": [
+                    "visible_results_only"
+                  ]
+                },
+                "orders": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "order_number": {
+                        "type": "string"
+                      },
+                      "order_date_text": {
+                        "type": "string",
+                        "description": "Displayed short date text from the orders table row."
+                      },
+                      "status": {
+                        "type": "string"
+                      },
+                      "detail_url": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "order_number",
+                      "order_date_text",
+                      "status",
+                      "detail_url"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "orders_page_url",
+                "page_number",
+                "completeness",
+                "orders"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "shopping.customer.authenticated",
+              "shopping.customer.orders_page.loaded"
+            ],
+            "supported_patterns": [
+              "Sign in and enumerate visible order rows from My Orders",
+              "Return typed order summaries for downstream filtering and follow-up detail retrieval"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task320_t160",
+                "template_id": "160",
+                "code_quote": "await page.goto(f'{BASE}/customer/account/login/', wait_until='domcontentloaded')\nawait page.locator('input[name=\"login[username]\"]').fill(USERNAME)\nawait page.locator('input[name=\"login[password]\"]').fill(PASSWORD)\nawait page.get_by_role('button', name='Sign In').click()\n...\nawait page.get_by_role('link', name='My Orders').click()\n...\nrows = await page.locator('table tbody tr').all()\nfor row in rows:\n    txt = (await row.inner_text()).strip()\n    ...\n    hrefs[order_no] = await row.get_by_role('link', name='View Order').get_attribute('href')",
+                "explanation": "Generalized the hard-coded credentials target selection into a reusable sign-in plus My Orders listing primitive. The workflow shows that each visible row exposes an order number, short date text, status, and a View Order href, so those are preserved as typed outputs. Filtering to February 2023 and canceled orders remains workflow logic."
+              }
+            ]
+          }
+        },
+        {
+          "operation": "ADD",
+          "replacement": {
+            "primitive_id": "shopping/get_customer_order_details",
+            "method": "get_customer_order_details",
+            "capability": "Open a signed-in customer's order detail page and return structured order facts including status, displayed date, shipping and handling amount, and grand total.",
+            "method_code": "import re\nfrom typing import Any, Dict\nfrom urllib.parse import urljoin\n\nasync def get_customer_order_details(self, detail_url: str) -> Dict[str, Any]:\n    await self.page.goto(detail_url, wait_until='domcontentloaded')\n    detail_text = await self.page.locator('body').inner_text()\n    return {\n        'order': {\n            'order_number': self._extract_order_number_from_order_detail(detail_text),\n            'status': self._extract_order_status_from_order_detail(detail_text),\n            'order_date_text': self._extract_full_order_date_from_order_detail(detail_text),\n            'shipping_and_handling_amount': self._extract_shipping_amount_from_order_detail(detail_text),\n            'grand_total_amount': self._extract_grand_total_from_order_detail(detail_text),\n            'detail_url': self.page.url,\n        }\n    }\n\ndef _extract_order_number_from_order_detail(self, text: str) -> str:\n    match = re.search(r'\\b(\\d{9})\\b', text)\n    return match.group(1) if match else ''\n\ndef _extract_order_status_from_order_detail(self, text: str) -> str:\n    known_statuses = ['Pending', 'Processing', 'Complete', 'Closed', 'Canceled', 'Cancelled', 'Holded']\n    for status in known_statuses:\n        if status in text:\n            return status\n    return ''\n\ndef _extract_full_order_date_from_order_detail(self, text: str) -> str:\n    match = re.search(r'([A-Z][a-z]+ \\d{1,2}, \\d{4})', text)\n    return match.group(1) if match else ''\n\ndef _extract_shipping_amount_from_order_detail(self, text: str):\n    match = re.search(r'Shipping\\s*&\\s*Handling\\s*\\$([\\d,]+\\.\\d{2})', text)\n    return float(match.group(1).replace(',', '')) if match else None\n\ndef _extract_grand_total_from_order_detail(self, text: str):\n    match = re.search(r'Grand Total\\s*\\$([\\d,]+\\.\\d{2})', text)\n    return float(match.group(1).replace(',', '')) if match else None\n",
+            "owns": [
+              "Open a provided customer order detail page within the signed-in account area",
+              "Read rendered order-detail page text",
+              "Parse stable order facts demonstrated by the workflow",
+              "Extract displayed shipping and handling amount and grand total as typed numbers",
+              "Return stable identity/state/time fields from the order detail page"
+            ],
+            "does_not_own": [
+              "Determining refund policy or whether refund equals grand total",
+              "Filtering orders by month or status",
+              "Summing across multiple orders",
+              "Performing order mutations or cancellations"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "detail_url": {
+                  "type": "string",
+                  "description": "Absolute or site-relative URL for a customer order detail page reachable in a signed-in session."
+                }
+              },
+              "required": [
+                "detail_url"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "order": {
+                  "type": "object",
+                  "properties": {
+                    "order_number": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "order_date_text": {
+                      "type": "string",
+                      "description": "Displayed full date text from the detail page."
+                    },
+                    "shipping_and_handling_amount": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "grand_total_amount": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "detail_url": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "order_number",
+                    "status",
+                    "order_date_text",
+                    "shipping_and_handling_amount",
+                    "grand_total_amount",
+                    "detail_url"
+                  ]
+                }
+              },
+              "required": [
+                "order"
+              ]
+            },
+            "requires": [
+              "shopping.customer.authenticated"
+            ],
+            "provides": [
+              "shopping.customer.order_detail.loaded"
+            ],
+            "supported_patterns": [
+              "Open an order detail page from a signed-in session and parse typed monetary/order facts",
+              "Use order detail outputs for downstream workflow filtering or aggregation"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task320_t160",
+                "template_id": "160",
+                "code_quote": "await page.goto(href, wait_until='domcontentloaded')\ndetail_text = await page.locator('body').inner_text()\nassert order_no in detail_text\nassert 'Canceled' in detail_text\nassert meta['date_text'] in detail_text\nassert 'Shipping & Handling\\t$5.00' in detail_text or 'Shipping & Handling $5.00' in detail_text\nm = re.search(r'Grand Total\\s*\\$([\\d,]+\\.\\d{2})', detail_text)",
+                "explanation": "Generalized the task's assertions over specific orders into a reusable order-detail parser. Preserved only objective facts demonstrated at the acquisition boundary: order number, status, full displayed order date, shipping and handling amount, and grand total. Left refund interpretation and multi-order aggregation to the workflow."
+              }
+            ]
+          }
+        }
+      ],
+      "workflow_attribution": [
+        {
+          "workflow_id": "task26_t222",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0
+          ]
+        },
+        {
+          "workflow_id": "task126_t159",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            1
+          ]
+        },
+        {
+          "workflow_id": "task313_t134",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            2
+          ]
+        },
+        {
+          "workflow_id": "task320_t160",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            3,
+            4
+          ]
+        }
+      ],
+      "candidate_attribution": [
+        {
+          "candidate_id": "task26_t222::extract_product_reviews_from_product_page",
+          "decision": "ADD",
+          "operation_index": 0
+        },
+        {
+          "candidate_id": "task126_t159::search_products_results_page",
+          "decision": "ADD",
+          "operation_index": 1
+        },
+        {
+          "candidate_id": "task313_t134::extract_contact_phone_numbers_from_contact_page",
+          "decision": "ADD",
+          "operation_index": 2
+        },
+        {
+          "candidate_id": "task320_t160::list_customer_orders",
+          "decision": "ADD",
+          "operation_index": 3
+        },
+        {
+          "candidate_id": "task320_t160::get_customer_order_details",
+          "decision": "ADD",
+          "operation_index": 4
+        }
+      ]
+    },
+    "quality_verdicts": null,
+    "errors": [
+      "operations[0]: method_code may contain only method definitions",
+      "operations[1]: method_code may contain only method definitions",
+      "operations[2]: method_code may contain only method definitions",
+      "operations[3]: method_code may contain only method definitions",
+      "operations[4]: method_code may contain only method definitions"
+    ]
+  },
+  {
+    "attempt": 2,
+    "proposal": {
+      "operations": [
+        {
+          "operation": "ADD",
+          "replacement": {
+            "primitive_id": "shopping/extract_product_reviews_from_product_page",
+            "method": "extract_product_reviews_from_product_page",
+            "capability": "Open a shopping product page's Reviews tab and return structured review records parsed from the rendered review content on that page.",
+            "method_code": "async def extract_product_reviews_from_product_page(self, url: str) -> dict:\n    await self.page.goto(url, wait_until=\"networkidle\")\n    await self.page.locator('#tab-label-reviews, #tab-label-reviews-title').first.click()\n    await self.page.wait_for_timeout(2500)\n    body_text = await self.page.locator('body').inner_text()\n    reviews = self._parse_product_reviews_from_text(body_text)\n    return {\n        \"product_url\": self.page.url,\n        \"review_source\": \"product_reviews_tab_rendered_text\",\n        \"reviews\": reviews,\n    }\n\ndef _normalize_review_text(self, value: str) -> str:\n    import re\n    return re.sub(r\"\\s+\", \" \", value).strip()\n\ndef _parse_product_reviews_from_text(self, raw_text: str) -> list:\n    import re\n    text = raw_text.replace(\"\\r\", \"\")\n    pattern = re.compile(\n        r\"(?P<title>.+?)\\nRating\\s*\\n(?P<rating>\\d+)%\\s*\\n(?P<body>.*?)\\nReview by (?P<name>.+?)\\n\\nPosted on (?P<date>.+?)(?=\\n\\n.+?\\nRating\\s*\\n\\d+%\\s*\\n|\\Z)\",\n        re.S,\n    )\n    reviews = []\n    for match in pattern.finditer(text):\n        reviews.append({\n            \"title\": self._normalize_review_text(match.group(\"title\")),\n            \"rating_percent\": int(self._normalize_review_text(match.group(\"rating\"))),\n            \"body\": self._normalize_review_text(match.group(\"body\")),\n            \"reviewer_name\": self._normalize_review_text(match.group(\"name\")),\n            \"posted_date\": self._normalize_review_text(match.group(\"date\")),\n        })\n    return reviews\n",
+            "owns": [
+              "Navigate to a product page URL on the shopping site",
+              "Open the Reviews tab using the site's review-tab selectors",
+              "Read rendered page text after the reviews content is loaded",
+              "Parse repeated review blocks into structured review records",
+              "Return objective review fields shown in the rendered reviews: title, rating percent, body, reviewer name, and posted date"
+            ],
+            "does_not_own": [
+              "Classifying reviews into task-specific categories such as customer-service complaints",
+              "Keyword-based complaint or sentiment judgments",
+              "Selecting only matching reviewers for a final answer",
+              "Formatting task response payloads"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "url": {
+                  "type": "string",
+                  "description": "Absolute or site-relative URL of a shopping product page."
+                }
+              },
+              "required": [
+                "url"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "product_url": {
+                  "type": "string",
+                  "description": "Resolved product page URL after navigation."
+                },
+                "review_source": {
+                  "type": "string",
+                  "enum": [
+                    "product_reviews_tab_rendered_text"
+                  ]
+                },
+                "reviews": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "title": {
+                        "type": "string"
+                      },
+                      "rating_percent": {
+                        "type": "integer",
+                        "description": "Displayed rating percentage for the review."
+                      },
+                      "body": {
+                        "type": "string"
+                      },
+                      "reviewer_name": {
+                        "type": "string"
+                      },
+                      "posted_date": {
+                        "type": "string",
+                        "description": "Displayed posted-on date text."
+                      }
+                    },
+                    "required": [
+                      "title",
+                      "rating_percent",
+                      "body",
+                      "reviewer_name",
+                      "posted_date"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "product_url",
+                "review_source",
+                "reviews"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "shopping.product_page.reviews_loaded"
+            ],
+            "supported_patterns": [
+              "Open a product page directly by URL and extract all rendered reviews from the Reviews tab",
+              "Return typed review records for downstream workflow filtering or analysis"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task26_t222",
+                "template_id": "222",
+                "code_quote": "await page.goto(START_URL, wait_until=\"networkidle\")\nawait page.locator('#tab-label-reviews, #tab-label-reviews-title').first.click()\nawait page.wait_for_timeout(2500)\nbody_text = await page.locator('body').inner_text()\n...\ndef parse_reviews(raw_text: str) -> List[Dict[str, str]]:\n    pattern = re.compile(\n        r\"(?P<title>.+?)\\\\nRating\\\\s*\\\\n(?P<rating>\\\\d+)%\\\\s*\\\\n(?P<body>.*?)\\\\nReview by (?P<name>.+?)\\\\n\\\\nPosted on (?P<date>.+?)(?=\\\\n\\\\n.+?\\\\nRating\\\\s*\\\\n\\\\d+%\\\\s*\\\\n|\\\\Z)\",\n        re.S,\n    )",
+                "explanation": "Generalized the hard-coded product URL into an input and kept the demonstrated site operation of opening the Reviews tab, reading rendered text, and parsing repeated review blocks into typed review records. Excluded the workflow's downstream service-complaint classification because that is workflow logic."
+              }
+            ]
+          }
+        },
+        {
+          "operation": "ADD",
+          "replacement": {
+            "primitive_id": "shopping/search_products_results_page",
+            "method": "search_products_results_page",
+            "capability": "Submit a catalog search on the shopping site and return typed product records visible on the resulting search results page.",
+            "method_code": "async def search_products_results_page(self, query: str) -> dict:\n    await self.page.goto('/', wait_until='domcontentloaded')\n    await self.page.get_by_placeholder('Search entire store here...').fill(query)\n    await self.page.get_by_role('button', name='Search').click()\n    await self.page.wait_for_load_state('domcontentloaded')\n    await self.page.wait_for_timeout(2500)\n    products = await self.page.locator('li.product-item').evaluate_all(\"\"\"\n    els => els.map(el => {\n      const name = el.querySelector('.product-item-link')?.textContent?.trim() || '';\n      const price = el.querySelector('.price')?.textContent?.trim() || '';\n      const href = el.querySelector('.product-item-link')?.getAttribute('href') || '';\n      return {name, price, href};\n    }).filter(x => x.name)\n    \"\"\")\n    parsed_products = []\n    for item in products:\n        price_text = (item.get('price') or '').replace('$', '').replace(',', '').strip()\n        price_amount = None\n        if price_text:\n            try:\n                price_amount = float(price_text)\n            except Exception:\n                price_amount = None\n        parsed_products.append({\n            'name': (item.get('name') or '').strip(),\n            'price_amount': price_amount,\n            'product_url': item.get('href') or None,\n        })\n    return {\n        'query': query,\n        'results_page_url': self.page.url,\n        'completeness': 'visible_results_only',\n        'products': parsed_products,\n    }\n",
+            "owns": [
+              "Navigate to the shopping site home page",
+              "Submit a query through the site search box",
+              "Read visible product cards from the search results page",
+              "Parse stable displayed fields from each visible result card into typed records",
+              "State that returned records are limited to the visible results page when pagination is not explored"
+            ],
+            "does_not_own": [
+              "Task-specific semantic filtering such as identifying Canon photo printers",
+              "Excluding accessories or supplies based on workflow intent",
+              "Computing min/max price ranges or other aggregates",
+              "Claiming completeness across multiple search result pages without pagination evidence",
+              "Ranking, comparison, or final answer formatting"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "query": {
+                  "type": "string",
+                  "description": "Search query to submit in the store search box."
+                }
+              },
+              "required": [
+                "query"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "query": {
+                  "type": "string"
+                },
+                "results_page_url": {
+                  "type": "string"
+                },
+                "completeness": {
+                  "type": "string",
+                  "enum": [
+                    "visible_results_only"
+                  ],
+                  "description": "Only products visible on the loaded search results page are returned."
+                },
+                "products": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string",
+                        "description": "Displayed product name."
+                      },
+                      "price_amount": {
+                        "type": [
+                          "number",
+                          "null"
+                        ],
+                        "description": "Displayed product price parsed as a number when available."
+                      },
+                      "product_url": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "Href from the product card when present."
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "price_amount",
+                      "product_url"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "query",
+                "results_page_url",
+                "completeness",
+                "products"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "shopping.search_results_page.loaded"
+            ],
+            "supported_patterns": [
+              "Search the store catalog and collect visible result-card facts",
+              "Return current-page product records for downstream filtering or aggregation"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task126_t159",
+                "template_id": "159",
+                "code_quote": "await page.get_by_placeholder('Search entire store here...').fill('Canon photo printer')\nawait page.get_by_role('button', name='Search').click()\n...\nproducts = await page.locator('li.product-item').evaluate_all(\"\"\"\nels => els.map(el => {\n  const name = el.querySelector('.product-item-link')?.textContent?.trim() || '';\n  const price = el.querySelector('.price')?.textContent?.trim() || '';\n  return {name, price};\n}).filter(x => x.name)\n\"\"\")",
+                "explanation": "Generalized the hard-coded query into an input while preserving the demonstrated site operation: submit a search and parse visible result cards. Kept objective fields acquired at extraction time and explicitly marked completeness as limited to the visible current results page because the source workflow did not paginate."
+              }
+            ]
+          }
+        },
+        {
+          "operation": "ADD",
+          "replacement": {
+            "primitive_id": "shopping/extract_contact_phone_numbers_from_contact_page",
+            "method": "extract_contact_phone_numbers_from_contact_page",
+            "capability": "Navigate from the shopping site homepage to the Contact Us page via the footer link and extract displayed phone numbers from the rendered page text.",
+            "method_code": "async def extract_contact_phone_numbers_from_contact_page(self, base_url: str, contact_link_name: str = 'Contact Us') -> dict:\n    await self.page.goto(base_url.rstrip('/') + '/', wait_until='domcontentloaded')\n    await self.page.wait_for_timeout(1500)\n    footer_link = self.page.locator('footer').get_by_role('link', name=contact_link_name).first\n    await footer_link.scroll_into_view_if_needed()\n    await footer_link.click()\n    await self.page.wait_for_load_state('domcontentloaded')\n    await self.page.wait_for_timeout(1500)\n    body_text = await self.page.locator('body').inner_text()\n    phone_numbers = self._parse_phone_numbers_from_text(body_text)\n    return {\n        'contact_page_url': self.page.url,\n        'page_title': await self.page.title(),\n        'phone_numbers': phone_numbers,\n    }\n\ndef _parse_phone_numbers_from_text(self, text: str) -> list:\n    import re\n    phone_regex = re.compile(r'(?:\\+?1[-.\\s]?)?(?:\\(?\\d{3}\\)?[-.\\s]?\\d{3}[-.\\s]?\\d{4})')\n    matches = phone_regex.findall(text)\n    return [{'raw_number': match} for match in matches]\n",
+            "owns": [
+              "Open the shopping site homepage",
+              "Follow the visible footer Contact Us link",
+              "Read rendered contact-page body text",
+              "Parse displayed phone-number strings from visible text",
+              "Return reached page metadata together with all parsed phone numbers in encounter order"
+            ],
+            "does_not_own": [
+              "Deciding which parsed number is the customer service number beyond page context",
+              "Exploring arbitrary alternate navigation paths not demonstrated by the source workflow",
+              "Returning raw page text or DOM",
+              "Task-level answer phrasing or not-found response formatting"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "base_url": {
+                  "type": "string",
+                  "description": "Shopping site base URL, such as the site origin."
+                },
+                "contact_link_name": {
+                  "type": "string",
+                  "description": "Accessible name of the footer contact link to follow.",
+                  "default": "Contact Us"
+                }
+              },
+              "required": [
+                "base_url"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "contact_page_url": {
+                  "type": "string",
+                  "description": "URL of the reached contact page."
+                },
+                "page_title": {
+                  "type": "string",
+                  "description": "Title of the reached contact page."
+                },
+                "phone_numbers": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "raw_number": {
+                        "type": "string",
+                        "description": "Phone number text as displayed on the page."
+                      }
+                    },
+                    "required": [
+                      "raw_number"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "contact_page_url",
+                "page_title",
+                "phone_numbers"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "shopping.contact_page.loaded"
+            ],
+            "supported_patterns": [
+              "Navigate to a site's contact/help page through the footer Contact Us link",
+              "Extract displayed phone numbers for downstream selection"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task313_t134",
+                "template_id": "134",
+                "code_quote": "await page.goto(base + '/', { waitUntil: 'domcontentloaded' })\n...\nconst footerLink = page.locator('footer').getByRole('link', { name: 'Contact Us' }).first();\nawait footerLink.scrollIntoViewIfNeeded();\nawait footerLink.click();\n...\nconst bodyText = (await page.locator('body').innerText()).replace(/\\s+/g, ' ');\nconst matches = bodyText.match(phoneRegex);",
+                "explanation": "Generalized the workflow into a reusable primitive that navigates via the demonstrated footer Contact Us path and parses all displayed phone numbers from the contact page text. Excluded the workflow's task-specific choice of the first match and customer-service interpretation."
+              }
+            ]
+          }
+        },
+        {
+          "operation": "ADD",
+          "replacement": {
+            "primitive_id": "shopping/list_customer_orders",
+            "method": "list_customer_orders",
+            "capability": "Sign in to a shopping customer account, open the My Orders page, and return typed order summary records from the visible orders table.",
+            "method_code": "async def list_customer_orders(self, username: str, password: str, page_number: int = 1) -> dict:\n    await self.page.goto('/customer/account/login/', wait_until='domcontentloaded')\n    await self.page.locator('input[name=\"login[username]\"]').fill(username)\n    await self.page.locator('input[name=\"login[password]\"]').fill(password)\n    await self.page.get_by_role('button', name='Sign In').click()\n    await self.page.wait_for_load_state('domcontentloaded')\n    await self.page.get_by_role('link', name='My Orders').click()\n    await self.page.wait_for_load_state('domcontentloaded')\n    rows = await self.page.locator('table tbody tr').all()\n    orders = []\n    for row in rows:\n        row_text = (await row.inner_text()).strip()\n        detail_href = await row.get_by_role('link', name='View Order').get_attribute('href')\n        orders.append({\n            'order_number': self._extract_order_number_from_orders_row(row_text),\n            'order_date_text': self._extract_short_date_from_orders_row(row_text),\n            'status': self._extract_status_from_orders_row(row_text),\n            'detail_url': await self._resolve_url(detail_href),\n        })\n    return {\n        'orders_page_url': self.page.url,\n        'page_number': page_number,\n        'completeness': 'visible_results_only',\n        'orders': orders,\n    }\n\ndef _extract_order_number_from_orders_row(self, row_text: str) -> str:\n    import re\n    match = re.search(r'\\b(\\d{9})\\b', row_text)\n    return match.group(1) if match else ''\n\ndef _extract_short_date_from_orders_row(self, row_text: str) -> str:\n    import re\n    match = re.search(r'\\b\\d{1,2}/\\d{1,2}/\\d{2}\\b', row_text)\n    return match.group(0) if match else ''\n\ndef _extract_status_from_orders_row(self, row_text: str) -> str:\n    known_statuses = ['Pending', 'Processing', 'Complete', 'Closed', 'Canceled', 'Cancelled', 'Holded']\n    for status in known_statuses:\n        if status in row_text:\n            return status\n    return ''\n\nasync def _resolve_url(self, href: str | None) -> str | None:\n    if not href:\n        return None\n    return await self.page.evaluate(\"\"\"([base, href]) => new URL(href, base).toString()\"\"\", [self.page.url, href])\n",
+            "owns": [
+              "Authenticate with customer credentials using the sign-in form",
+              "Navigate from the signed-in account area to My Orders",
+              "Parse each visible order row in the orders table into structured summary records",
+              "Return stable summary fields demonstrated in the workflow: order number, displayed short date text, status, and order-detail URL",
+              "Report that results are limited to the visible orders page when pagination is not explored"
+            ],
+            "does_not_own": [
+              "Filtering orders by month or status",
+              "Summing refunds or other monetary aggregates across orders",
+              "Interpreting cancellation/refund policy",
+              "Claiming account-wide completeness without pagination evidence"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "username": {
+                  "type": "string",
+                  "description": "Customer account username or email."
+                },
+                "password": {
+                  "type": "string",
+                  "description": "Customer account password."
+                },
+                "page_number": {
+                  "type": "integer",
+                  "description": "Requested orders listing page number; current evidence demonstrates only the visible orders page.",
+                  "default": 1
+                }
+              },
+              "required": [
+                "username",
+                "password"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "orders_page_url": {
+                  "type": "string"
+                },
+                "page_number": {
+                  "type": "integer"
+                },
+                "completeness": {
+                  "type": "string",
+                  "enum": [
+                    "visible_results_only"
+                  ]
+                },
+                "orders": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "order_number": {
+                        "type": "string"
+                      },
+                      "order_date_text": {
+                        "type": "string",
+                        "description": "Displayed short date text from the orders table row."
+                      },
+                      "status": {
+                        "type": "string"
+                      },
+                      "detail_url": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "order_number",
+                      "order_date_text",
+                      "status",
+                      "detail_url"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "orders_page_url",
+                "page_number",
+                "completeness",
+                "orders"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "shopping.customer.authenticated",
+              "shopping.customer.orders_page.loaded"
+            ],
+            "supported_patterns": [
+              "Sign in and enumerate visible order rows from My Orders",
+              "Return typed order summaries for downstream filtering and follow-up detail retrieval"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task320_t160",
+                "template_id": "160",
+                "code_quote": "await page.goto(f'{BASE}/customer/account/login/', wait_until='domcontentloaded')\nawait page.locator('input[name=\"login[username]\"]').fill(USERNAME)\nawait page.locator('input[name=\"login[password]\"]').fill(PASSWORD)\nawait page.get_by_role('button', name='Sign In').click()\n...\nawait page.get_by_role('link', name='My Orders').click()\n...\nrows = await page.locator('table tbody tr').all()\nfor row in rows:\n    txt = (await row.inner_text()).strip()\n    ...\n    hrefs[order_no] = await row.get_by_role('link', name='View Order').get_attribute('href')",
+                "explanation": "Generalized the hard-coded credentials target selection into a reusable sign-in plus My Orders listing primitive. The workflow shows that each visible row exposes an order number, short date text, status, and a View Order href, so those are preserved as typed outputs. Filtering to February 2023 and canceled orders remains workflow logic."
+              }
+            ]
+          }
+        },
+        {
+          "operation": "ADD",
+          "replacement": {
+            "primitive_id": "shopping/get_customer_order_details",
+            "method": "get_customer_order_details",
+            "capability": "Open a signed-in customer's order detail page and return structured order facts including status, displayed date, shipping and handling amount, and grand total.",
+            "method_code": "async def get_customer_order_details(self, detail_url: str) -> dict:\n    await self.page.goto(detail_url, wait_until='domcontentloaded')\n    detail_text = await self.page.locator('body').inner_text()\n    return {\n        'order': {\n            'order_number': self._extract_order_number_from_order_detail(detail_text),\n            'status': self._extract_order_status_from_order_detail(detail_text),\n            'order_date_text': self._extract_full_order_date_from_order_detail(detail_text),\n            'shipping_and_handling_amount': self._extract_shipping_amount_from_order_detail(detail_text),\n            'grand_total_amount': self._extract_grand_total_from_order_detail(detail_text),\n            'detail_url': self.page.url,\n        }\n    }\n\ndef _extract_order_number_from_order_detail(self, text: str) -> str:\n    import re\n    match = re.search(r'\\b(\\d{9})\\b', text)\n    return match.group(1) if match else ''\n\ndef _extract_order_status_from_order_detail(self, text: str) -> str:\n    known_statuses = ['Pending', 'Processing', 'Complete', 'Closed', 'Canceled', 'Cancelled', 'Holded']\n    for status in known_statuses:\n        if status in text:\n            return status\n    return ''\n\ndef _extract_full_order_date_from_order_detail(self, text: str) -> str:\n    import re\n    match = re.search(r'([A-Z][a-z]+ \\d{1,2}, \\d{4})', text)\n    return match.group(1) if match else ''\n\ndef _extract_shipping_amount_from_order_detail(self, text: str):\n    import re\n    match = re.search(r'Shipping\\s*&\\s*Handling\\s*\\$([\\d,]+\\.\\d{2})', text)\n    return float(match.group(1).replace(',', '')) if match else None\n\ndef _extract_grand_total_from_order_detail(self, text: str):\n    import re\n    match = re.search(r'Grand Total\\s*\\$([\\d,]+\\.\\d{2})', text)\n    return float(match.group(1).replace(',', '')) if match else None\n",
+            "owns": [
+              "Open a provided customer order detail page within the signed-in account area",
+              "Read rendered order-detail page text",
+              "Parse stable order facts demonstrated by the workflow",
+              "Extract displayed shipping and handling amount and grand total as typed numbers",
+              "Return stable identity/state/time fields from the order detail page"
+            ],
+            "does_not_own": [
+              "Determining refund policy or whether refund equals grand total",
+              "Filtering orders by month or status",
+              "Summing across multiple orders",
+              "Performing order mutations or cancellations"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "detail_url": {
+                  "type": "string",
+                  "description": "Absolute or site-relative URL for a customer order detail page reachable in a signed-in session."
+                }
+              },
+              "required": [
+                "detail_url"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "order": {
+                  "type": "object",
+                  "properties": {
+                    "order_number": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "order_date_text": {
+                      "type": "string",
+                      "description": "Displayed full date text from the detail page."
+                    },
+                    "shipping_and_handling_amount": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "grand_total_amount": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "detail_url": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "order_number",
+                    "status",
+                    "order_date_text",
+                    "shipping_and_handling_amount",
+                    "grand_total_amount",
+                    "detail_url"
+                  ]
+                }
+              },
+              "required": [
+                "order"
+              ]
+            },
+            "requires": [
+              "shopping.customer.authenticated"
+            ],
+            "provides": [
+              "shopping.customer.order_detail.loaded"
+            ],
+            "supported_patterns": [
+              "Open an order detail page from a signed-in session and parse typed monetary/order facts",
+              "Use order detail outputs for downstream workflow filtering or aggregation"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task320_t160",
+                "template_id": "160",
+                "code_quote": "await page.goto(href, wait_until='domcontentloaded')\ndetail_text = await page.locator('body').inner_text()\nassert order_no in detail_text\nassert 'Canceled' in detail_text\nassert meta['date_text'] in detail_text\nassert 'Shipping & Handling\\t$5.00' in detail_text or 'Shipping & Handling $5.00' in detail_text\nm = re.search(r'Grand Total\\s*\\$([\\d,]+\\.\\d{2})', detail_text)",
+                "explanation": "Generalized the task's assertions over specific orders into a reusable order-detail parser. Preserved only objective facts demonstrated at the acquisition boundary: order number, status, full displayed order date, shipping and handling amount, and grand total. Left refund interpretation and multi-order aggregation to the workflow."
+              }
+            ]
+          }
+        }
+      ],
+      "workflow_attribution": [
+        {
+          "workflow_id": "task26_t222",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0
+          ]
+        },
+        {
+          "workflow_id": "task126_t159",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            1
+          ]
+        },
+        {
+          "workflow_id": "task313_t134",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            2
+          ]
+        },
+        {
+          "workflow_id": "task320_t160",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            3,
+            4
+          ]
+        }
+      ],
+      "candidate_attribution": [
+        {
+          "candidate_id": "task26_t222::extract_product_reviews_from_product_page",
+          "decision": "ADD",
+          "operation_index": 0
+        },
+        {
+          "candidate_id": "task126_t159::search_products_results_page",
+          "decision": "ADD",
+          "operation_index": 1
+        },
+        {
+          "candidate_id": "task313_t134::extract_contact_phone_numbers_from_contact_page",
+          "decision": "ADD",
+          "operation_index": 2
+        },
+        {
+          "candidate_id": "task320_t160::list_customer_orders",
+          "decision": "ADD",
+          "operation_index": 3
+        },
+        {
+          "candidate_id": "task320_t160::get_customer_order_details",
+          "decision": "ADD",
+          "operation_index": 4
+        }
+      ]
+    },
+    "quality_verdicts": {
+      "verdicts": [
+        {
+          "operation_index": 0,
+          "verdict": "PASS",
+          "reason": "Source evidence directly supports navigating to a product page, clicking the Reviews tab via the cited selectors, reading rendered body text, and regex-parsing repeated review blocks. Output is typed and limited to objective fields shown in evidence: title, rating percent, body, reviewer name, and posted date. The primitive owns site-specific acquisition/parsing and explicitly excludes downstream complaint classification and answer formatting. owns/does_not_own are consistent, and code matches the contract."
+        },
+        {
+          "operation_index": 1,
+          "verdict": "PASS",
+          "reason": "Evidence supports filling the site's search box, submitting search, reading visible product cards from `li.product-item`, and parsing displayed name/price. The primitive properly generalizes the hard-coded query into a parameter, returns typed records, and adds a completeness marker to avoid overclaiming pagination coverage. Task-specific semantic filtering and aggregation are excluded. Code and contract are aligned."
+        },
+        {
+          "operation_index": 2,
+          "verdict": "PASS",
+          "reason": "Evidence supports opening the homepage, following the footer Contact Us link, reading rendered body text, and applying a phone regex. The primitive returns typed phone-number records plus reached-page metadata, which is supported by the cited workflow. It avoids task-specific selection of a single 'customer service' number and keeps only reusable site acquisition/parsing responsibilities. owns/does_not_own and code/contract are consistent."
+        },
+        {
+          "operation_index": 3,
+          "verdict": "FAIL",
+          "reason": "Authentication and navigation to My Orders are supported, and parsing visible order rows is a valid site primitive. However, the code/contract introduce an unsupported `page_number` input and output field without any evidence of pagination control or page navigation. The method never uses `page_number` to reach a different orders page, so contract and code overstate capability. This should be narrowed to the visible orders page only, without a page-selection parameter, unless pagination evidence is supplied."
+        },
+        {
+          "operation_index": 4,
+          "verdict": "PASS",
+          "reason": "Evidence directly supports opening an order detail URL in a signed-in session, reading body text, and extracting order number, status, displayed date, shipping & handling amount, and grand total. Output is typed and contains stable identity/time/state/amount fields needed to interpret the record. The primitive excludes refund-policy interpretation and multi-order aggregation, so the boundary is appropriate. Code and contract agree."
+        }
+      ],
+      "rejection_verdicts": []
+    },
+    "errors": [
+      "quality gate rejected operation 3: Authentication and navigation to My Orders are supported, and parsing visible order rows is a valid site primitive. However, the code/contract introduce an unsupported `page_number` input and output field without any evidence of pagination control or page navigation. The method never uses `page_number` to reach a different orders page, so contract and code overstate capability. This should be narrowed to the visible orders page only, without a page-selection parameter, unless pagination evidence is supplied."
+    ]
+  },
+  {
+    "attempt": 3,
+    "proposal": {
+      "operations": [
+        {
+          "operation": "ADD",
+          "replacement": {
+            "primitive_id": "shopping/extract_product_reviews_from_product_page",
+            "method": "extract_product_reviews_from_product_page",
+            "capability": "Open a shopping product page's Reviews tab and return structured review records parsed from the rendered review content on that page.",
+            "method_code": "async def extract_product_reviews_from_product_page(self, url: str) -> dict:\n    await self.page.goto(url, wait_until=\"networkidle\")\n    await self.page.locator('#tab-label-reviews, #tab-label-reviews-title').first.click()\n    await self.page.wait_for_timeout(2500)\n    body_text = await self.page.locator('body').inner_text()\n    reviews = self._parse_product_reviews_from_text(body_text)\n    return {\n        \"product_url\": self.page.url,\n        \"review_source\": \"product_reviews_tab_rendered_text\",\n        \"reviews\": reviews,\n    }\n\ndef _normalize_review_text(self, value: str) -> str:\n    import re\n    return re.sub(r\"\\s+\", \" \", value).strip()\n\ndef _parse_product_reviews_from_text(self, raw_text: str) -> list:\n    import re\n    text = raw_text.replace(\"\\r\", \"\")\n    pattern = re.compile(\n        r\"(?P<title>.+?)\\nRating\\s*\\n(?P<rating>\\d+)%\\s*\\n(?P<body>.*?)\\nReview by (?P<name>.+?)\\n\\nPosted on (?P<date>.+?)(?=\\n\\n.+?\\nRating\\s*\\n\\d+%\\s*\\n|\\Z)\",\n        re.S,\n    )\n    reviews = []\n    for match in pattern.finditer(text):\n        reviews.append({\n            \"title\": self._normalize_review_text(match.group(\"title\")),\n            \"rating_percent\": int(self._normalize_review_text(match.group(\"rating\"))),\n            \"body\": self._normalize_review_text(match.group(\"body\")),\n            \"reviewer_name\": self._normalize_review_text(match.group(\"name\")),\n            \"posted_date\": self._normalize_review_text(match.group(\"date\")),\n        })\n    return reviews\n",
+            "owns": [
+              "Navigate to a product page URL on the shopping site",
+              "Open the Reviews tab using the site's review-tab selectors",
+              "Read rendered page text after the reviews content is loaded",
+              "Parse repeated review blocks into structured review records",
+              "Return objective review fields shown in the rendered reviews: title, rating percent, body, reviewer name, and posted date"
+            ],
+            "does_not_own": [
+              "Classifying reviews into task-specific categories such as customer-service complaints",
+              "Keyword-based complaint or sentiment judgments",
+              "Selecting only matching reviewers for a final answer",
+              "Formatting task response payloads"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "url": {
+                  "type": "string",
+                  "description": "Absolute or site-relative URL of a shopping product page."
+                }
+              },
+              "required": [
+                "url"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "product_url": {
+                  "type": "string",
+                  "description": "Resolved product page URL after navigation."
+                },
+                "review_source": {
+                  "type": "string",
+                  "enum": [
+                    "product_reviews_tab_rendered_text"
+                  ]
+                },
+                "reviews": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "title": {
+                        "type": "string"
+                      },
+                      "rating_percent": {
+                        "type": "integer",
+                        "description": "Displayed rating percentage for the review."
+                      },
+                      "body": {
+                        "type": "string"
+                      },
+                      "reviewer_name": {
+                        "type": "string"
+                      },
+                      "posted_date": {
+                        "type": "string",
+                        "description": "Displayed posted-on date text."
+                      }
+                    },
+                    "required": [
+                      "title",
+                      "rating_percent",
+                      "body",
+                      "reviewer_name",
+                      "posted_date"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "product_url",
+                "review_source",
+                "reviews"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "shopping.product_page.reviews_loaded"
+            ],
+            "supported_patterns": [
+              "Open a product page directly by URL and extract all rendered reviews from the Reviews tab",
+              "Return typed review records for downstream workflow filtering or analysis"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task26_t222",
+                "template_id": "222",
+                "code_quote": "await page.goto(START_URL, wait_until=\"networkidle\")\nawait page.locator('#tab-label-reviews, #tab-label-reviews-title').first.click()\nawait page.wait_for_timeout(2500)\nbody_text = await page.locator('body').inner_text()\n...\ndef parse_reviews(raw_text: str) -> List[Dict[str, str]]:\n    pattern = re.compile(\n        r\"(?P<title>.+?)\\\\nRating\\\\s*\\\\n(?P<rating>\\\\d+)%\\\\s*\\\\n(?P<body>.*?)\\\\nReview by (?P<name>.+?)\\\\n\\\\nPosted on (?P<date>.+?)(?=\\\\n\\\\n.+?\\\\nRating\\\\s*\\\\n\\\\d+%\\\\s*\\\\n|\\\\Z)\",\n        re.S,\n    )",
+                "explanation": "Generalized the hard-coded product URL into an input and kept the demonstrated site operation of opening the Reviews tab, reading rendered text, and parsing repeated review blocks into typed review records. Excluded the workflow's downstream service-complaint classification because that is workflow logic."
+              }
+            ]
+          }
+        },
+        {
+          "operation": "ADD",
+          "replacement": {
+            "primitive_id": "shopping/search_products_results_page",
+            "method": "search_products_results_page",
+            "capability": "Submit a catalog search on the shopping site and return typed product records visible on the resulting search results page.",
+            "method_code": "async def search_products_results_page(self, query: str) -> dict:\n    await self.page.goto('/', wait_until='domcontentloaded')\n    await self.page.get_by_placeholder('Search entire store here...').fill(query)\n    await self.page.get_by_role('button', name='Search').click()\n    await self.page.wait_for_load_state('domcontentloaded')\n    await self.page.wait_for_timeout(2500)\n    products = await self.page.locator('li.product-item').evaluate_all(\"\"\"\n    els => els.map(el => {\n      const name = el.querySelector('.product-item-link')?.textContent?.trim() || '';\n      const price = el.querySelector('.price')?.textContent?.trim() || '';\n      const href = el.querySelector('.product-item-link')?.getAttribute('href') || '';\n      return {name, price, href};\n    }).filter(x => x.name)\n    \"\"\")\n    parsed_products = []\n    for item in products:\n        price_text = (item.get('price') or '').replace('$', '').replace(',', '').strip()\n        price_amount = None\n        if price_text:\n            try:\n                price_amount = float(price_text)\n            except Exception:\n                price_amount = None\n        parsed_products.append({\n            'name': (item.get('name') or '').strip(),\n            'price_amount': price_amount,\n            'product_url': item.get('href') or None,\n        })\n    return {\n        'query': query,\n        'results_page_url': self.page.url,\n        'completeness': 'visible_results_only',\n        'products': parsed_products,\n    }\n",
+            "owns": [
+              "Navigate to the shopping site home page",
+              "Submit a query through the site search box",
+              "Read visible product cards from the search results page",
+              "Parse stable displayed fields from each visible result card into typed records",
+              "State that returned records are limited to the visible results page when pagination is not explored"
+            ],
+            "does_not_own": [
+              "Task-specific semantic filtering such as identifying Canon photo printers",
+              "Excluding accessories or supplies based on workflow intent",
+              "Computing min/max price ranges or other aggregates",
+              "Claiming completeness across multiple search result pages without pagination evidence",
+              "Ranking, comparison, or final answer formatting"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "query": {
+                  "type": "string",
+                  "description": "Search query to submit in the store search box."
+                }
+              },
+              "required": [
+                "query"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "query": {
+                  "type": "string"
+                },
+                "results_page_url": {
+                  "type": "string"
+                },
+                "completeness": {
+                  "type": "string",
+                  "enum": [
+                    "visible_results_only"
+                  ],
+                  "description": "Only products visible on the loaded search results page are returned."
+                },
+                "products": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string",
+                        "description": "Displayed product name."
+                      },
+                      "price_amount": {
+                        "type": [
+                          "number",
+                          "null"
+                        ],
+                        "description": "Displayed product price parsed as a number when available."
+                      },
+                      "product_url": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "Href from the product card when present."
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "price_amount",
+                      "product_url"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "query",
+                "results_page_url",
+                "completeness",
+                "products"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "shopping.search_results_page.loaded"
+            ],
+            "supported_patterns": [
+              "Search the store catalog and collect visible result-card facts",
+              "Return current-page product records for downstream filtering or aggregation"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task126_t159",
+                "template_id": "159",
+                "code_quote": "await page.get_by_placeholder('Search entire store here...').fill('Canon photo printer')\nawait page.get_by_role('button', name='Search').click()\n...\nproducts = await page.locator('li.product-item').evaluate_all(\"\"\"\nels => els.map(el => {\n  const name = el.querySelector('.product-item-link')?.textContent?.trim() || '';\n  const price = el.querySelector('.price')?.textContent?.trim() || '';\n  return {name, price};\n}).filter(x => x.name)\n\"\"\")",
+                "explanation": "Generalized the hard-coded query into an input while preserving the demonstrated site operation: submit a search and parse visible result cards. Kept objective fields acquired at extraction time and explicitly marked completeness as limited to the visible current results page because the source workflow did not paginate."
+              }
+            ]
+          }
+        },
+        {
+          "operation": "ADD",
+          "replacement": {
+            "primitive_id": "shopping/extract_contact_phone_numbers_from_contact_page",
+            "method": "extract_contact_phone_numbers_from_contact_page",
+            "capability": "Navigate from the shopping site homepage to the Contact Us page via the footer link and extract displayed phone numbers from the rendered page text.",
+            "method_code": "async def extract_contact_phone_numbers_from_contact_page(self, base_url: str, contact_link_name: str = 'Contact Us') -> dict:\n    await self.page.goto(base_url.rstrip('/') + '/', wait_until='domcontentloaded')\n    await self.page.wait_for_timeout(1500)\n    footer_link = self.page.locator('footer').get_by_role('link', name=contact_link_name).first\n    await footer_link.scroll_into_view_if_needed()\n    await footer_link.click()\n    await self.page.wait_for_load_state('domcontentloaded')\n    await self.page.wait_for_timeout(1500)\n    body_text = await self.page.locator('body').inner_text()\n    phone_numbers = self._parse_phone_numbers_from_text(body_text)\n    return {\n        'contact_page_url': self.page.url,\n        'page_title': await self.page.title(),\n        'phone_numbers': phone_numbers,\n    }\n\ndef _parse_phone_numbers_from_text(self, text: str) -> list:\n    import re\n    phone_regex = re.compile(r'(?:\\+?1[-.\\s]?)?(?:\\(?\\d{3}\\)?[-.\\s]?\\d{3}[-.\\s]?\\d{4})')\n    matches = phone_regex.findall(text)\n    return [{'raw_number': match} for match in matches]\n",
+            "owns": [
+              "Open the shopping site homepage",
+              "Follow the visible footer Contact Us link",
+              "Read rendered contact-page body text",
+              "Parse displayed phone-number strings from visible text",
+              "Return reached page metadata together with all parsed phone numbers in encounter order"
+            ],
+            "does_not_own": [
+              "Deciding which parsed number is the customer service number beyond page context",
+              "Exploring arbitrary alternate navigation paths not demonstrated by the source workflow",
+              "Returning raw page text or DOM",
+              "Task-level answer phrasing or not-found response formatting"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "base_url": {
+                  "type": "string",
+                  "description": "Shopping site base URL, such as the site origin."
+                },
+                "contact_link_name": {
+                  "type": "string",
+                  "description": "Accessible name of the footer contact link to follow.",
+                  "default": "Contact Us"
+                }
+              },
+              "required": [
+                "base_url"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "contact_page_url": {
+                  "type": "string",
+                  "description": "URL of the reached contact page."
+                },
+                "page_title": {
+                  "type": "string",
+                  "description": "Title of the reached contact page."
+                },
+                "phone_numbers": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "raw_number": {
+                        "type": "string",
+                        "description": "Phone number text as displayed on the page."
+                      }
+                    },
+                    "required": [
+                      "raw_number"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "contact_page_url",
+                "page_title",
+                "phone_numbers"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "shopping.contact_page.loaded"
+            ],
+            "supported_patterns": [
+              "Navigate to a site's contact/help page through the footer Contact Us link",
+              "Extract displayed phone numbers for downstream selection"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task313_t134",
+                "template_id": "134",
+                "code_quote": "await page.goto(base + '/', { waitUntil: 'domcontentloaded' })\n...\nconst footerLink = page.locator('footer').getByRole('link', { name: 'Contact Us' }).first();\nawait footerLink.scrollIntoViewIfNeeded();\nawait footerLink.click();\n...\nconst bodyText = (await page.locator('body').innerText()).replace(/\\s+/g, ' ');\nconst matches = bodyText.match(phoneRegex);",
+                "explanation": "Generalized the workflow into a reusable primitive that navigates via the demonstrated footer Contact Us path and parses all displayed phone numbers from the contact page text. Excluded the workflow's task-specific choice of the first match and customer-service interpretation."
+              }
+            ]
+          }
+        },
+        {
+          "operation": "ADD",
+          "replacement": {
+            "primitive_id": "shopping/list_customer_orders",
+            "method": "list_customer_orders",
+            "capability": "Sign in to a shopping customer account, open the My Orders page, and return typed order summary records from the visible orders table.",
+            "method_code": "async def list_customer_orders(self, username: str, password: str) -> dict:\n    await self.page.goto('/customer/account/login/', wait_until='domcontentloaded')\n    await self.page.locator('input[name=\"login[username]\"]').fill(username)\n    await self.page.locator('input[name=\"login[password]\"]').fill(password)\n    await self.page.get_by_role('button', name='Sign In').click()\n    await self.page.wait_for_load_state('domcontentloaded')\n    await self.page.get_by_role('link', name='My Orders').click()\n    await self.page.wait_for_load_state('domcontentloaded')\n    rows = await self.page.locator('table tbody tr').all()\n    orders = []\n    for row in rows:\n        row_text = (await row.inner_text()).strip()\n        detail_href = await row.get_by_role('link', name='View Order').get_attribute('href')\n        orders.append({\n            'order_number': self._extract_order_number_from_orders_row(row_text),\n            'order_date_text': self._extract_short_date_from_orders_row(row_text),\n            'status': self._extract_status_from_orders_row(row_text),\n            'detail_url': await self._resolve_url(detail_href),\n        })\n    return {\n        'orders_page_url': self.page.url,\n        'completeness': 'visible_results_only',\n        'orders': orders,\n    }\n\ndef _extract_order_number_from_orders_row(self, row_text: str) -> str:\n    import re\n    match = re.search(r'\\b(\\d{9})\\b', row_text)\n    return match.group(1) if match else ''\n\ndef _extract_short_date_from_orders_row(self, row_text: str) -> str:\n    import re\n    match = re.search(r'\\b\\d{1,2}/\\d{1,2}/\\d{2}\\b', row_text)\n    return match.group(0) if match else ''\n\ndef _extract_status_from_orders_row(self, row_text: str) -> str:\n    known_statuses = ['Pending', 'Processing', 'Complete', 'Closed', 'Canceled', 'Cancelled', 'Holded']\n    for status in known_statuses:\n        if status in row_text:\n            return status\n    return ''\n\nasync def _resolve_url(self, href: str | None) -> str | None:\n    if not href:\n        return None\n    return await self.page.evaluate(\"\"\"([base, href]) => new URL(href, base).toString()\"\"\", [self.page.url, href])\n",
+            "owns": [
+              "Authenticate with customer credentials using the sign-in form",
+              "Navigate from the signed-in account area to My Orders",
+              "Parse each visible order row in the orders table into structured summary records",
+              "Return stable summary fields demonstrated in the workflow: order number, displayed short date text, status, and order-detail URL",
+              "Report that results are limited to the visible orders page when pagination is not explored"
+            ],
+            "does_not_own": [
+              "Filtering orders by month or status",
+              "Summing refunds or other monetary aggregates across orders",
+              "Interpreting cancellation/refund policy",
+              "Claiming account-wide completeness without pagination evidence"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "username": {
+                  "type": "string",
+                  "description": "Customer account username or email."
+                },
+                "password": {
+                  "type": "string",
+                  "description": "Customer account password."
+                }
+              },
+              "required": [
+                "username",
+                "password"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "orders_page_url": {
+                  "type": "string"
+                },
+                "completeness": {
+                  "type": "string",
+                  "enum": [
+                    "visible_results_only"
+                  ]
+                },
+                "orders": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "order_number": {
+                        "type": "string"
+                      },
+                      "order_date_text": {
+                        "type": "string",
+                        "description": "Displayed short date text from the orders table row."
+                      },
+                      "status": {
+                        "type": "string"
+                      },
+                      "detail_url": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "order_number",
+                      "order_date_text",
+                      "status",
+                      "detail_url"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "orders_page_url",
+                "completeness",
+                "orders"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "shopping.customer.authenticated",
+              "shopping.customer.orders_page.loaded"
+            ],
+            "supported_patterns": [
+              "Sign in and enumerate visible order rows from My Orders",
+              "Return typed order summaries for downstream filtering and follow-up detail retrieval"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task320_t160",
+                "template_id": "160",
+                "code_quote": "await page.goto(f'{BASE}/customer/account/login/', wait_until='domcontentloaded')\nawait page.locator('input[name=\"login[username]\"]').fill(USERNAME)\nawait page.locator('input[name=\"login[password]\"]').fill(PASSWORD)\nawait page.get_by_role('button', name='Sign In').click()\n...\nawait page.get_by_role('link', name='My Orders').click()\n...\nrows = await page.locator('table tbody tr').all()\nfor row in rows:\n    txt = (await row.inner_text()).strip()\n    ...\n    hrefs[order_no] = await row.get_by_role('link', name='View Order').get_attribute('href')",
+                "explanation": "Generalized the hard-coded credentials target selection into a reusable sign-in plus My Orders listing primitive. The workflow shows that each visible row exposes an order number, short date text, status, and a View Order href, so those are preserved as typed outputs. Filtering to February 2023 and canceled orders remains workflow logic. The rejected prior version's unsupported page-selection parameter was removed because no pagination control is evidenced."
+              }
+            ]
+          }
+        },
+        {
+          "operation": "ADD",
+          "replacement": {
+            "primitive_id": "shopping/get_customer_order_details",
+            "method": "get_customer_order_details",
+            "capability": "Open a signed-in customer's order detail page and return structured order facts including status, displayed date, shipping and handling amount, and grand total.",
+            "method_code": "async def get_customer_order_details(self, detail_url: str) -> dict:\n    await self.page.goto(detail_url, wait_until='domcontentloaded')\n    detail_text = await self.page.locator('body').inner_text()\n    return {\n        'order': {\n            'order_number': self._extract_order_number_from_order_detail(detail_text),\n            'status': self._extract_order_status_from_order_detail(detail_text),\n            'order_date_text': self._extract_full_order_date_from_order_detail(detail_text),\n            'shipping_and_handling_amount': self._extract_shipping_amount_from_order_detail(detail_text),\n            'grand_total_amount': self._extract_grand_total_from_order_detail(detail_text),\n            'detail_url': self.page.url,\n        }\n    }\n\ndef _extract_order_number_from_order_detail(self, text: str) -> str:\n    import re\n    match = re.search(r'\\b(\\d{9})\\b', text)\n    return match.group(1) if match else ''\n\ndef _extract_order_status_from_order_detail(self, text: str) -> str:\n    known_statuses = ['Pending', 'Processing', 'Complete', 'Closed', 'Canceled', 'Cancelled', 'Holded']\n    for status in known_statuses:\n        if status in text:\n            return status\n    return ''\n\ndef _extract_full_order_date_from_order_detail(self, text: str) -> str:\n    import re\n    match = re.search(r'([A-Z][a-z]+ \\d{1,2}, \\d{4})', text)\n    return match.group(1) if match else ''\n\ndef _extract_shipping_amount_from_order_detail(self, text: str):\n    import re\n    match = re.search(r'Shipping\\s*&\\s*Handling\\s*\\$([\\d,]+\\.\\d{2})', text)\n    return float(match.group(1).replace(',', '')) if match else None\n\ndef _extract_grand_total_from_order_detail(self, text: str):\n    import re\n    match = re.search(r'Grand Total\\s*\\$([\\d,]+\\.\\d{2})', text)\n    return float(match.group(1).replace(',', '')) if match else None\n",
+            "owns": [
+              "Open a provided customer order detail page within the signed-in account area",
+              "Read rendered order-detail page text",
+              "Parse stable order facts demonstrated by the workflow",
+              "Extract displayed shipping and handling amount and grand total as typed numbers",
+              "Return stable identity/state/time fields from the order detail page"
+            ],
+            "does_not_own": [
+              "Determining refund policy or whether refund equals grand total",
+              "Filtering orders by month or status",
+              "Summing across multiple orders",
+              "Performing order mutations or cancellations"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "detail_url": {
+                  "type": "string",
+                  "description": "Absolute or site-relative URL for a customer order detail page reachable in a signed-in session."
+                }
+              },
+              "required": [
+                "detail_url"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "order": {
+                  "type": "object",
+                  "properties": {
+                    "order_number": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "order_date_text": {
+                      "type": "string",
+                      "description": "Displayed full date text from the detail page."
+                    },
+                    "shipping_and_handling_amount": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "grand_total_amount": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "detail_url": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "order_number",
+                    "status",
+                    "order_date_text",
+                    "shipping_and_handling_amount",
+                    "grand_total_amount",
+                    "detail_url"
+                  ]
+                }
+              },
+              "required": [
+                "order"
+              ]
+            },
+            "requires": [
+              "shopping.customer.authenticated"
+            ],
+            "provides": [
+              "shopping.customer.order_detail.loaded"
+            ],
+            "supported_patterns": [
+              "Open an order detail page from a signed-in session and parse typed monetary/order facts",
+              "Use order detail outputs for downstream workflow filtering or aggregation"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task320_t160",
+                "template_id": "160",
+                "code_quote": "await page.goto(href, wait_until='domcontentloaded')\ndetail_text = await page.locator('body').inner_text()\nassert order_no in detail_text\nassert 'Canceled' in detail_text\nassert meta['date_text'] in detail_text\nassert 'Shipping & Handling\\t$5.00' in detail_text or 'Shipping & Handling $5.00' in detail_text\nm = re.search(r'Grand Total\\s*\\$([\\d,]+\\.\\d{2})', detail_text)",
+                "explanation": "Generalized the task's assertions over specific orders into a reusable order-detail parser. Preserved only objective facts demonstrated at the acquisition boundary: order number, status, full displayed order date, shipping and handling amount, and grand total. Left refund interpretation and multi-order aggregation to the workflow."
+              }
+            ]
+          }
+        }
+      ],
+      "workflow_attribution": [
+        {
+          "workflow_id": "task26_t222",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0
+          ]
+        },
+        {
+          "workflow_id": "task126_t159",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            1
+          ]
+        },
+        {
+          "workflow_id": "task313_t134",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            2
+          ]
+        },
+        {
+          "workflow_id": "task320_t160",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            3,
+            4
+          ]
+        }
+      ],
+      "candidate_attribution": [
+        {
+          "candidate_id": "task26_t222::extract_product_reviews_from_product_page",
+          "decision": "ADD",
+          "operation_index": 0
+        },
+        {
+          "candidate_id": "task126_t159::search_products_results_page",
+          "decision": "ADD",
+          "operation_index": 1
+        },
+        {
+          "candidate_id": "task313_t134::extract_contact_phone_numbers_from_contact_page",
+          "decision": "ADD",
+          "operation_index": 2
+        },
+        {
+          "candidate_id": "task320_t160::list_customer_orders",
+          "decision": "ADD",
+          "operation_index": 3
+        },
+        {
+          "candidate_id": "task320_t160::get_customer_order_details",
+          "decision": "ADD",
+          "operation_index": 4
+        }
+      ]
+    },
+    "quality_verdicts": {
+      "verdicts": [
+        {
+          "operation_index": 0,
+          "verdict": "PASS",
+          "reason": "Source evidence directly supports navigating to a product page, clicking the Reviews tab via the cited selectors, reading rendered body text, and regex-parsing repeated review blocks. Output is typed and limited to objective fields evidenced in the workflow. The primitive owns site-specific acquisition/parsing and explicitly excludes downstream complaint classification and answer formatting. Code and contract are consistent."
+        },
+        {
+          "operation_index": 1,
+          "verdict": "PASS",
+          "reason": "Evidence supports filling the site search box, clicking Search, and extracting visible result cards from `li.product-item` with `.product-item-link` and `.price`. The primitive properly generalizes the hard-coded query into a parameter, returns typed records, and explicitly reports `visible_results_only` since pagination is not traversed. It avoids task-specific semantic filtering and aggregation. Adding `product_url` from the same visible card DOM is a stable objective field consistent with the demonstrated selectors and is acceptable."
+        },
+        {
+          "operation_index": 2,
+          "verdict": "PASS",
+          "reason": "Evidence supports opening the homepage, following the footer `Contact Us` link, reading body text, and applying a phone regex. The output is typed, and the primitive keeps only site-specific navigation plus parsing of displayed phone numbers, while excluding task-specific choice of which number is the customer service number. Owns/does_not_own are consistent and code matches the contract."
+        },
+        {
+          "operation_index": 3,
+          "verdict": "PASS",
+          "reason": "Evidence directly supports the site-specific login URL, username/password selectors, Sign In button, navigation to My Orders, iterating `table tbody tr`, and extracting a `View Order` href from each row. Authentication mechanics are valid primitives here because the evidence demonstrates them. The primitive returns typed order summary records and correctly marks completeness as limited to the visible page. It excludes month/status filtering and aggregation, so the boundary is appropriate and code/contract agree."
+        },
+        {
+          "operation_index": 4,
+          "verdict": "PASS",
+          "reason": "Evidence supports opening an order detail URL in a signed-in session, reading body text, and extracting order number, status, full displayed date, shipping & handling amount, and grand total. The output is typed and includes stable identity/state/time/amount fields needed to interpret the record. The primitive owns only page acquisition/parsing and leaves refund interpretation and cross-order aggregation outside. Requires/provides are consistent with a signed-in detail-page parser."
+        }
+      ],
+      "rejection_verdicts": []
+    },
+    "errors": []
+  }
+]
