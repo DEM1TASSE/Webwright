@@ -70,6 +70,11 @@ Methods belong to a feature component class whose `__init__` stores `self.page`.
 - public primitives do not call other public primitives. Use `requires`/`provides` for
   environment-state preconditions such as being authenticated.
 
+Keep the code portable across Python versions: never reuse the same quote character inside an
+f-string expression (`f'{d['key']}'` is a syntax error before 3.12 — use `f"{d['key']}"` or a
+local variable). The validator parses with whichever interpreter runs the build, so it will not
+catch this for you.
+
 Check your code parses before assembling: `python -c "import ast,sys; ast.parse(open('out/code/x.py').read())"`.
 
 ### Primitive boundary
