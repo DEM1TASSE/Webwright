@@ -54,6 +54,16 @@ python -m skill_agent.check build           # exit 0 = accepted; otherwise every
 Stage prompts live in `prompts/*.md` and carry the boundary rules from the scripted system
 prompts (`_EXTRACT_SYS`, `_BUILD_SYS`, `_QUALITY_SYS`, `_CONSOLIDATE_SYS`) verbatim in substance.
 
+### One check the scripted pipeline does not have
+
+`portability.py` rejects generated method code that reuses a quote character inside an f-string
+expression (`f'{stop['lon']}'`). That is legal on 3.12 and a SyntaxError on 3.10, and the shared
+validators call `ast.parse` on whichever interpreter runs the build — so a 3.12 build silently
+emits a package a 3.10 consumer cannot import. Two scripted Map development runs already contain
+this defect. Telling the agent the rule in the prompt was not enough: it wrote the nesting anyway,
+because every command it ran exited 0. It is a rule about how code is written, not about what a
+primitive owns, so it does not change library semantics — every final scripted package passes it.
+
 ## Running it
 
 ```bash

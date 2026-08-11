@@ -167,3 +167,34 @@ class TestAssemble:
         (tmp_path / "out" / "ops").mkdir(parents=True)
         _, errors, _ = assemble_mod.assemble("build", tmp_path)
         assert any("no *.json operation files" in e for e in errors), errors
+
+
+class TestPortability:
+    """A 3.12 build must not emit code that a 3.10 consumer cannot import."""
+
+    def test_flags_quote_reuse_inside_an_fstring(self):
+        from skill_agent.portability import fstring_quote_reuse
+        errors = fstring_quote_reuse("url = f'{stop['longitude']},{stop['latitude']}'\n")
+        assert len(errors) == 2
+        assert "SyntaxError before Python 3.12" in errors[0]
+
+    def test_allows_the_portable_form(self):
+        from skill_agent.portability import fstring_quote_reuse
+        assert fstring_quote_reuse('url = f"{stop[\'longitude\']}"\n') == []
+        assert fstring_quote_reuse("lon = stop['longitude']\nurl = f'{lon}'\n") == []
+
+    def test_malformed_code_defers_to_the_shared_validator(self):
+        from skill_agent.portability import fstring_quote_reuse
+        assert fstring_quote_reuse("def broken(:\n") == []
+
+    def test_build_check_rejects_a_non_portable_replacement(self, tmp_path):
+        workspace = _workspace(tmp_path, {
+            "site": "map", "batch": [], "extractions": [], "pool": [], "all_workflows": {}})
+        _write(workspace / "out" / "proposal.json", {
+            "operations": [{"op": "ADD", "replacement": {
+                "primitive_id": "map/routing/x", "method": "x",
+                "method_code": "def x(self, stops):\n    return f'{stops[0]['lon']}'\n"}}],
+            "workflow_attribution": [], "candidate_attribution": [],
+        })
+        _, report = check_mod.run("build", workspace)
+        assert any("reuses its own" in e for e in report["errors"]), report["errors"]

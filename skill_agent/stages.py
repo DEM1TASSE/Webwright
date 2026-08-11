@@ -24,6 +24,8 @@ from webwright.skill_factory.audited_primitive_build import (
     validate_quality_verdicts,
 )
 
+from .portability import check_primitives
+
 
 def _pool_dict(pool: list[dict] | dict[str, dict]) -> dict[str, dict]:
     if isinstance(pool, dict):
@@ -35,6 +37,17 @@ def _check_extract(context: dict, artifact: dict) -> list[str]:
     return validate_extraction(artifact, workflow=context["workflow"])
 
 
+def _replacements(artifact: dict) -> list[dict]:
+    proposed = []
+    for op in artifact.get("operations") or []:
+        if not isinstance(op, dict):
+            continue
+        if isinstance(op.get("replacement"), dict):
+            proposed.append(op["replacement"])
+        proposed.extend(x for x in (op.get("replacements") or []) if isinstance(x, dict))
+    return proposed
+
+
 def _check_build(context: dict, artifact: dict) -> list[str]:
     _, errors = validate_build_proposal(
         artifact,
@@ -44,7 +57,7 @@ def _check_build(context: dict, artifact: dict) -> list[str]:
         all_workflows={str(k): v for k, v in (context.get("all_workflows") or {}).items()},
         extractions=context.get("extractions") or [],
     )
-    return errors
+    return errors + check_primitives(_replacements(artifact))
 
 
 def _check_quality(context: dict, artifact: dict) -> list[str]:
@@ -62,7 +75,7 @@ def _check_consolidate(context: dict, artifact: dict) -> list[str]:
         pool=_pool_dict(context.get("pool") or []),
         workflows={str(k): v for k, v in (context.get("workflows") or {}).items()},
     )
-    return errors
+    return errors + check_primitives(_replacements(artifact))
 
 
 @dataclass(frozen=True)
