@@ -40,9 +40,15 @@ def test_aggregate_reports_success_delta_wins_losses_and_skips(tmp_path):
     }))
     records = {
         "task10_scratch": {"correct": False, "steps": 10},
-        "task10_routed": {"correct": True, "steps": 8, "route_decision": "adapt"},
+        "task10_routed": {
+            "correct": True, "steps": 8,
+            "route_stage": "primitive", "route_decision": "adapt",
+        },
         "task11_scratch": {"correct": True, "steps": 6},
-        "task11_routed": {"correct": True, "steps": 6, "route_decision": "skip"},
+        "task11_routed": {
+            "correct": True, "steps": 6,
+            "route_stage": "primitive", "route_decision": "skip",
+        },
     }
     for name, payload in records.items():
         (results / f"{name}.json").write_text(json.dumps(payload))
@@ -53,5 +59,7 @@ def test_aggregate_reports_success_delta_wins_losses_and_skips(tmp_path):
     assert report["success_rate_delta"] == 0.5
     assert report["wins"] == 1 and report["losses"] == 0
     assert report["route_decisions"] == {"adapt": 1, "skip": 1}
+    assert report["by_route"]["primitive:adapt"]["wins"] == 1
+    assert report["by_route"]["primitive:skip"]["ties_both_correct"] == 1
     assert report["scratch_mean_steps"] == 8
     assert report["routed_mean_steps"] == 7

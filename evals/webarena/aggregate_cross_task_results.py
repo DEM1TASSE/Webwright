@@ -88,6 +88,7 @@ def aggregate(manifest_path, results_root):
         "scratch_steps": 0, "routed_steps": 0,
     }
     decisions = {}
+    by_route = {}
     for site in manifest["sites"]:
         site_dir = Path(results_root) / site
         records = {p.stem: load(p) for p in site_dir.glob("task*_*.json")}
@@ -114,6 +115,21 @@ def aggregate(manifest_path, results_root):
             row["routed_steps"] += int(routed.get("steps") or 0)
             decision = routed.get("route_decision") or "unrecorded"
             decisions[decision] = decisions.get(decision, 0) + 1
+            route_key = f"{routed.get('route_stage') or 'none'}:{decision}"
+            bucket = by_route.setdefault(route_key, {
+                "pairs": 0, "scratch_correct": 0, "routed_correct": 0,
+                "wins": 0, "losses": 0, "ties_both_correct": 0,
+                "ties_both_wrong": 0, "scratch_steps": 0, "routed_steps": 0,
+            })
+            bucket["pairs"] += 1
+            bucket["scratch_correct"] += int(s)
+            bucket["routed_correct"] += int(r)
+            bucket["wins"] += int(r and not s)
+            bucket["losses"] += int(s and not r)
+            bucket["ties_both_correct"] += int(s and r)
+            bucket["ties_both_wrong"] += int(not s and not r)
+            bucket["scratch_steps"] += int(scratch.get("steps") or 0)
+            bucket["routed_steps"] += int(routed.get("steps") or 0)
         rows[site] = row
         for key in totals:
             totals[key] += row[key]
@@ -131,6 +147,7 @@ def aggregate(manifest_path, results_root):
         "routed_mean_steps": totals["routed_steps"] / pairs if pairs else None,
         **{key: value for key, value in totals.items() if key != "pairs"},
         "route_decisions": decisions,
+        "by_route": by_route,
         "by_site": rows,
     }
 

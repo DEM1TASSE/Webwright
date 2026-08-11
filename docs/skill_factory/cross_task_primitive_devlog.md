@@ -96,3 +96,27 @@ PYTHONPATH=src /home/t-demiwang/project/webwright/.venv/bin/python \
 - Final report: `evals/webarena/test_12_results/README.md`.
 - Machine-readable summary: `evals/webarena/test_12_results/summary.json`.
 - Verification: frozen library valid; `pytest -q tests/skill_factory`: 146 passed.
+
+## 2026-08-07: seeded four-site 32/24 evaluation
+
+- Added a deterministic SHA256 sampler with seed `20260807`: 8 train templates and 6 test
+  templates per site, one instance per template, across Shopping, GitLab, Shopping Admin, and Map.
+- Selection is retrieve-only and template-random. It does not inspect scratch outcomes, library
+  overlap, or difficulty. The split validator confirms strict train/test template disjointness.
+- Added per-site concurrency lanes and independent site-library resolution. Train used two lanes
+  per site (8 total); test used one scratch and one routed lane per site (8 total).
+- Fixed three infrastructure issues found before formal test:
+  - timeout now terminates the whole process group;
+  - missing model credentials fail preflight and startup failures are not benchmark failures;
+  - the router now uses the same explicit model YAML backend as the downstream agent.
+- Train: 32/32 completed, 17 gold-correct, 15 incorrect, 0 infrastructure failures.
+- Four independent libraries: 16 workflow priors and 7 automatically generated primitives;
+  no hand-written primitive. Frozen file counts: Shopping 12, GitLab 17, Admin 10, Map 8.
+- Reset completed and all four evaluated services returned HTTP 200 before test.
+- Formal test: scratch 10/24, routed 10/24; 3 Wins, 3 Losses, 7 both-correct, 11 both-wrong.
+  Mean agent steps were 17.08 scratch and 12.83 routed, excluding router-call cost.
+- By route: workflow adapt 2 Wins / 3 Losses; primitive adapt 0 / 0 with all three pairs wrong;
+  primitive-stage skip 1 / 0, whose Win is not attributable to library material.
+- Final audit: split valid, all four frozen libraries unchanged, `git diff --check` clean, and
+  `pytest -q tests/skill_factory` reports 161 passed.
+- Report: `evals/webarena/test_24_results/README.md`.

@@ -10,7 +10,7 @@ E = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(E)
 
 
-def test_prepare_routed_hint_uses_workflow_first_cross_template_policy(tmp_path):
+def test_prepare_routed_hint_uses_primitive_only_cross_template_policy(tmp_path):
     seen = {}
 
     def fake_route(task, library, **kwargs):
@@ -26,7 +26,7 @@ def test_prepare_routed_hint_uses_workflow_first_cross_template_policy(tmp_path)
     out = E.prepare_routed_hint(task, tmp_path, route_fn=fake_route)
     assert out["hint"] == "selected material"
     assert seen["kwargs"]["primitive_site"] == "gitlab"
-    assert seen["kwargs"]["cross_template_workflow_first"] is True
+    assert seen["kwargs"]["cross_template_workflow_first"] is False
     assert "agent_fn" not in seen["kwargs"]
 
 

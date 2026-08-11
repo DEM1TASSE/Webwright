@@ -61,3 +61,17 @@ Human review does not block the MVP implementation or unrelated experiments.
      provides no positive or negative primitive-utility evidence.
    - Retry investigation exposed and fixed a harness cleanup bug: timeout now kills the complete
      subprocess group.
+
+9. **32/24 result: accuracy tie, attribution remains mixed**
+   - Scratch and routed both score 10/24, with 3 Wins and 3 Losses.
+   - Workflow adaptation is outcome-sensitive: 2 Wins and 3 Losses over 13 pairs. Review the five
+     changed-outcome workflows before changing the updater or retrieval prompt.
+   - Primitive adaptation occurred on three Map pairs; all were both-wrong. This is neither a Win
+     nor a Loss, but supplies no primitive-effectiveness evidence.
+   - One additional Win occurred after `skip`, so it must not be attributed to library content.
+   - Routed agent steps fell by 24.9%, but router LLM tokens and latency are not instrumented; do
+     not describe this as total-cost savings without that measurement.
+
+10. **Formal incomplete run**
+    - Shopping Admin task3 scratch timed out without a complete artifact and counts as failure.
+    - Routed task3 also scored incorrect, so the pair is both-wrong and does not change Win/Loss.

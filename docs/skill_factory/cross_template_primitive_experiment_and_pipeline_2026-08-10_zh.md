@@ -242,19 +242,48 @@ workflow adaptation。
 允许 sibling visibility，因此“trajectory 中暂时没发现读取”不足以构成严格无污染证明。重新
 聚合前应物理隔离两个 arm，并审计 trajectory 的文件访问。
 
-## 7. 当前结论与下一次测量
+## 7. 2026-08-11 干净对照结果
+
+我们在独立的 `/tmp` 实验根目录重新运行了相同 24 个 held-out tasks 的 scratch arm。该目录
+没有生成 primitive arm；审计全部 24 条 trajectory 后，没有发现读取 primitive retrieval、
+site library 或历史实验结果的行为。
+
+| Arm | 正确数 | 准确率 | 平均 Webwright steps |
+|---|---:|---:|---:|
+| Clean scratch | 11/24 | 45.8% | 9.58 |
+| Updated primitive | 13/24 | 54.2% | 8.50 |
+
+配对结果为 3 wins、1 loss、10 both-correct、10 both-wrong。但归因需要进一步区分：
+
+- Task 122、154 是 `adapt` 路由下的 primitive-exposed wins。
+- Task 113 是 `adapt` 路由下的 primitive-exposed loss。
+- Task 3 的 primitive arm 实际决策为 `skip`，没有注入 primitive，因此该 win 属于独立
+  重采样差异，不能归因于 primitive。
+
+所以完整系统结果是 `13/24 vs 11/24`，而直接与 primitive exposure 相关的变化是
+`2 wins / 1 loss`。样本仍然较小，这不是统计显著性声明。
+
+在 10 个双方都正确的任务上，scratch 平均 7.6 steps，primitive 平均 8.0 steps。原本能做对
+的任务已经很短，primitive 没有进一步提速。并且 frozen-plan/retrieval 生成发生在 Webwright
+step 计数之外，因此 8.50 不能解释成端到端成本优势。
+
+完整记录见 [clean paired results](../../evals/webarena/formal_32_24_audited_v4_clean_results/)。
+
+## 8. 当前结论与下一次测量
 
 最早的结果只能说明 mixed reuse 改变了策略，不能隔离 primitive。上一版 primitive-only pilot
 说明旧 pipeline 可以检索并 incorporation primitive，但结果是 0 wins、4 losses，而且 scratch
 对照组受到污染。这两轮都不是最终 efficacy number。
 
 更新后的 pipeline 测试一个更窄、也更可证伪的假设：正确的站点 primitive 是否能安全替换
-特定 acquisition steps，同时保留 consumer 自己的 scratch semantics。下一份正式报告必须
-来自使用 frozen 四站点 library、arm-isolated 的 paired run。
+特定 acquisition steps，同时保留 consumer 自己的 scratch semantics。当前干净 paired run
+提供了初步正信号，但仍需要扩大样本或重复 seeds 验证稳定性。
 
-在新结果完成前，准确状态是：
+当前准确状态是：
 
 - Library construction 和 retrieval mechanism 已实现并经过测试。
 - Primitive coverage、来源和每个 workflow 的贡献可审计。
 - 旧 integration protocol 下的 accuracy 结果为负。
-- 更新后的 integration protocol 还没有干净、完整的 WebArena 数字。
+- 更新后的 integration protocol 在 24-task retrieval-only eval 上为 13/24，对照为 11/24。
+- 可直接归因于 primitive exposure 的变化为 2 wins、1 loss；下一步重点是修复 task 113
+  regression，并验证收益是否能在更大样本或重复运行中保持。

@@ -68,6 +68,8 @@ def test_metadata_decider_never_receives_primitive_code(tmp_path):
     assert result.decision == "use"
     assert all("code" not in item for item in captured["metadata"])
     assert "TOP_SECRET_IMPLEMENTATION" not in repr(captured["metadata"])
+    assert captured["metadata"][0]["grade"] == "single_source"
+    assert captured["metadata"][0]["evidence_count"] == 0
 
 
 def test_metadata_decider_rejects_unknown_ids_and_empty_use(tmp_path):
@@ -116,7 +118,8 @@ def test_hint_contains_code_vendoring_rule_and_provenance(tmp_path):
     PrimitiveCatalog(tmp_path, "gitlab").upsert(p)
     result = retrieve_primitives("list commits", tmp_path, site="gitlab")
     hint = render_primitive_hint(result)
-    assert p.code.strip() in hint
+    assert "class GitLabPrimitives:" in hint
+    assert "def list_commits(page):" in hint
     assert f"signature: {json.dumps(p.signature)}" in hint
     assert "Do NOT import" in hint and "standalone workflow" in hint
     assert f"# primitive-source: {p.primitive_id} {p.content_hash}" in hint

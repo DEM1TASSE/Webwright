@@ -82,7 +82,8 @@ def test_legacy_primitive_first_route_prefers_primitive_over_workflow_adaptation
     )
     assert out["skill_id"] is None
     assert out["primitive_sources"][0]["primitive_id"] == p.primitive_id
-    assert p.code.strip() in out["hint"] and "old_template" not in out["hint"]
+    assert "class GitLabPrimitives:" in out["hint"]
+    assert "def list_commits(page):" in out["hint"] and "old_template" not in out["hint"]
 
 
 def test_cross_template_route_falls_back_to_scratch_on_empty_catalog(tmp_path):
@@ -166,8 +167,9 @@ def test_workflow_skip_then_primitive_adapt_fetches_selected_full_code(tmp_path)
     )
     assert out["route_stage"] == "primitive" and out["route_decision"] == "adapt"
     assert out["remaining_gap"] == ["summarization"]
-    assert selected.code.strip() in out["hint"]
-    assert unrelated.code.strip() not in out["hint"]
+    assert "class GitLabPrimitives:" in out["hint"]
+    assert "def list_commits(page):" in out["hint"]
+    assert "def change_email(page):" not in out["hint"]
     assert out["primitive_sources"][0]["primitive_id"] == selected.primitive_id
 
 

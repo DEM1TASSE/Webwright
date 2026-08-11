@@ -9,7 +9,11 @@ from pathlib import Path
 
 from webwright.skill_factory.llm import llm_json
 from webwright.skill_factory.primitive_catalog import PrimitiveCatalog
-from webwright.skill_factory.primitive_update import apply_updates, propose_updates
+from webwright.skill_factory.primitive_update import (
+    apply_updates,
+    propose_updates,
+    verify_operations_evidence,
+)
 
 
 def load(path):
@@ -63,33 +67,89 @@ def main():
                 )
             by_site[declared_site].append(workflow)
 
-    report = {"library": args.library, "sites": {}}
+    report = {"library": args.library, "build_mode": "incremental", "sites": {}}
     for site, workflows in sorted(by_site.items()):
-        templates = {x["template_id"] for x in workflows}
-        if len(templates) < 2:
-            raise ValueError(f"{site}: generated ADD requires at least two templates")
+        if not workflows:
+            raise ValueError(f"{site}: no gold-admitted workflows")
         catalog = PrimitiveCatalog(args.library, site)
-        raw_proposals = []
+        rounds = []
+        all_operations = []
+        all_applied, all_reviewed, all_rejected = [], [], []
+        seen = []
+        for workflow in workflows:
+            evidence_map = {x["id"]: x for x in [*seen, workflow]}
+            proposal_attempts = []
+            proposal_workflow = workflow
+            operations = []
+            for attempt in range(1, 4):
+                raw_proposals = []
 
-        def proposer(system, user):
-            raw = llm_json(system, user, max_tokens=16000)
-            raw_proposals.append(raw)
-            return raw
+                def proposer(system, user):
+                    raw = llm_json(system, user, max_tokens=16000)
+                    raw_proposals.append(raw)
+                    return raw
 
-        operations = propose_updates(
-            site=site,
-            new_workflow=workflows[-1],
-            peer_workflows=workflows[:-1],
-            catalog=catalog,
-            llm_fn=proposer,
-        )
-        gold_ids = {x["id"] for x in workflows}
-        result = apply_updates(
-            catalog,
-            operations,
-            gold_workflows=gold_ids,
-            review_path=Path(args.report).with_suffix(f".{site}.review.jsonl"),
-        )
+                operations = propose_updates(
+                    site=site,
+                    new_workflow=proposal_workflow,
+                    peer_workflows=seen,
+                    catalog=catalog,
+                    llm_fn=proposer,
+                )
+                operations = verify_operations_evidence(
+                    operations, evidence_map, active_primitives=catalog.list()
+                )
+                evidence_errors = [
+                    {
+                        "primitive_id": operation.primitive_id,
+                        "error": operation.evidence_verification_reason,
+                    }
+                    for operation in operations
+                    if operation.op.upper() in {"ADD", "MODIFY"}
+                    and operation.evidence_verified is not True
+                ]
+                proposal_attempts.append({
+                    "attempt": attempt,
+                    "raw_proposal": raw_proposals[0] if raw_proposals else None,
+                    "evidence_errors": evidence_errors,
+                })
+                if not evidence_errors:
+                    break
+                proposal_workflow = {
+                    **workflow,
+                    "evidence_gate_feedback": evidence_errors,
+                    "retry_instruction": (
+                        "Correct every evidence error using exact code from the supplied workflows. "
+                        "Narrow the capability to the shared implementation core or return "
+                        "NO_CHANGE; never invent provenance."
+                    ),
+                }
+            admitted_ids = {x["id"] for x in [*seen, workflow]}
+            result = apply_updates(
+                catalog,
+                operations,
+                gold_workflows=admitted_ids,
+                workflow_evidence=evidence_map,
+                review_path=Path(args.report).with_suffix(f".{site}.review.jsonl"),
+            )
+            round_record = {
+                "workflow_id": workflow["id"],
+                "template_id": workflow["template_id"],
+                "decision": "UPDATE" if operations else "NO_CHANGE",
+                "raw_proposal": proposal_attempts[-1]["raw_proposal"],
+                "proposal_attempts": proposal_attempts,
+                "operations": [vars(x) for x in operations],
+                "applied": result.applied,
+                "reviewed": result.reviewed,
+                "rejected": result.rejected,
+            }
+            rounds.append(round_record)
+            all_operations.extend(operations)
+            all_applied.extend(result.applied)
+            all_reviewed.extend(result.reviewed)
+            all_rejected.extend(result.rejected)
+            seen.append(workflow)
+
         report["sites"][site] = {
             "source_workflows": [
                 {
@@ -100,11 +160,11 @@ def main():
                 }
                 for x in workflows
             ],
-            "raw_proposals": raw_proposals,
-            "operations": [vars(x) for x in operations],
-            "applied": result.applied,
-            "reviewed": result.reviewed,
-            "rejected": result.rejected,
+            "rounds": rounds,
+            "operations": [vars(x) for x in all_operations],
+            "applied": all_applied,
+            "reviewed": all_reviewed,
+            "rejected": all_rejected,
             "active_primitives": [
                 {
                     "primitive_id": x.primitive_id,

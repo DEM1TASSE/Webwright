@@ -12,7 +12,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from .primitive_catalog import Primitive, PrimitiveCatalog
+from .primitive_catalog import Primitive, PrimitiveCatalog, render_site_primitive_class
 
 
 _WORD = re.compile(r"[a-z0-9_]+")
@@ -51,15 +51,8 @@ def decide_primitive_metadata(
     decide_fn: Callable[[str, list[dict]], dict] | None = None,
 ) -> PrimitiveRouteDecision:
     """Choose use/adapt/skip from metadata only; no candidate code enters the judge prompt."""
-    candidates = PrimitiveCatalog(library, site).list()
-    metadata = [{
-        "primitive_id": p.primitive_id,
-        "capability": p.capability,
-        "signature": p.signature,
-        "requires": p.requires,
-        "provides": p.provides,
-        "supported_patterns": p.supported_patterns,
-    } for p in candidates]
+    site_class = PrimitiveCatalog(library, site).as_site_class()
+    metadata = site_class.method_metadata()
     if not metadata:
         return PrimitiveRouteDecision("skip", reason="site primitive catalog is empty")
     if decide_fn is None:
@@ -73,6 +66,8 @@ def decide_primitive_metadata(
                 "website facts. ADAPT when it covers a meaningful part with explicit remaining "
                 "gaps. SKIP when acquiring its prerequisites is itself the main unresolved work, "
                 "its output is unnecessary, or coverage is marginal. An empty selection is valid. "
+                "SHARED is stronger reuse evidence, but a directly relevant SINGLE_SOURCE "
+                "primitive is valid prior material and must not be skipped solely for its grade. "
                 "You have not seen candidate code and must not assume capabilities absent from "
                 "metadata.",
                 json.dumps({"task": current_task, "candidates": values}, ensure_ascii=False),
@@ -126,12 +121,15 @@ def _llm_rank(task: str, primitives: list[Primitive]) -> list[str]:
         "signature": p.signature,
         "requires": p.requires,
         "provides": p.provides,
+        "grade": p.grade,
+        "evidence_count": len(p.source_workflows),
         "supported_patterns": p.supported_patterns,
     } for p in primitives]
     out = llm_json(
         "Select only site primitives that materially help solve the task. "
         "Return JSON {\"primitive_ids\": [...], \"reason\": \"...\"}. "
-        "Do not select merely because the website matches.",
+        "Do not select merely because the website matches. Shared is stronger evidence, but do "
+        "not reject a directly relevant single_source primitive solely for its grade.",
         f"Task:\n{task}\n\nCandidates:\n{json.dumps(candidates, ensure_ascii=False)}",
     )
     ids = out.get("primitive_ids") or []
@@ -204,7 +202,7 @@ def retrieve_primitives(
     """Retrieve and state-order at most ``max_primitives`` from one site's active catalog."""
     if max_primitives < 1:
         return PrimitiveRetrieval(site=site, reason="primitive retrieval disabled by zero budget")
-    candidates = PrimitiveCatalog(library, site).list()
+    candidates = PrimitiveCatalog(library, site).as_site_class().methods
     if not candidates:
         return PrimitiveRetrieval(site=site, reason="site primitive catalog is empty")
     ranker = rank_fn or (_llm_rank if use_llm else _keyword_rank)
@@ -258,10 +256,14 @@ def render_primitive_hint(result: PrimitiveRetrieval) -> str:
             f"signature: {json.dumps(p.signature, ensure_ascii=False)}",
             f"requires: {json.dumps(p.requires)}; provides: {json.dumps(p.provides)}",
             f"# primitive-source: {p.primitive_id} {p.content_hash}",
-            "```python",
-            p.code.rstrip(),
-            "```",
         ])
+    lines.extend([
+        "",
+        "### Selected website primitive class",
+        "```python",
+        render_site_primitive_class(result.site, result.primitives).rstrip(),
+        "```",
+    ])
     return "\n".join(lines) + "\n"
 
 

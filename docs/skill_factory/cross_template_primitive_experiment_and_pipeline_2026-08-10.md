@@ -248,7 +248,30 @@ The current directory convention still permits sibling visibility, so absence of
 not sufficient for a formal claim. The rerun protocol should physically separate arms and audit
 trajectory file access before aggregation.
 
-## 7. Current interpretation and next measurement
+## 7. Clean paired result on 2026-08-11
+
+The same 24 held-out tasks were rerun as scratch under an independent `/tmp` experiment root that
+contained no primitive arm. Auditing all 24 trajectories found no access to primitive retrieval,
+site-library, or historical result artifacts.
+
+| Arm | Correct | Accuracy | Mean Webwright steps |
+|---|---:|---:|---:|
+| Clean scratch | 11/24 | 45.8% | 9.58 |
+| Updated primitive | 13/24 | 54.2% | 8.50 |
+
+The paired outcomes are 3 wins, 1 loss, 10 both-correct, and 10 both-wrong. Tasks 122 and 154 are
+primitive-exposed wins, while task 113 is a primitive-exposed loss. Task 3 was routed `skip`, so its
+win is sampling variation rather than a primitive-attributable gain. The complete system result is
+13/24 versus 11/24; the changes directly associated with primitive exposure are 2 wins and 1 loss.
+This small sample is not a statistical significance claim.
+
+On the ten both-correct pairs, scratch averaged 7.6 steps and primitive averaged 8.0. Tasks already
+solved by scratch were short and did not become cheaper. Frozen-plan and retrieval generation also
+occur outside Webwright step accounting, so the unconditional 8.50 mean is not end-to-end cost.
+
+See the [clean paired results](../../evals/webarena/formal_32_24_audited_v4_clean_results/).
+
+## 8. Current interpretation and next measurement
 
 The earliest result establishes only that mixed reuse changed strategies; it does not isolate
 primitives. The previous primitive-only pilot establishes that the old injection protocol could
@@ -256,11 +279,13 @@ retrieve and incorporate primitives, but it produced no wins and four losses, an
 was contaminated. Neither is the final efficacy number.
 
 The updated pipeline tests a narrower hypothesis: whether correct site primitives can safely replace
-specific acquisition steps while preserving the consumer's scratch semantics. The next report must
-come from an arm-isolated paired run using the frozen four-site library. Until that finishes, the
-honest status is:
+specific acquisition steps while preserving the consumer's scratch semantics. The clean paired run
+is an initial positive signal, but larger samples or repeated seeds are needed to test stability.
+The honest status is:
 
 - library construction and retrieval mechanisms are implemented and tested;
 - primitive coverage and provenance are auditable;
 - the previous accuracy result is negative under the old integration protocol;
-- the updated integration protocol does not yet have a clean, completed WebArena number.
+- the updated protocol scores 13/24 against a clean 11/24 retrieval-only baseline;
+- primitive exposure is associated with 2 wins and 1 loss, with task 113 remaining the key
+  non-regression failure.

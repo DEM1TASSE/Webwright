@@ -5,6 +5,7 @@ import pytest
 from webwright.skill_factory.primitive_catalog import (
     Primitive,
     PrimitiveCatalog,
+    render_site_primitive_class,
     validate_primitive,
 )
 
@@ -27,6 +28,46 @@ def _primitive(name="open_repo", code=None):
         provides=["repo_context"],
         source_templates=[322, 329],
     )
+
+
+def test_catalog_exposes_one_site_primitive_class(tmp_path):
+    catalog = PrimitiveCatalog(tmp_path, "gitlab")
+    primitive = catalog.upsert(_primitive())
+
+    site_class = catalog.as_site_class()
+
+    assert site_class.site == "gitlab"
+    assert site_class.get_method("gitlab/open_repo") == primitive
+    assert site_class.method_metadata()[0]["method_name"] == "open_repo"
+    assert "code" not in site_class.method_metadata()[0]
+    generated = catalog.class_path.read_text()
+    assert "class GitLabPrimitives:" in generated
+    assert "def open_repo(" in generated
+    compile(generated, str(catalog.class_path), "exec")
+
+
+def test_site_class_namespaces_private_helpers():
+    first = _primitive("open_repo")
+    second = Primitive(
+        primitive_id="gitlab/find_repo",
+        site="gitlab",
+        capability="Find a GitLab repository.",
+        entrypoint="find_repo",
+        code=(
+            "def find_repo(repo):\n"
+            "    return _normalize(repo)\n\n"
+            "def _normalize(repo):\n"
+            "    return repo.lower()\n"
+        ),
+    )
+    generated = render_site_primitive_class("gitlab", [first, second])
+    namespace = {}
+    exec(generated, namespace)
+    site_class = namespace["GitLabPrimitives"]
+    assert site_class.open_repo(None, " A ") == "A"
+    assert site_class.find_repo(" A ") == " a "
+    assert "_open_repo__normalize" in generated
+    assert "_find_repo__normalize" in generated
 
 
 def test_catalog_round_trip_and_hash(tmp_path):
