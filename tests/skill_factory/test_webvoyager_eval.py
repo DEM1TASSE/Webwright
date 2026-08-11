@@ -23,5 +23,5 @@ def test_final_response_and_verdict_are_strict(tmp_path):
     assert load_final_response(run) == "second"
     assert verdict_label("reason\nVERDICT: SUCCESS") == 1
     assert verdict_label("reason\nVERDICT: NOT SUCCESS") == 0
+    assert verdict_label("Evidence supports completion. VERDICT: SUCCESS") == 1
     assert verdict_label("SUCCESS maybe") is None
-

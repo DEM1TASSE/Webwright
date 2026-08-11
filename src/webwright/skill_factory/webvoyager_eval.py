@@ -65,7 +65,11 @@ def load_final_response(run: str | Path) -> str:
 
 
 def verdict_label(response: str) -> int | None:
-    matches = list(re.finditer(r"(?im)^\s*VERDICT:\s*(NOT SUCCESS|SUCCESS)\s*$", response))
+    # Judges sometimes append the requested verdict to an explanatory sentence.
+    # The protocol's final verdict token is authoritative regardless of layout.
+    matches = list(
+        re.finditer(r"(?i)\bVERDICT:\s*(NOT SUCCESS|SUCCESS)\s*(?=$|[.!?])", response)
+    )
     if not matches:
         return None
     return int(matches[-1].group(1).upper() == "SUCCESS")
@@ -139,4 +143,3 @@ def main(argv=None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
