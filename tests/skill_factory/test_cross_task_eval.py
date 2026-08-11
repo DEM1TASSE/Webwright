@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import signal
 import subprocess
 from pathlib import Path
@@ -97,6 +98,38 @@ def test_process_start_failure_is_infrastructure_not_benchmark_failure():
         False, "agent_timeout_or_incomplete"
     )
     assert E.classify_result(True, 1.0, False, 0) == (True, "scored_correct")
+
+
+def test_strict_arm_isolation_rejects_opposite_arm_artifacts(tmp_path):
+    (tmp_path / "task7_primitive_001").mkdir()
+    try:
+        E.assert_arm_isolation(tmp_path, "scratch")
+    except ValueError as error:
+        assert "opposite-arm artifacts" in str(error)
+    else:
+        raise AssertionError("expected scratch isolation failure")
+
+
+def test_strict_arm_isolation_allows_same_arm_and_scratch_plan(tmp_path):
+    (tmp_path / "task7_scratch_001").mkdir()
+    (tmp_path / "task7.scratch_plan.json").write_text("{}")
+    E.assert_arm_isolation(tmp_path, "scratch")
+
+
+def test_reads_valid_primitive_execution_events(tmp_path):
+    (tmp_path / "primitive_execution_trace.jsonl").write_text("\n".join([
+        json.dumps({"primitive_id": "gitlab/commits/list", "scratch_step_id": "S1",
+                    "event": "entered"}),
+        "not-json",
+        json.dumps({"primitive_id": "gitlab/commits/list", "event": "completed"}),
+        json.dumps({"primitive_id": "gitlab/commits/list", "event": "unknown"}),
+    ]))
+    assert E.read_primitive_execution_trace(tmp_path) == [
+        {"primitive_id": "gitlab/commits/list", "scratch_step_id": "S1",
+         "event": "entered", "line": 1},
+        {"primitive_id": "gitlab/commits/list", "scratch_step_id": "",
+         "event": "completed", "line": 3},
+    ]
 
 
 def test_summarize_reports_routed_pairs_decisions_and_site_breakdown(tmp_path):

@@ -130,6 +130,7 @@ def test_adapt_is_rendered_as_local_patch_with_fallback(tmp_path):
                 "scratch_step_id": "S1", "primitive_id": "gitlab/commits/list_commits",
                 "replaces": ["commit acquisition"], "preserves": ["S2 ranking"],
                 "acceptance_checks": ["records complete"],
+                "avoids_when_accepted": ["manual commit-page traversal"],
                 "fallback": "run original S1",
             }],
         },
@@ -140,6 +141,8 @@ def test_adapt_is_rendered_as_local_patch_with_fallback(tmp_path):
     assert "Do not redesign" in hint
     assert "run original S1" in hint
     assert "def list_commits" in hint
+    assert "successful output still requires the original acquisition" in hint
+    assert "primitive_execution_trace.jsonl" in hint
 
 
 def test_metadata_only_ablation_renders_contract_without_code(tmp_path):
@@ -151,6 +154,7 @@ def test_metadata_only_ablation_renders_contract_without_code(tmp_path):
                 "scratch_step_id": "S1", "primitive_id": "gitlab/commits/list_commits",
                 "replaces": ["commit acquisition"],
                 "acceptance_checks": ["records complete"],
+                "avoids_when_accepted": ["manual commit-page traversal"],
             }],
         },
     )
@@ -158,3 +162,20 @@ def test_metadata_only_ablation_renders_contract_without_code(tmp_path):
     assert "input_contract:" in hint
     assert "Implementation withheld for metadata-only ablation" in hint
     assert "def list_commits" not in hint
+
+
+def test_patch_without_avoidable_scratch_work_is_rejected(tmp_path):
+    result = retrieve_audited_primitives(
+        "top commits", _library(tmp_path), site="gitlab", scratch_plan=_plan(),
+        decide_fn=lambda *_: {
+            "decision": "adapt", "primitive_ids": ["gitlab/commits/list_commits"],
+            "patches": [{
+                "scratch_step_id": "S1", "primitive_id": "gitlab/commits/list_commits",
+                "replaces": ["probe the commit endpoint"],
+                "acceptance_checks": ["records complete"],
+                "fallback": "run original S1",
+            }],
+        },
+    )
+    assert result.decision == "skip"
+    assert result.patches == []

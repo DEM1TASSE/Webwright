@@ -119,6 +119,58 @@ def collect_run(runs, key):
     return run_dir, answer, steps
 
 
+def assert_arm_isolation(runs: Path, mode: str) -> None:
+    """Fail before execution when the run root exposes artifacts from the opposite arm."""
+    if not runs.exists() or mode not in {"scratch", "primitive"}:
+        return
+    opposite = "primitive" if mode == "scratch" else "scratch"
+    patterns = [
+        f"task*_{opposite}_*",
+        f"task*_{opposite}.log",
+        f"task*_{opposite}.json",
+    ]
+    exposed = []
+    for pattern in patterns:
+        exposed.extend(path for path in runs.glob(pattern) if path.exists())
+    # Retrieval records are treatment artifacts even when their filename omits an arm suffix.
+    if mode == "scratch":
+        exposed.extend(runs.glob("*.primitive_retrieval.json"))
+    if exposed:
+        sample = ", ".join(sorted(path.name for path in exposed)[:5])
+        raise ValueError(
+            f"strict arm isolation failed for {mode}: opposite-arm artifacts visible in "
+            f"{runs}: {sample}"
+        )
+
+
+def read_primitive_execution_trace(run_dir: Path) -> list[dict]:
+    """Read best-effort JSONL lifecycle events emitted by a vendored primitive consumer."""
+    path = run_dir / "primitive_execution_trace.jsonl"
+    if not path.exists():
+        return []
+    events = []
+    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        try:
+            value = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(value, dict):
+            continue
+        event = str(value.get("event") or "")
+        primitive_id = str(value.get("primitive_id") or "")
+        if event not in {
+            "entered", "completed", "acceptance_passed", "acceptance_failed", "fallback_used",
+        } or not primitive_id:
+            continue
+        events.append({
+            "primitive_id": primitive_id,
+            "scratch_step_id": str(value.get("scratch_step_id") or ""),
+            "event": event,
+            "line": line_number,
+        })
+    return events
+
+
 def has_complete_agent_response(runs, key):
     """Completion is the artifact, not a non-null answer.
 
@@ -278,6 +330,8 @@ def run_one(args, split, dataset, config):
     mode = args.mode
     key = f"task{args.task_id}_{mode}"
     result_path = Path(args.results) / f"{key}.json"
+    if args.strict_arm_isolation:
+        assert_arm_isolation(Path(args.runs), mode)
     if result_path.exists() and not args.force:
         print(f"[resume] {result_path}")
         return
@@ -437,6 +491,7 @@ def run_one(args, split, dataset, config):
         used = extract_primitive_usage((run_dir / "final_script.py").read_text(encoding="utf-8"))
         declared = read_declared_usage(run_dir / "primitive_usage.json")
         declared_coverage = read_declared_coverage(run_dir / "primitive_usage.json")
+    execution_trace = read_primitive_execution_trace(run_dir) if run_dir else []
     record = {
         "task_id": args.task_id,
         "intent_template_id": task["intent_template_id"],
@@ -459,6 +514,7 @@ def run_one(args, split, dataset, config):
         "declared_used_primitives": declared,
         "declared_primitive_coverage": declared_coverage,
         "code_incorporated_primitives": used,
+        "primitive_execution_trace": execution_trace,
         "development_hint_file": args.development_hint_file or None,
         "primitive_metadata_only": bool(args.primitive_metadata_only),
         "run_dir": str(run_dir) if run_dir else None,
@@ -583,6 +639,10 @@ def main(argv=None):
     parser.add_argument("--eval-python", default=sys.executable)
     parser.add_argument("--timeout", type=int, default=900)
     parser.add_argument("--force", action="store_true")
+    parser.add_argument(
+        "--strict-arm-isolation", action="store_true",
+        help="Reject a run root containing artifacts from the opposite experimental arm.",
+    )
     parser.add_argument(
         "--development-hint-file",
         help="Development probes only: prepend a non-code capability hypothesis. Requires "

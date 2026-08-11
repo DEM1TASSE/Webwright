@@ -120,3 +120,15 @@ PYTHONPATH=src /home/t-demiwang/project/webwright/.venv/bin/python \
 - Final audit: split valid, all four frozen libraries unchanged, `git diff --check` clean, and
   `pytest -q tests/skill_factory` reports 161 passed.
 - Report: `evals/webarena/test_24_results/README.md`.
+## 2026-08-11: non-regression and attribution hardening
+
+- Root-caused task 113: an incomplete reviews primitive was attempted even though nickname fields
+  and exhaustive traversal still required the original acquisition unconditionally. The primitive
+  returned no filtered rows, then the consumer performed a full fallback and timed out.
+- Added the routing invariant that an accepted patch must identify concrete scratch work avoided
+  on success. `avoids_when_accepted` is now required; fallback must be conditional rather than a
+  license to execute both strategies every time.
+- Added `--strict-arm-isolation` preflight to reject opposite-arm artifacts in a run root.
+- Added best-effort `primitive_execution_trace.jsonl` lifecycle instrumentation and result capture.
+- Isolated task 113 rerun routed `skip`, returned `["Emma", "seam miller"]`, scored `1.0`, and used
+  11 Webwright steps. This fixes the observed regression without adding a task-specific primitive.

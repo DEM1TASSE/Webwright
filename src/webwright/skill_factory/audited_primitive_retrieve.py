@@ -123,10 +123,17 @@ def retrieve_audited_primitives(
                 "rewrite the overall strategy. If a "
                 "necessary field, entity-discovery step, completeness guarantee, or runtime "
                 "precondition remains missing, preserve the original scratch step or SKIP. "
+                "A patch is invalid when the original acquisition must still run unconditionally "
+                "after a successful primitive call to obtain a required field, traverse the full "
+                "result set, or satisfy the step's acceptance checks. Fallback must be conditional "
+                "on primitive failure; it is not permission to perform both strategies every time. "
+                "Prefer SKIP when a primitive only adds an extra probe without avoiding meaningful "
+                "scratch work. "
                 "Return JSON {\"decision\":\"use|adapt|skip\",\"primitive_ids\":[],"
                 "\"reason\":\"...\",\"remaining_gap\":[],\"patches\":[{"
                 "\"scratch_step_id\":\"S1\",\"primitive_id\":\"...\","
                 "\"replaces\":[],\"preserves\":[],\"acceptance_checks\":[],"
+                "\"avoids_when_accepted\":[\"specific original work not otherwise required\"],"
                 "\"fallback\":\"original scratch step\"}]}. USE requires complete acquisition "
                 "coverage. ADAPT requires at least one valid local patch. Select at most five. "
                 "Task filtering, aggregation, ranking, semantic decisions, and formatting remain "
@@ -161,9 +168,10 @@ def retrieve_audited_primitives(
             continue
         replaces = [str(x) for x in patch.get("replaces") or [] if str(x).strip()]
         checks = [str(x) for x in patch.get("acceptance_checks") or [] if str(x).strip()]
+        avoids = [str(x) for x in patch.get("avoids_when_accepted") or [] if str(x).strip()]
         # "Helpful context" is exactly the anchoring channel this mode is designed to close.
         # A local patch must replace a concrete operation and define how its output is accepted.
-        if (not replaces or not checks
+        if (not replaces or not checks or not avoids
                 or all(item.strip() == sid or len(item.strip()) < 8 for item in replaces)):
             continue
         patches.append({
@@ -171,6 +179,7 @@ def retrieve_audited_primitives(
             "replaces": replaces,
             "preserves": [str(x) for x in patch.get("preserves") or []],
             "acceptance_checks": checks,
+            "avoids_when_accepted": avoids,
             "fallback": str(patch.get("fallback") or "Run the original scratch step"),
         })
     if scratch_plan and decision == "adapt" and not patches:
@@ -218,6 +227,16 @@ def render_audited_primitive_hint(
             "exception, empty/partial output, missing required field, or failed check, immediately "
             "run that step's original scratch method. Primitive failure is not evidence that the "
             "website fact is absent and must not be converted directly to NOT_FOUND_ERROR.",
+            "Do not apply a patch when its successful output still requires the original acquisition "
+            "unconditionally for missing task-required fields or completeness. In that case the "
+            "primitive adds work rather than replacing work: follow the frozen scratch plan directly."
+            if include_code else
+            "Do not treat metadata exposure as a reason to run an extra acquisition strategy.",
+            "For each actually called primitive, append one JSON object per lifecycle event to "
+            "primitive_execution_trace.jsonl. Use events entered, completed, acceptance_passed, "
+            "acceptance_failed, and fallback_used, and include primitive_id and scratch_step_id."
+            if include_code else
+            "Do not write primitive execution events because implementation code is withheld.",
         ]
     else:
         lines.insert(3, "Use only useful parts. Vendor/adapt selected code into a standalone "
