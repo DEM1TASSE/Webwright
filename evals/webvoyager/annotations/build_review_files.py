@@ -9,6 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 PARTS = (ROOT / "part_a.jsonl", ROOT / "part_b.jsonl")
+REVIEWS = (ROOT / "review_a.jsonl", ROOT / "review_b.jsonl", ROOT / "review_c.jsonl")
 JSON_FIELDS = {"capabilities", "slots", "interaction_type"}
 
 
@@ -60,6 +61,56 @@ def main() -> None:
         json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
     print(json.dumps(summary, ensure_ascii=False, indent=2))
+
+    reviews = {row["id"]: row for path in REVIEWS for row in load(path)}
+    if set(reviews) != set(ids):
+        raise SystemExit("second-pass reviews do not exactly cover official task IDs")
+    reviewed_rows = []
+    for row in rows:
+        review = reviews[row["id"]]
+        revised = dict(row)
+        revised["template_v1"] = row["template"]
+        revised["template"] = review["reviewed_template"]
+        revised["template_review_decision"] = review["decision"]
+        revised["template_review_confidence"] = review["confidence"]
+        revised["template_review_rationale"] = review["rationale"]
+        revised["annotation_version"] = "template-review-v2"
+        reviewed_rows.append(revised)
+
+    reviewed_output = ROOT / "webvoyager_annotations.reviewed_v2.jsonl"
+    reviewed_output.write_text(
+        "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in reviewed_rows),
+        encoding="utf-8",
+    )
+    review_fields = [
+        "review_status", "id", "web_name", "ques", "template_v1", "template",
+        "template_review_decision", "template_review_confidence",
+        "template_review_rationale", "capabilities", "slots", "live_web_risk",
+    ]
+    with (ROOT / "webvoyager_annotations.reviewed_v2.csv").open(
+        "w", encoding="utf-8", newline=""
+    ) as handle:
+        writer = csv.DictWriter(handle, fieldnames=review_fields, extrasaction="ignore")
+        writer.writeheader()
+        for row in reviewed_rows:
+            rendered = dict(row)
+            for field in ("capabilities", "slots"):
+                rendered[field] = json.dumps(rendered[field], ensure_ascii=False)
+            writer.writerow(rendered)
+
+    summary["reviewed_templates"] = len(
+        {(row["web_name"], row["template"]) for row in reviewed_rows}
+    )
+    summary["template_changes"] = sum(
+        row["template_review_decision"] == "change" for row in reviewed_rows
+    )
+    (ROOT / "summary.json").write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    print(json.dumps({
+        "reviewed_templates": summary["reviewed_templates"],
+        "template_changes": summary["template_changes"],
+    }, ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":

@@ -4,7 +4,10 @@ This directory contains a preliminary machine annotation of all 643 official
 WebVoyager tasks. It is intended for human review before freezing same-template
 or cross-template pilot splits; it is not ground truth.
 
-Review `webvoyager_annotations.review.csv`, editing `review_status` to `approved`
+The independent second pass is in `webvoyager_annotations.reviewed_v2.csv`; this
+is the recommended file for human review. It preserves `template_v1`, the revised
+`template`, the review decision, confidence, and rationale. Edit `review_status`
+to `approved`
 or `edited`. Prioritize rows with low `confidence`, high live-web risk, login
 requirements, or broad families/templates. Same-template membership is defined
 by equal site and `template`; cross-template candidates must have unequal
