@@ -198,3 +198,35 @@ class TestPortability:
         })
         _, report = check_mod.run("build", workspace)
         assert any("reuses its own" in e for e in report["errors"]), report["errors"]
+
+
+class TestRendererRepair:
+    """ast.unparse on 3.12 can make portable input non-portable; the driver repairs it."""
+
+    UNPARSED = ("def f(self, stops):\n"
+                "    return ';'.join((f'{p['lon']},{p['lat']}' for p in stops))\n")
+
+    def test_repairs_what_ast_unparse_produced(self):
+        from skill_agent.portability import fstring_quote_reuse, make_portable
+        fixed, notes = make_portable(self.UNPARSED)
+        assert notes and "rewrote 1 f-string" in notes[0]
+        assert fstring_quote_reuse(fixed) == []
+        assert 'f"{p[\'lon\']},{p[\'lat\']}"' in fixed
+
+    def test_repair_preserves_the_ast(self):
+        import ast
+        from skill_agent.portability import make_portable
+        fixed, _ = make_portable(self.UNPARSED)
+        assert ast.dump(ast.parse(fixed)) == ast.dump(ast.parse(self.UNPARSED))
+
+    def test_clean_code_round_trips_untouched(self):
+        from skill_agent.portability import make_portable
+        code = "def f(self, d):\n    return f\"{d['k']}\"\n"
+        assert make_portable(code) == (code, [])
+
+    def test_skips_an_fstring_that_needs_both_quotes(self):
+        """Swapping delimiters would not be safe, so leave it for the caller to fail on."""
+        from skill_agent.portability import make_portable
+        code = 'x = f\'{d["a"]}{d[\\\'b\\\']}\'\n'
+        fixed, notes = make_portable(code)
+        assert fixed == code

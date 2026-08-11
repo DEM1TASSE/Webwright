@@ -56,13 +56,25 @@ prompts (`_EXTRACT_SYS`, `_BUILD_SYS`, `_QUALITY_SYS`, `_CONSOLIDATE_SYS`) verba
 
 ### One check the scripted pipeline does not have
 
-`portability.py` rejects generated method code that reuses a quote character inside an f-string
-expression (`f'{stop['lon']}'`). That is legal on 3.12 and a SyntaxError on 3.10, and the shared
-validators call `ast.parse` on whichever interpreter runs the build — so a 3.12 build silently
-emits a package a 3.10 consumer cannot import. Two scripted Map development runs already contain
-this defect. Telling the agent the rule in the prompt was not enough: it wrote the nesting anyway,
-because every command it ran exited 0. It is a rule about how code is written, not about what a
-primitive owns, so it does not change library semantics — every final scripted package passes it.
+`portability.py` keeps the package parsable by interpreters older than the one that built it.
+`f'{stop['lon']}'` is legal on 3.12 and a SyntaxError on 3.10, and the shared validators call
+`ast.parse` on whichever interpreter runs the build — so a 3.12 build silently emits a package a
+3.10 consumer cannot import.
+
+It arrives two ways, and only the first is the agent's fault:
+
+- The agent writes it. `check` rejects it, so the agent sees a failing command and fixes it.
+  Prompt guidance alone did not work: told the rule, it wrote the nesting anyway, because
+  everything it ran still exited 0.
+- **`render_site_package` produces it from portable input.** The renderer round-trips method code
+  through `ast.unparse`, which normalizes string literals to single quotes — turning the agent's
+  correct `f"{point['longitude']}"` into 3.12-only `f'{point['longitude']}'`. This is a defect in
+  shared scripted code, not in the port; two rejected scripted Map runs carry it. The driver
+  repairs it after rendering, and only accepts the rewrite when the result parses to an identical
+  AST. If it cannot be repaired the build fails rather than shipping an unimportable package.
+
+This is about how code is spelled, not about what a primitive owns, so library semantics are
+unchanged — all four final scripted packages are already clean and round-trip untouched.
 
 ## Running it
 

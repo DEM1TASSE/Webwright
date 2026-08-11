@@ -34,6 +34,7 @@ from webwright.skill_factory.audited_primitive_build import (
 )
 from webwright.skill_factory.site_package_candidate import expected_class_name
 
+from .portability import fstring_quote_reuse, make_portable
 from .runner import AgentRunner, WebwrightRunner
 from .stages import STAGES
 
@@ -336,7 +337,15 @@ def build_site(runner: AgentRunner, *, site: str, workflows: list[dict], output:
         output=output, runs=runs, max_attempts=max_attempts,
     )
 
-    code = render_site_package(site, final)
+    # render_site_package round-trips through ast.unparse, which on 3.12 normalizes string
+    # literals to single quotes and can turn the agent's portable f"{p['lon']}" into
+    # 3.12-only f'{p['lon']}'. Repair it here, after rendering — the agent cannot.
+    code, portability_notes = make_portable(render_site_package(site, final))
+    if fstring_quote_reuse(code):
+        raise ValueError(f"{site} rendered package is not parsable before Python 3.12 and could "
+                         f"not be repaired: {fstring_quote_reuse(code)}")
+    for note in portability_notes:
+        print(f"  [render] {note}")
     final_dir = output / "final_candidate"
     final_dir.mkdir(parents=True, exist_ok=True)
     (final_dir / "package.py").write_text(code, encoding="utf-8")
@@ -348,9 +357,11 @@ def build_site(runner: AgentRunner, *, site: str, workflows: list[dict], output:
     write_candidate_review(final_dir, site=site, primitives=final)
     _dump(output / "audit.json", {
         "site": site, "status": "candidate", "history": history,
-        "consolidation_operations": raw.get("operations") or [], "coverage": coverage})
+        "consolidation_operations": raw.get("operations") or [], "coverage": coverage,
+        "portability_notes": portability_notes})
     return {"site": site, "status": "candidate", "batch_count": len(batches),
             "pre_consolidation_count": len(pool), "final_count": len(final),
+            "portability_notes": portability_notes,
             "package": str(final_dir / "package.py")}
 
 
