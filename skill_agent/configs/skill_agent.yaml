@@ -1,0 +1,87 @@
+# Terminal-agent config for the skill build pipeline.
+#
+# Deliberately standalone — it does NOT stack on base.yaml, whose system prompt is written
+# for browser web tasks (plan.md, screenshots, self_reflection, final_script.py). None of
+# that applies here: every stage is a file-in/file-out task inside a bash workspace.
+#
+# Stack a model modifier on top:
+#   -c skill_agent/configs/skill_agent.yaml -c <model_gateway>.yaml
+
+model:
+  request_timeout_seconds: 180
+  max_output_tokens: 8000
+  attach_observation_screenshot: false
+  observation_template: |
+    Observation:
+    Status: {{ 'ok' if observation.success else 'error' }}
+    Working directory: {{ observation.cwd }}
+    Command: {{ observation.command }}
+    Return code: {{ observation.returncode }}
+    {% if observation.exception %}Exception:
+    {{ observation.exception }}
+    {% endif %}{% if observation.command_output %}Command output:
+    {{ observation.command_output }}
+    {% endif %}
+  format_error_template: |
+    Format error:
+
+    {{ error }}
+
+    Respond with a single strict JSON object (no prose, no code fences) with exactly these fields:
+    {
+      "thought": "<short reasoning about the next step>",
+      "bash_command": "<exactly one shell command, or empty string when declaring done>",
+      "done": false,
+      "final_response": ""
+    }
+
+environment:
+  environment_class: local_workspace
+  output_dir: outputs/skill_agent
+  command_timeout_seconds: 240
+  shell: /bin/bash
+  browser_mode: local
+  recent_files_limit: 60
+  output_truncation_chars: 20000
+
+agent:
+  agent_class: default
+  debug_log: true
+  step_limit: 30
+  require_self_reflection_success: false
+  attach_instance_template_after_observation: false
+
+  system_template: |
+    You are a code agent working inside a bash workspace. You are building one stage of a
+    website-skill library: gold-verified web workflows are distilled into reusable, site-scoped
+    primitives.
+
+    Response format: a single strict JSON object with exactly these fields:
+    {
+      "thought": "<short reasoning about the next step>",
+      "bash_command": "<exactly one shell command, or empty string when declaring done>",
+      "done": false,
+      "final_response": ""
+    }
+
+    Rules of the workspace:
+    - Exactly one shell command per step. Chain with `&&` if you need to.
+    - Your working directory is the stage workspace. `in/` is your input and is read-only by
+      convention; write only under `out/`.
+    - Read before you write. The inputs are real code from real verified runs — grep it, run
+      `python - <<'PY' ... PY` against it, print the parts you are unsure about. Guessing at
+      what a workflow did is the main way this stage goes wrong.
+    - Write files with heredocs (`cat > out/x.json <<'JSON' ... JSON`). Quote the delimiter so
+      the shell does not expand `$` inside your content.
+    - The heredoc terminator must be alone on its own line. Appending anything to it — even
+      `JSON && python -m skill_agent.check ...` — means bash never sees a terminator, so your
+      command text gets written into the file and the rest of the line never runs. Run the
+      validator as the next step instead, and re-read the file if you are unsure what landed.
+    - A validator decides whether your artifact is accepted. Run it yourself, read every error,
+      fix the artifact, run it again. Iterating against the validator is expected and free;
+      finishing with a rejected artifact is the only real failure.
+    - Set "done": true only after the validator has exited 0 for this stage. Put a one-line
+      summary of what you produced in "final_response".
+
+  instance_template: |
+    {{ task }}

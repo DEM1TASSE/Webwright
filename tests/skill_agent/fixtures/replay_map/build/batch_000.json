@@ -1,0 +1,290 @@
+{
+  "operations": [
+    {
+      "operation": "ADD",
+      "replacement": {
+        "primitive_id": "map/geocode_places",
+        "method": "geocode_places",
+        "capability": "Geocode a free-text place query against the map site's demonstrated Nominatim search service and return typed matched location records in site order.",
+        "method_code": "def geocode_places(self, query: str, limit: int = 5) -> dict:\n    import json\n    import urllib.parse\n    import urllib.request\n\n    if not query:\n        raise ValueError(\"query is required\")\n    if limit <= 0:\n        raise ValueError(\"limit must be positive\")\n\n    base_url = \"http://18.208.187.221:8085/\"\n    url = base_url + \"search?format=json&limit=\" + str(limit) + \"&q=\" + urllib.parse.quote(query)\n    with urllib.request.urlopen(url, timeout=60) as response:\n        data = json.load(response)\n\n    results = []\n    for item in data:\n        if \"display_name\" not in item or \"lat\" not in item or \"lon\" not in item:\n            continue\n        results.append(\n            {\n                \"display_name\": item[\"display_name\"],\n                \"lat\": item[\"lat\"],\n                \"lon\": item[\"lon\"],\n            }\n        )\n\n    return {\"results\": results}",
+        "owns": [
+          "Construct the demonstrated Nominatim search URL on the site's geocoding host",
+          "Submit a free-text query with stable parameters such as format=json and limit",
+          "Parse JSON search results into typed location records",
+          "Return stable matched fields including display_name, lat, and lon"
+        ],
+        "does_not_own": [
+          "Choosing which semantic places to geocode for a task",
+          "Selecting one result for downstream use beyond preserving returned order",
+          "Combining geocoding with routing into a final answer",
+          "Ranking, comparison, aggregation, or formatting for the user"
+        ],
+        "input_contract": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "Free-text place or address query."
+            },
+            "limit": {
+              "type": "integer",
+              "description": "Maximum number of results to request.",
+              "default": 5
+            }
+          },
+          "required": [
+            "query"
+          ]
+        },
+        "output_contract": {
+          "type": "object",
+          "properties": {
+            "results": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "display_name": {
+                    "type": "string"
+                  },
+                  "lat": {
+                    "type": "string"
+                  },
+                  "lon": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "display_name",
+                  "lat",
+                  "lon"
+                ]
+              }
+            }
+          },
+          "required": [
+            "results"
+          ]
+        },
+        "requires": [],
+        "provides": [
+          "typed_geocoded_location_results"
+        ],
+        "supported_patterns": [
+          "Single-place geocoding for routing workflows",
+          "Multi-query geocoding by repeated calls",
+          "Using the site's demonstrated Nominatim host"
+        ],
+        "source_evidence": [
+          {
+            "workflow_id": "task81_t72",
+            "template_id": "72",
+            "code_quote": "def geocode(query):\n    url = BASE_NOM + \"search?format=json&limit=5&q=\" + urllib.parse.quote(query)\n    data = get_json(url)\n    if not data:\n        raise RuntimeError(f\"No geocode results for {query}\")\n    return url, data",
+            "explanation": "Defines a reusable geocoding call against the site's Nominatim host and returns structured results."
+          },
+          {
+            "workflow_id": "task85_t64",
+            "template_id": "64",
+            "code_quote": "origin_resp = requests.get(base_nominatim, params={'q': origin_query, 'format': 'jsonv2', 'limit': 1}, headers=headers, timeout=30)\norigin_resp.raise_for_status()\norigin = origin_resp.json()[0]\nlog(f\"step 1 action: searched Nominatim for origin '{origin_query}' and selected top result {origin['display_name']} at lat={origin['lat']} lon={origin['lon']}\")\nmake_png(SS_DIR / 'final_execution_1_origin_search.png', 'CP1 Origin Search Result', json.dumps(origin, indent=2))\n\ndest_resp = requests.get(base_nominatim, params={'q': dest_query, 'format': 'jsonv2', 'limit': 1}, headers=headers, timeout=30)\ndest_resp.raise_for_status()\ndest = dest_resp.json()[0]\nlog(f\"step 2 action: searched Nominatim for destination '{dest_query}' and selected top result {dest['display_name']} at lat={dest['lat']} lon={dest['lon']}\")\nmake_png(SS_DIR / 'final_execution_2_destination_search.png', 'CP2 Destination Search Result', json.dumps(dest, indent=2))",
+            "explanation": "Shows the same geocoding pattern: search endpoint call, stable query parameters, and extraction of typed display_name/lat/lon fields."
+          },
+          {
+            "workflow_id": "task76_t65",
+            "template_id": "65",
+            "code_quote": "for idx, place in enumerate(PLACES, start=1):\n    url = NOMINATIM_URL + 'search?q=' + urllib.parse.quote(place) + '&format=json&limit=1'\n    data = fetch_json(url)\n    first = data[0]\n    coords.append((float(first['lon']), float(first['lat'])))\n    match_lines.append(f'{place} => {first[\"display_name\"]} @ ({first[\"lat\"]}, {first[\"lon\"]})')\n    log(f'step {idx} action: geocoded {place} using site Nominatim service to {first[\"display_name\"]} at {first[\"lat\"]}, {first[\"lon\"]}')",
+            "explanation": "Shows the same site geocoding endpoint and the stable typed fields consumed downstream."
+          }
+        ]
+      }
+    },
+    {
+      "operation": "ADD",
+      "replacement": {
+        "primitive_id": "map/get_osrm_route",
+        "method": "get_osrm_route",
+        "capability": "Request a route from the map site's demonstrated OSRM service for an ordered coordinate list and return typed route totals and per-leg details.",
+        "method_code": "def get_osrm_route(self, coordinates: list, service_port: int = 5000, overview: bool = False, steps: bool = True) -> dict:\n    import json\n    import urllib.request\n\n    if not coordinates or len(coordinates) < 2:\n        raise ValueError(\"coordinates must contain at least two waypoints\")\n    if not service_port:\n        raise ValueError(\"service_port is required\")\n\n    coord_parts = []\n    for coordinate in coordinates:\n        lon = coordinate.get(\"lon\")\n        lat = coordinate.get(\"lat\")\n        if lon is None or lat is None:\n            raise ValueError(\"each coordinate must include lon and lat\")\n        coord_parts.append(f\"{lon},{lat}\")\n\n    overview_value = \"true\" if overview else \"false\"\n    steps_value = \"true\" if steps else \"false\"\n    url = (\n        f\"http://18.208.187.221:{service_port}/route/v1/driving/\"\n        + \";\".join(coord_parts)\n        + f\"?overview={overview_value}&steps={steps_value}\"\n    )\n\n    with urllib.request.urlopen(url, timeout=60) as response:\n        data = json.load(response)\n\n    if data.get(\"code\") != \"Ok\":\n        raise RuntimeError(f\"OSRM route failed: {data}\")\n\n    route = data[\"routes\"][0]\n    legs = []\n    for leg in route.get(\"legs\", []):\n        leg_record = {}\n        if \"duration\" in leg:\n            leg_record[\"duration\"] = leg[\"duration\"]\n        if \"distance\" in leg:\n            leg_record[\"distance\"] = leg[\"distance\"]\n        legs.append(leg_record)\n\n    return {\n        \"duration\": route[\"duration\"],\n        \"distance\": route[\"distance\"],\n        \"legs\": legs,\n    }",
+        "owns": [
+          "Construct the demonstrated OSRM route URL with semicolon-separated lon,lat coordinates",
+          "Call the demonstrated site routing host and service port",
+          "Pass stable query parameters such as overview and steps",
+          "Validate successful responses via code == Ok",
+          "Parse route totals and per-leg typed fields from the JSON response"
+        ],
+        "does_not_own": [
+          "Geocoding place names into coordinates",
+          "Choosing which route alternatives to evaluate",
+          "Selecting an optimal order among candidate routes",
+          "Summing multiple route calls into a task-specific final answer",
+          "Formatting HH:MM:SS strings for final presentation"
+        ],
+        "input_contract": {
+          "type": "object",
+          "properties": {
+            "coordinates": {
+              "type": "array",
+              "description": "Ordered waypoint list for the route.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "lon": {
+                    "type": "string"
+                  },
+                  "lat": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "lon",
+                  "lat"
+                ]
+              }
+            },
+            "service_port": {
+              "type": "integer",
+              "description": "Demonstrated OSRM service port, such as 5000 for car or 5002 for foot.",
+              "default": 5000
+            },
+            "overview": {
+              "type": "boolean",
+              "default": false
+            },
+            "steps": {
+              "type": "boolean",
+              "default": true
+            }
+          },
+          "required": [
+            "coordinates"
+          ]
+        },
+        "output_contract": {
+          "type": "object",
+          "properties": {
+            "duration": {
+              "type": "number",
+              "description": "Total route duration in seconds."
+            },
+            "distance": {
+              "type": "number",
+              "description": "Total route distance in meters."
+            },
+            "legs": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "duration": {
+                    "type": "number"
+                  },
+                  "distance": {
+                    "type": "number"
+                  }
+                }
+              }
+            }
+          },
+          "required": [
+            "duration",
+            "distance",
+            "legs"
+          ]
+        },
+        "requires": [
+          "coordinates_for_all_waypoints"
+        ],
+        "provides": [
+          "typed_osrm_route_totals",
+          "typed_osrm_route_leg_details"
+        ],
+        "supported_patterns": [
+          "Two-point routing between origin and destination",
+          "Multi-stop routing for a fixed waypoint order",
+          "Driving via port 5000 and foot service via port 5002 using the demonstrated endpoint shape"
+        ],
+        "source_evidence": [
+          {
+            "workflow_id": "task81_t72",
+            "template_id": "72",
+            "code_quote": "log(\"step 1 action: Open the provided OpenStreetMap site conceptually and use the OSRM direction service workflow discovered from the page JavaScript: Nominatim geocoding at http://18.208.187.221:8085/ and OSRM endpoints on ports 5002 (foot) and 5000 (car).\")\nscreenshot_html(1, \"osrm_service_workflow\", \"Step 1 - OSRM service workflow evidence\", [\n    f\"Start URL: {BASE_SITE}\",\n    \"Service workflow derived from the live site's JavaScript assets:\",\n    \"- Geocoding service: http://18.208.187.221:8085/search?format=json&q=...\",\n    \"- OSRM foot routing endpoint port: 5002\",\n    \"- OSRM car routing endpoint port: 5000\",\n    \"- The site registers engines fossgis_osrm_foot and fossgis_osrm_car.\",\n    \"This satisfies the requirement to use the OSRM direction service rather than guessing.\"\n])\n\nqueries = {\n    \"university\": \"Univ of Pittsburgh\",\n    \"starbucks\": \"Starbucks Craig Street Pittsburgh\",\n    \"airport\": \"Pittsburgh International Airport\",\n}\nresults = {}\nall_lines = []\nfor key, query in queries.items():\n    url, data = geocode(query)\n    top = data[0]\n    results[key] = top\n    log(f\"geocode {key}: query={query} url={url} top_result={top['display_name']} lat={top['lat']} lon={top['lon']}\")\n    all_lines.extend([\n        f\"{key} query: {query}\",\n        f\"matched: {top['display_name']}\",\n        f\"lat/lon: {top['lat']}, {top['lon']}\",\n        f\"url: {url}\",\n        \"\"\n    ])\nlog(\"step 2 action: Geocode the required endpoints and confirm the matched locations are University of Pittsburgh, Starbucks on South Craig Street, and Pittsburgh International Airport.\")\nscreenshot_html(2, \"geocoded_locations\", \"Step 2 - Geocoded locations evidence\", all_lines)\n\nu, s, a = results['university'], results['starbucks'], results['airport']\nfoot_url = f\"http://18.208.187.221:5002/route/v1/driving/{u['lon']},{u['lat']};{s['lon']},{s['lat']}?overview=false&steps=true\"\nfoot = get_json(foot_url)\nif foot.get('code') != 'Ok':\n    raise RuntimeError(f\"Foot route failed: {foot}\")\nfoot_sec = foot['routes'][0]['duration']\nfoot_dist = foot['routes'][0]['distance']\nlog(f\"step 3 action: Request walking segment via OSRM foot service from Univ of Pittsburgh to Starbucks on Craig Street. url={foot_url} duration_seconds={foot_sec} distance_m={foot_dist}\")\nscreenshot_html(3, \"walking_segment\", \"Step 3 - Walking segment evidence\", [\n    f\"From: {u['display_name']}\",\n    f\"To: {s['display_name']}\",\n    \"Mode: walking via OSRM foot service (port 5002)\",\n    f\"Duration seconds: {foot_sec}\",\n    f\"Duration HH:MM:SS: {hhmmss(foot_sec)}\",\n    f\"Distance meters: {foot_dist}\",\n    f\"Route URL: {foot_url}\"\n])\n\ncar_url = f\"http://18.208.187.221:5000/route/v1/driving/{s['lon']},{s['lat']};{a['lon']},{a['lat']}?overview=false&steps=true\"\ncar = get_json(car_url)\nif car.get('code') != 'Ok':\n    raise RuntimeError(f\"Car route failed: {car}\")\ncar_sec = car['routes'][0]['duration']\ncar_dist = car['routes'][0]['distance']",
+            "explanation": "Shows the site's OSRM endpoint shape, demonstrated service ports, success validation, and extraction of typed duration and distance from returned JSON."
+          },
+          {
+            "workflow_id": "task85_t64",
+            "template_id": "64",
+            "code_quote": "route_url = f\"{base_osrm}/{origin['lon']},{origin['lat']};{dest['lon']},{dest['lat']}\"\nroute_resp = requests.get(route_url, params={'overview': 'false'}, headers=headers, timeout=30)\nroute_resp.raise_for_status()\nroute = route_resp.json()\nsecs = int(round(route['routes'][0]['duration']))\nh = secs // 3600\nm = (secs % 3600) // 60\ns = secs % 60\nduration = f\"{h:02d}:{m:02d}:{s:02d}\"\nlog(f\"step 3 action: requested OSRM driving route from origin to destination and obtained duration_seconds={route['routes'][0]['duration']} formatted_duration={duration}\")",
+            "explanation": "Shows a two-point OSRM driving request and extraction of route duration from the returned JSON."
+          },
+          {
+            "workflow_id": "task76_t65",
+            "template_id": "65",
+            "code_quote": "for step_no, order in enumerate(orders, start=5):\n    coordstr = ';'.join(f'{coords[i][0]},{coords[i][1]}' for i in order)\n    url = OSRM_BASE + coordstr + '?overview=false&steps=true'\n    data = fetch_json(url)\n    route = data['routes'][0]\n    duration = route['duration']\n    distance = route['distance']\n    place_order = [PLACES[i] for i in order]\n    results.append({'order': place_order, 'duration': duration, 'distance': distance})\n    log(f'step {step_no} action: queried site OSRM driving route for order {place_order} with duration {duration} seconds and distance {distance} meters')\n    legs = []\n    for i, leg in enumerate(route['legs'], start=1):\n        legs.append(f'Leg {i}: duration={leg[\"duration\"]} sec, distance={leg[\"distance\"]} m')",
+            "explanation": "Shows multi-waypoint OSRM routing and downstream consumption of total duration, total distance, and per-leg records."
+          }
+        ]
+      }
+    }
+  ],
+  "workflow_attribution": [
+    {
+      "workflow_id": "task81_t72",
+      "decision": "CONTRIBUTED",
+      "operation_indices": [
+        0,
+        1
+      ]
+    },
+    {
+      "workflow_id": "task85_t64",
+      "decision": "CONTRIBUTED",
+      "operation_indices": [
+        0,
+        1
+      ]
+    },
+    {
+      "workflow_id": "task76_t65",
+      "decision": "CONTRIBUTED",
+      "operation_indices": [
+        0,
+        1
+      ]
+    }
+  ],
+  "candidate_attribution": [
+    {
+      "candidate_id": "task81_t72::geocode_places_with_nominatim_search",
+      "decision": "ADD",
+      "operation_index": 0
+    },
+    {
+      "candidate_id": "task81_t72::get_osrm_route_summary",
+      "decision": "ADD",
+      "operation_index": 1
+    },
+    {
+      "candidate_id": "task85_t64::geocode_place_search",
+      "decision": "COVERED",
+      "target_id": "map/geocode_places",
+      "reason": "Same primitive capability and compatible core contract as the added site geocoding primitive."
+    },
+    {
+      "candidate_id": "task85_t64::get_driving_route_duration",
+      "decision": "COVERED",
+      "target_id": "map/get_osrm_route",
+      "reason": "Driving duration extraction is covered by the broader OSRM route primitive that returns typed totals including duration."
+    },
+    {
+      "candidate_id": "task76_t65::geocode_place_name",
+      "decision": "COVERED",
+      "target_id": "map/geocode_places",
+      "reason": "Single-result place-name geocoding is a narrower instance of the added geocoding primitive."
+    },
+    {
+      "candidate_id": "task76_t65::get_driving_route",
+      "decision": "COVERED",
+      "target_id": "map/get_osrm_route",
+      "reason": "Same routing capability and core input/output contract as the added OSRM route primitive."
+    }
+  ]
+}
