@@ -104,10 +104,31 @@ task 470 cancelled order 302 on its first execution, then could not re-verify
 because the Cancel control was gone, and burned 32 steps into a timeout without
 writing any answer.
 
-**A separate, larger problem for GitLab:** its mutate tasks expect REST API calls
-(`POST /api/v4/projects`, `201`), while the agent drives the web UI and only holds
-a session cookie. Task 663 failed this way on a single run. This depresses GitLab
-mutate scores independently of anything in this harness.
+## The real difficulty: route mismatch
+
+Every zero we scored was the agent's, not the harness's -- `warec/diagnose_har.py`
+attributes each one:
+
+| task | verdict | what happened |
+|---|---|---|
+| 406 upvote | `WRONG_TARGET` | POSTed `/sv/134852`, expected `/sv/119517` |
+| 460 reduce price | `WRONG_SHAPE` | posted `price=38.25` correctly, to a URL without the `back/edit` suffix the regex anchors on |
+| 744 create project | `WRONG_SHAPE` | created it through the web form (`POST /projects` 302); expected `POST /api/v4/projects` 201 |
+| 663 create issue | `WRONG_ROUTE` | zero `/api/v4/` calls in the whole run -- pure web form |
+
+The last three are one problem seen from different sides: **the evaluator anchors
+on the exact request the site's own UI produces, and the agent decides for itself
+whether to drive the UI or construct the request directly.** Note the mismatch
+points both ways -- 460 was too API-ish, 663 and 744 too UI-ish.
+
+Retrieve tasks do not have this failure mode at all: they are judged on the answer,
+not on how it was obtained.
+
+**GitLab is testable, contrary to what the 401s first suggested.** Session cookie
+plus `X-CSRF-Token` plus a same-origin `Referer` authenticates `/api/v4/` fine --
+task 744's own trace shows three `401`s without the Referer and then `201`s with
+it. No personal access token needed. What is unreliable is which route the agent
+picks for a given action, not whether the required route is reachable.
 
 ## Do not score the agent's self-report
 
