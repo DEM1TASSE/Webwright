@@ -59,7 +59,11 @@ def validate(split, sources, workflow_library, workflow_events, primitive_librar
                 errors.append(f"missing primitive snapshot stage: {required}")
         index = load(index_path)
         for primitive in index.get("primitives") or []:
-            for workflow_id in primitive.get("source_workflows") or []:
+            workflow_ids = [item.get("workflow_id", "")
+                            for item in primitive.get("source_evidence") or []]
+            if not workflow_ids:
+                errors.append(f"primitive lacks source evidence: {primitive.get('primitive_id')}")
+            for workflow_id in workflow_ids:
                 if workflow_id.startswith("task"):
                     try:
                         task_id = int(workflow_id.split("_", 1)[0][4:])
