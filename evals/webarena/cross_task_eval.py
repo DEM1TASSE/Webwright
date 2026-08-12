@@ -318,6 +318,35 @@ def configure_router_model(model_config):
     configure_llm(model)
 
 
+def retrieve_direct_primitives(task, library, *, site, max_primitives=5, llm_fn=None):
+    """Metadata-first primitive routing without a scratch-first plan."""
+    from webwright.skill_factory.audited_primitive_retrieve import retrieve_audited_primitives
+    if llm_fn is None:
+        from webwright.skill_factory.llm import llm_json as llm_fn
+
+    def decide(current_task, candidates):
+        return llm_fn(
+            "Route site primitives for DIRECT pre-planning injection using metadata only. "
+            "Do not require or mention a scratch plan. USE only when selected primitives cover "
+            "the complete website-specific acquisition needed by the task. ADAPT when a primitive "
+            "provides a necessary, nontrivial acquisition or stable site-parsing sub-operation "
+            "whose typed output is directly usable while the agent supplies remaining discovery, "
+            "filtering, aggregation, ranking, semantic judgment, or formatting. SKIP when the "
+            "primitive is merely related, needs unavailable inputs, supplies only a downstream "
+            "operation without the task's core candidate set, duplicates work the agent must still "
+            "perform, or would anchor the agent on an incomplete strategy. Never infer capabilities "
+            "absent from metadata. Select at most five. Return JSON "
+            "{\"decision\":\"use|adapt|skip\",\"primitive_ids\":[],\"reason\":\"...\","
+            "\"remaining_gap\":[]}. No patches field is needed in direct mode.",
+            json.dumps({"task": current_task, "candidates": candidates}, ensure_ascii=False),
+        )
+
+    return retrieve_audited_primitives(
+        task, library, site=site, max_primitives=max_primitives,
+        decide_fn=decide, scratch_plan=None,
+    )
+
+
 def prepare_workflow_hint(task, library, *, forced_skill_id=None):
     """Retrieve and fully inject a standalone workflow without primitive material."""
     root = Path(library).resolve()
@@ -445,10 +474,12 @@ def run_one(args, split, dataset, config):
             retrieve_audited_primitives,
             write_audited_retrieval,
         )
-        retrieval = retrieve_audited_primitives(
+        retrieval = (retrieve_audited_primitives(
             task["intent"], args.candidate_library, site=site, max_primitives=5,
             scratch_plan=scratch_plan,
-        )
+        ) if args.scratch_first else retrieve_direct_primitives(
+            task["intent"], args.candidate_library, site=site, max_primitives=5,
+        ))
         prompt = render_audited_primitive_hint(
             retrieval, include_code=not args.primitive_metadata_only,
         ) + "\n" + prompt

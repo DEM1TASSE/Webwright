@@ -26,6 +26,15 @@ builder now bypasses grouping and feeds each official `intent_template` plus its
 required to continue, but this is evidence that inferred grouping should not override known
 dataset template identities.
 
+## Primitive-direct router correction
+
+The first retrieval-only audit revealed that the shared audited retriever still used its
+scratch-first decision prompt even when no scratch plan was supplied. This caused false skips with
+the explicit reason that a scratch plan was missing, contradicting the frozen primitive-direct arm.
+Those audit files are retained under `reuse_split_v1_retrieval_audit_invalid_scratch_router/` and
+excluded. The formal direct arm now has a metadata-only `use/adapt/skip` prompt that explicitly does
+not require a scratch plan; the scratch-first code path remains unchanged and is not used here.
+
 The workflow freeze uses commit `590beea`, the last pre-cross-template routing implementation. Its
 distiller produces a complete parameterized standalone workflow and may create private helper
 functions inside that file. Those helpers are not the separately retrieved v4 site primitive

@@ -141,6 +141,31 @@ def test_prepare_workflow_hint_forced_exact_skill(tmp_path):
     assert "def solve(item)" in out["hint"]
 
 
+def test_direct_primitive_router_does_not_require_scratch_plan(tmp_path):
+    root = tmp_path / "map" / "final_candidate"
+    root.mkdir(parents=True)
+    (root / "index.json").write_text(json.dumps({
+        "site": "map", "status": "candidate", "primitives": [{
+            "primitive_id": "map/search", "method_code": "def search(): pass",
+            "feature": "search", "method": "search", "capability": "search places",
+        }],
+    }))
+    seen = {}
+
+    def fake_llm(system, user):
+        seen.update(system=system, user=user)
+        return {"decision": "adapt", "primitive_ids": ["map/search"],
+                "reason": "useful acquisition", "remaining_gap": ["filter"]}
+
+    out = E.retrieve_direct_primitives(
+        "find a place", tmp_path, site="map", llm_fn=fake_llm,
+    )
+    assert out.decision == "adapt"
+    assert [item["primitive_id"] for item in out.primitives] == ["map/search"]
+    assert "Do not require or mention a scratch plan" in seen["system"]
+    assert "scratch_plan" not in seen["user"]
+
+
 def test_reads_valid_primitive_execution_events(tmp_path):
     (tmp_path / "primitive_execution_trace.jsonl").write_text("\n".join([
         json.dumps({"primitive_id": "gitlab/commits/list", "scratch_step_id": "S1",

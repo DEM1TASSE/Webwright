@@ -10,7 +10,9 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from cross_task_eval import configure_router_model, prepare_workflow_hint  # noqa: E402
+from cross_task_eval import (  # noqa: E402
+    configure_router_model, prepare_workflow_hint, retrieve_direct_primitives,
+)
 from run_reuse_eval import build_jobs, workflow_map  # noqa: E402
 
 
@@ -58,7 +60,6 @@ def main():
             "reason": "exact template skill" if skill_id else "no three-gold workflow skill",
         })
 
-    from webwright.skill_factory.audited_primitive_retrieve import retrieve_audited_primitives
     for site, template_id, task_id in build_jobs(split, "t2"):
         if site not in selected_sites:
             continue
@@ -76,7 +77,7 @@ def main():
                          "template_id": template_id, "task_id": task_id,
                          "decision": "error", "error": str(error)})
         try:
-            primitive = retrieve_audited_primitives(
+            primitive = retrieve_direct_primitives(
                 task["intent"], args.primitive_library, site=site, max_primitives=5,
             )
             rows.append({
