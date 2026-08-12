@@ -100,11 +100,14 @@ def build(tasks, seed, prev_used, test_per_site, reserve_deep):
         # prefers templates earlier splits never touched.
         deep = sorted((k for k, v in tpls.items() if len(v) >= MAX_BUILD + 1),
                       key=lambda k: -len(tpls[k]))
-        reserved = set(deep[:reserve_deep])
+        # never let the reserve swallow a whole site -- reddit has only 4 retrieve
+        # templates, and reserving 8 left it with nothing to test on
+        keep = min(reserve_deep, max(1, len(tpls) // 2))
+        reserved = set(deep[:keep])
         cand = [k for k in tpls if k not in reserved]
         fresh = stable([k for k in cand if k not in prev_used], seed, lambda k: f"{site}:te:{k}")
         seen = stable([k for k in cand if k in prev_used], seed, lambda k: f"{site}:te:{k}")
-        test_tpls = (fresh + seen)[:min(test_per_site, max(0, len(tpls) - reserve_deep))]
+        test_tpls = (fresh + seen)[:min(test_per_site, max(0, len(tpls) - keep))]
         train_tpls = [k for k in sorted(tpls) if k not in test_tpls]
 
         train_rows = []
