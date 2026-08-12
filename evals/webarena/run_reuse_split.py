@@ -29,12 +29,20 @@ def build_jobs(split):
     ]
 
 
-def site_lanes(jobs):
-    """Run tasks sequentially within a site while allowing sites to run in parallel."""
-    lanes = {}
+def site_lanes(jobs, per_site_workers=1):
+    """Create sequential lanes with bounded concurrency inside each site."""
+    if per_site_workers < 1:
+        raise ValueError("per_site_workers must be positive")
+    grouped = {}
     for job in jobs:
-        lanes.setdefault(job[0], []).append(job)
-    return list(lanes.values())
+        grouped.setdefault(job[0], []).append(job)
+    lanes = []
+    for site_jobs in grouped.values():
+        site = [[] for _ in range(min(per_site_workers, len(site_jobs)))]
+        for index, job in enumerate(site_jobs):
+            site[index % len(site)].append(job)
+        lanes.extend(site)
+    return lanes
 
 
 def main():
@@ -47,6 +55,7 @@ def main():
     ap.add_argument("--model-config", required=True)
     ap.add_argument("--eval-python", required=True)
     ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument("--per-site-workers", type=int, default=1)
     ap.add_argument("--timeout", type=int, default=900)
     ap.add_argument("--task-id", type=int, action="append")
     args = ap.parse_args()
@@ -134,7 +143,8 @@ def main():
 
     failures = 0
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as pool:
-        futures = [pool.submit(run_lane, lane) for lane in site_lanes(jobs)]
+        futures = [pool.submit(run_lane, lane)
+                   for lane in site_lanes(jobs, args.per_site_workers)]
         for future in concurrent.futures.as_completed(futures):
             for row in future.result():
                 failures += row["status"] == "process_error"

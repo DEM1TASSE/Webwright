@@ -27,6 +27,14 @@ def test_site_lanes_are_sequential_and_site_isolated():
     assert lanes == [[("gitlab", 1), ("gitlab", 3)], [("map", 2), ("map", 4)]]
 
 
+def test_site_lanes_bound_intrasite_concurrency():
+    lanes = MODULE.site_lanes([
+        ("gitlab", 1), ("gitlab", 2), ("gitlab", 3), ("gitlab", 4),
+    ], per_site_workers=2)
+    assert lanes == [[("gitlab", 1), ("gitlab", 3)],
+                     [("gitlab", 2), ("gitlab", 4)]]
+
+
 def test_frozen_split_has_no_task_or_template_leakage():
     split = json.loads((SCRIPT.parent / "reuse_split_v1.json").read_text())
     build, t1, t2 = set(), set(), set()
