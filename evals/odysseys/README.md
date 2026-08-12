@@ -76,6 +76,11 @@ The treatment writes one retrieval record per segment plus a task-level `site_ro
 Missing site libraries and answer-only segments deterministically skip; they never fall back to a
 primitive from another site.
 
+Before invoking the official rubric judge, use `export_rubric_run.py` to select the final run. The
+exporter requires a `self_reflect_result.json` with `predicted_label=1` by default and refuses to
+silently export a partial run after a timeout, gateway failure, or interrupted agent. The
+`--allow-incomplete` option is for debugging only and its output is not a valid benchmark result.
+
 ## Experimental boundary
 
 Freeze source/held-out task IDs and template IDs before building. Held-out task trajectories,

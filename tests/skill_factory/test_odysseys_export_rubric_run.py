@@ -2,6 +2,8 @@ import importlib.util
 import json
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).parents[2]
 SPEC = importlib.util.spec_from_file_location(
@@ -23,3 +25,19 @@ def test_export_accepts_arm_suffix_and_prefers_successful_run(tmp_path):
     result = MODULE.export("t", tmp_path / "runs", tmp_path / "out")
     assert result["final_run"].endswith("run_001")
     assert (tmp_path / "out/t/result.txt").read_text() == "1.0\n"
+
+
+def test_export_rejects_incomplete_run_by_default(tmp_path):
+    workspace = tmp_path / "runs" / "t_primitive_stamp"
+    run = workspace / "final_runs" / "run_001"
+    run.mkdir(parents=True)
+    (workspace / "task.json").write_text(json.dumps({"task_id": "t_primitive"}))
+    (run / "final_script_log.txt").write_text("partial")
+
+    with pytest.raises(ValueError, match="no self-reflection-passing final run"):
+        MODULE.export("t", tmp_path / "runs", tmp_path / "out")
+
+    result = MODULE.export(
+        "t", tmp_path / "runs", tmp_path / "debug", allow_incomplete=True,
+    )
+    assert result["final_run"].endswith("run_001")

@@ -28,7 +28,7 @@ def latest_workspace(root: Path, task_id: str) -> Path:
     return max(candidates, key=lambda path: (path.stat().st_mtime_ns, path.name))
 
 
-def pick_final_run(workspace: Path) -> Path:
+def pick_final_run(workspace: Path, *, allow_incomplete: bool = False) -> Path:
     candidates = [path for path in (workspace / "final_runs").glob("run_*")
                   if (path / "final_script_log.txt").is_file()]
     successful = []
@@ -39,14 +39,21 @@ def pick_final_run(workspace: Path) -> Path:
                 successful.append(path)
         except (OSError, ValueError):
             pass
+    if successful:
+        return max(successful, key=lambda path: (path.stat().st_mtime_ns, path.name))
     if not candidates:
-        raise ValueError(f"no complete final run under {workspace}")
-    return max(successful or candidates, key=lambda path: (path.stat().st_mtime_ns, path.name))
+        raise ValueError(f"no executed final run under {workspace}")
+    if not allow_incomplete:
+        raise ValueError(
+            f"no self-reflection-passing final run under {workspace}; "
+            "refusing to export an incomplete trajectory"
+        )
+    return max(candidates, key=lambda path: (path.stat().st_mtime_ns, path.name))
 
 
-def export(task_id: str, runs: Path, output: Path) -> dict:
+def export(task_id: str, runs: Path, output: Path, *, allow_incomplete: bool = False) -> dict:
     workspace = latest_workspace(runs, task_id)
-    final_run = pick_final_run(workspace)
+    final_run = pick_final_run(workspace, allow_incomplete=allow_incomplete)
     destination = output / task_id
     destination.mkdir(parents=True, exist_ok=True)
     shutil.copy2(final_run / "final_script_log.txt", destination / "final_script_log.txt")
@@ -77,8 +84,14 @@ def main(argv=None):
     parser.add_argument("task_id")
     parser.add_argument("--runs", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument(
+        "--allow-incomplete", action="store_true",
+        help="Debug only: export the latest run even when self-reflection did not pass",
+    )
     args = parser.parse_args(argv)
-    print(json.dumps(export(args.task_id, args.runs, args.output), indent=2))
+    print(json.dumps(export(
+        args.task_id, args.runs, args.output, allow_incomplete=args.allow_incomplete,
+    ), indent=2))
     return 0
 
 
