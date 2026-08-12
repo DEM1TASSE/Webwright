@@ -12,6 +12,20 @@ Batch: {{BATCH_SIZE}} workflow(s) — {{WORKFLOW_IDS}}
 `pool` is the current candidate state (empty on the first batch). You are producing operations
 against it. Do not classify features and do not generate a package class — that happens later.
 
+**Read the pool before you add anything.** For each capability you are about to add, look for a
+primitive already in the pool that acquires the same thing. There will be one more often than
+you expect: earlier batches saw different workflows, but the same site, and the same pages get
+visited by many tasks.
+
+- it already acquires this, unchanged → `COVERED`, naming it in `target_id`
+- it acquires this but your evidence shows the operation is broader — another parameter, another
+  page of the same collection → `UPDATE` that primitive, returning the whole replacement
+- nothing in the pool acquires it → `ADD`
+
+Two primitives that both list projects from the dashboard, differing only in which fields they
+happen to return, are one capability described twice. The pool is there so that does not happen;
+adding a near-duplicate is the failure this check exists to prevent.
+
 ## Your job
 
 Turn the extracted candidates into concrete, runnable primitive methods with real code, and say

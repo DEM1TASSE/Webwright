@@ -13,7 +13,8 @@ Two episode levels, matching where the pipeline's own context boundary falls:
 
     batch  — extract every workflow, then build primitives that survive the judge. Sees this
              batch's source code (~10k tokens at the current batch size) and the pool so far.
-    site   — consolidate the accumulated pool. Sees the pool, not the raw workflows.
+    site   — one episode over the accumulated pool. With a single batch it only assigns
+             feature classes; with several it also repairs what batching broke.
 
 Resumable: an already-committed batch and an already-rendered site are skipped on re-run.
 """
@@ -237,25 +238,32 @@ def run_batch(runner: AgentRunner, *, site: str, batch: list[dict], number: int,
 
 
 def run_site(runner: AgentRunner, *, site: str, all_workflows: dict, library: Path,
-             runs: Path, max_attempts: int) -> None:
+             runs: Path, max_attempts: int, batch_count: int = 1) -> None:
     if (library / "final_candidate" / "index.json").exists():
         print("  [site] cached")
         return
 
     pool = ctx.load_pool(library)
     context = {"mode": "site", "site": site, "workflows": all_workflows}
+    single_batch = batch_count <= 1
+    rules_doc = "classify" if single_batch else "consolidate"
+    procedure = "procedure_classify" if single_batch else "procedure_consolidate"
     errors: list[str] = []
     for attempt in range(1, max_attempts + 1):
         workspace = _fresh_workspace(runs, "site", f"attempt_{attempt}")
         ctx.dump(workspace / "in" / "context.json", context)
         _stage_sources(workspace, list(all_workflows.values()))
         _stage_method_code(workspace, list(pool.values()))
-        _stage_rules(workspace, ["consolidate"], site=site)
+        # A single-batch pool has nothing to repair: one episode saw every workflow, so the
+        # only decision left is which feature each primitive belongs to. A pool assembled from
+        # several batches does need repair -- measured on a three-batch build, it carries
+        # duplicates, mixed operations and pure-navigation entries that no batch could see.
+        _stage_rules(workspace, [rules_doc], site=site)
         if errors:
             _feedback(workspace, errors)
         errors, calls = _run_episode(
             runner, level="site", workspace=workspace,
-            task=_prompt("procedure_site", SITE=site, POOL_SIZE=len(pool)),
+            task=_prompt(procedure, SITE=site, POOL_SIZE=len(pool), BATCH_COUNT=batch_count),
             commit=lambda extra: render_final(library, site, context, extra["proposal"]))
         print(f"  [site] attempt {attempt}: "
               f"{'rendered' if not errors else f'{len(errors)} error(s)'} ({calls} model calls)")
@@ -285,7 +293,7 @@ def build_site(runner_factory, *, site: str, workflows: list[dict], library: Pat
                   max_attempts=max_attempts)
     _episode_env(library, len(batches), model_config)
     run_site(runner_factory(library, len(batches)), site=site, all_workflows=all_workflows,
-             library=library, runs=runs, max_attempts=max_attempts)
+             library=library, runs=runs, max_attempts=max_attempts, batch_count=len(batches))
 
     index = ctx.load(library / "final_candidate" / "index.json")
     return {"site": site, "status": index["status"], "batch_count": len(batches),
