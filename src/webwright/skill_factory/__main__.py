@@ -7,6 +7,7 @@ CMDS = {
     "learn": "webwright.skill_factory.learn",
     "update": "webwright.skill_factory.update",
     "route": "webwright.skill_factory.route",
+    "webvoyager-eval": "webwright.skill_factory.webvoyager_eval",
 }
 
 def main() -> int:
@@ -14,7 +15,7 @@ def main() -> int:
         import importlib
         mod = importlib.import_module(CMDS[sys.argv[1]])
         return mod.main(sys.argv[2:])
-    print("usage: python -m webwright.skill_factory <init|build|learn|update|route> …\n"
+    print("usage: python -m webwright.skill_factory <init|build|learn|update|route|webvoyager-eval> …\n"
           "  init    draft a skill.yaml skeleton from a one-line need (you fill the values)\n"
           "  build   solve a spec's instances, then learn — for a task you haven't solved yet\n"
           "  learn   distill a folder of finished runs into skills (no manifest needed)\n"
