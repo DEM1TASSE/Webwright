@@ -53,6 +53,7 @@ def main():
     ap.add_argument("--work-root", required=True)
     ap.add_argument("--model-config", required=True)
     ap.add_argument("--verify", choices=["off", "shape", "strict"], default="strict")
+    ap.add_argument("--min-gold-sources", type=int, default=3)
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
@@ -72,8 +73,8 @@ def main():
     for site, template_id, records in eligible_templates(split, manifests):
         site_library = library / site
         event = {"site": site, "template_id": int(template_id), "gold_sources": len(records)}
-        if not records:
-            event["status"] = "no_gold_source"
+        if len(records) < args.min_gold_sources:
+            event["status"] = "insufficient_gold_sources"
             events.append(event)
             continue
         source_dir = work_root / site / f"template_{template_id}" / "runs"
@@ -121,7 +122,9 @@ def main():
         "frozen_commit": commit,
         "templates": len(events),
         "built": sum(x["status"] == "built" for x in events),
-        "no_gold_source": sum(x["status"] == "no_gold_source" for x in events),
+        "insufficient_gold_sources": sum(
+            x["status"] == "insufficient_gold_sources" for x in events
+        ),
         "failed": sum(x["status"] == "failed" for x in events),
     }
     print(json.dumps(summary, ensure_ascii=False))
