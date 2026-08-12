@@ -74,6 +74,88 @@ if _DIR:
     except Exception:
         pass
 
+    # ---- 1b. urllib3 / requests -------------------------------------------
+    # urllib3 v2 overrides HTTPConnection.request AND getresponse, so the
+    # http.client patch above never fires for `requests`. One hook on the pool
+    # covers requests, urllib3 direct, and anything else built on it.
+    def _patch_urllib3(mod):
+        cls = getattr(getattr(mod, "connectionpool", None), "HTTPConnectionPool", None)
+        if cls is None or getattr(cls.urlopen, "_wa_patched", False):
+            return
+        orig = cls.urlopen
+
+        def urlopen(self, method, url, body=None, headers=None, **kw):
+            resp = orig(self, method, url, body=body, headers=headers, **kw)
+            try:
+                full = url if str(url).startswith("http") else f"{self.scheme}://{self.host}:{self.port}{url}"
+                if isinstance(body, (bytes, bytearray)):
+                    body_s = body.decode("utf-8", "replace")
+                elif body is None or isinstance(body, str):
+                    body_s = body
+                else:
+                    body_s = "<stream>"
+                _emit({"source": "urllib3", "method": method, "url": full,
+                       "post_data": body_s if method not in ("GET", "HEAD") else None,
+                       "req_headers": dict(headers or {}),
+                       "status": getattr(resp, "status", None),
+                       "resp_headers": dict(getattr(resp, "headers", {}) or {})})
+            except Exception:
+                pass
+            return resp
+
+        urlopen._wa_patched = True
+        try:
+            cls.urlopen = urlopen
+        except Exception:
+            pass
+
+    # ---- 1c. httpx --------------------------------------------------------
+    def _patch_httpx(mod):
+        for cls_name in ("Client", "AsyncClient"):
+            cls = getattr(mod, cls_name, None)
+            if cls is None or getattr(getattr(cls, "send", None), "_wa_patched", False):
+                continue
+            orig = cls.send
+            is_async = cls_name.startswith("Async")
+
+            def make(orig=orig, is_async=is_async):
+                def record(request, resp):
+                    body = None
+                    try:
+                        raw = request.read() if hasattr(request, "read") else None
+                        body = raw.decode("utf-8", "replace") if raw else None
+                    except Exception:
+                        pass
+                    _emit({"source": "httpx", "method": request.method,
+                           "url": str(request.url), "post_data": body,
+                           "req_headers": dict(request.headers or {}),
+                           "status": getattr(resp, "status_code", None),
+                           "resp_headers": dict(getattr(resp, "headers", {}) or {})})
+
+                if is_async:
+                    async def wrapper(self, request, **kw):
+                        resp = await orig(self, request, **kw)
+                        try:
+                            record(request, resp)
+                        except Exception:
+                            pass
+                        return resp
+                else:
+                    def wrapper(self, request, **kw):
+                        resp = orig(self, request, **kw)
+                        try:
+                            record(request, resp)
+                        except Exception:
+                            pass
+                        return resp
+                wrapper._wa_patched = True
+                return wrapper
+
+            try:
+                cls.send = make()
+            except Exception:
+                pass
+
     # ---- 2. Playwright: attach listeners to every context that gets created ----
     def _wire_context(ctx, is_async):
         def on_request_finished(req):
@@ -191,12 +273,29 @@ if _DIR:
         import builtins
         _orig_import = builtins.__import__
 
+        def _apply(name):
+            import sys as _sys
+            if name.startswith("playwright"):
+                _patch_playwright()
+            elif name.split(".")[0] in ("urllib3", "requests"):
+                m = _sys.modules.get("urllib3")
+                if m is not None:
+                    try:                       # connectionpool may be lazy
+                        _orig_import("urllib3.connectionpool")
+                    except Exception:
+                        pass
+                    _patch_urllib3(m)
+            elif name.split(".")[0] == "httpx":
+                m = _sys.modules.get("httpx")
+                if m is not None:
+                    _patch_httpx(m)
+
         def _import(name, *a, **kw):
             mod = _orig_import(name, *a, **kw)
-            if name.startswith("playwright") and not _busy[0]:
+            if not _busy[0]:
                 _busy[0] = True
                 try:
-                    _patch_playwright()
+                    _apply(name)
                 except Exception:
                     pass
                 finally:
@@ -204,5 +303,10 @@ if _DIR:
             return mod
 
         builtins.__import__ = _import
+        for _already in ("urllib3", "httpx"):   # imported before us?
+            try:
+                _apply(_already)
+            except Exception:
+                pass
     except Exception:
         pass

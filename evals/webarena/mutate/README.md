@@ -17,9 +17,13 @@ browser. Across the tasks we ran it reached the site three different ways:
 
 | path | seen in | caught by |
 |---|---|---|
-| `urllib` / `requests` | wishlist add, upvote | `http.client` patch |
+| `urllib` | wishlist add, upvote | `http.client` patch |
+| **`requests`** | create project, create issue | **`urllib3` pool patch** |
 | Playwright page navigation, form submit | price edit | context `response` event |
 | **`page.request.post()`** (APIRequestContext) | wishlist add via Magento `data-post` | **`pw.api` patch** |
+
+`httpx` is patched too, for completeness -- Webwright itself uses it, though so
+far only for the model gateway.
 
 Playwright's own `record_har_path` sees only the middle row. The third row is the
 subtle one: `page.request.*` does **not** emit context `request`/`response`
@@ -153,6 +157,8 @@ none of them touch a WebArena host:
 WA_REC_DIR=/tmp/rec PYTHONPATH=warec python warec/tests/test_http_client.py
 WA_REC_DIR=/tmp/rec PYTHONPATH=warec python warec/tests/test_playwright_context.py
 WA_REC_DIR=/tmp/rec PYTHONPATH=warec python warec/tests/test_api_request_context.py
+WA_REC_DIR=/tmp/rec PYTHONPATH=warec python warec/tests/test_urllib3_requests.py
 ```
 
-`test_api_request_context.py` is the regression test for the blind spot above.
+`test_api_request_context.py` and `test_urllib3_requests.py` are the regression
+tests for the two silent blind spots above.
