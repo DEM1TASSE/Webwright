@@ -19,6 +19,7 @@ class AuditedRetrieval:
     remaining_gap: list[str] = field(default_factory=list)
     scratch_plan: dict | None = None
     patches: list[dict] = field(default_factory=list)
+    gate: dict = field(default_factory=dict)
 
     @property
     def sources(self):
@@ -129,8 +130,36 @@ def retrieve_audited_primitives(
                 "on primitive failure; it is not permission to perform both strategies every time. "
                 "Prefer SKIP when a primitive only adds an extra probe without avoiding meaningful "
                 "scratch work. "
+                "Before deciding, identify the earliest unresolved website-data acquisition "
+                "boundary in the scratch plan. This may be candidate-set discovery, or retrieval "
+                "from a single entity already supplied by the task. For ADAPT, return a gate "
+                "object. First state whether the task requires discovering or enumerating a "
+                "candidate set before filtering, ranking, comparison, or selection. If it does, "
+                "task_candidate_set_required must be true. candidate_set_acquisition_provided "
+                "may be true only when selected primitives emit candidates of the target type; "
+                "geocoding only the origin of a nearby-restaurant task does not provide restaurant "
+                "candidates. candidate_set_completion_reachable may be true when the primitive is "
+                "already complete OR when its output exposes a bounded continuation such as "
+                "pagination that scratch can finish without reacquiring or discarding the emitted "
+                "candidates. In that partial-but-useful case, core_acquisition_covered should be "
+                "true because the primitive supplies the target candidates and replaces a bounded "
+                "part of their acquisition; record incomplete continuation separately in "
+                "candidate_set_completion_reachable and remaining_gap. Then provide four booleans: "
+                "core_acquisition_covered (the selected primitives "
+                "cover that boundary), inputs_reachable (all primitive inputs exist before the "
+                "patch), avoids_required_scratch_work (success removes concrete required scratch "
+                "work), and original_acquisition_still_unconditional (the original acquisition "
+                "must still run even after success). ADAPT is valid only for true, true, true, "
+                "false respectively. Do not set core_acquisition_covered merely because a "
+                "primitive helps after a missing candidate set has been found. "
                 "Return JSON {\"decision\":\"use|adapt|skip\",\"primitive_ids\":[],"
-                "\"reason\":\"...\",\"remaining_gap\":[],\"patches\":[{"
+                "\"reason\":\"...\",\"remaining_gap\":[],\"gate\":{"
+                "\"core_acquisition\":\"...\",\"task_candidate_set_required\":false,"
+                "\"candidate_set_acquisition_provided\":false,"
+                "\"candidate_set_completion_reachable\":false,"
+                "\"core_acquisition_covered\":false,"
+                "\"inputs_reachable\":false,\"avoids_required_scratch_work\":false,"
+                "\"original_acquisition_still_unconditional\":true},\"patches\":[{"
                 "\"scratch_step_id\":\"S1\",\"primitive_id\":\"...\","
                 "\"replaces\":[],\"preserves\":[],\"acceptance_checks\":[],"
                 "\"avoids_when_accepted\":[\"specific original work not otherwise required\"],"
@@ -156,6 +185,29 @@ def retrieve_audited_primitives(
         decision = "skip"
     if decision == "skip":
         selected = []
+    gate_raw = raw.get("gate") if isinstance(raw.get("gate"), dict) else {}
+    gate = {
+        "core_acquisition": str(gate_raw.get("core_acquisition") or ""),
+        "task_candidate_set_required": gate_raw.get("task_candidate_set_required") is True,
+        "candidate_set_acquisition_provided":
+            gate_raw.get("candidate_set_acquisition_provided") is True,
+        "candidate_set_completion_reachable":
+            gate_raw.get("candidate_set_completion_reachable") is True,
+        "core_acquisition_covered": gate_raw.get("core_acquisition_covered") is True,
+        "inputs_reachable": gate_raw.get("inputs_reachable") is True,
+        "avoids_required_scratch_work": gate_raw.get("avoids_required_scratch_work") is True,
+        "original_acquisition_still_unconditional":
+            gate_raw.get("original_acquisition_still_unconditional") is True,
+    }
+    gate_passed = (
+        (not gate["task_candidate_set_required"] or (
+            gate["candidate_set_acquisition_provided"]
+        ))
+        and gate["core_acquisition_covered"]
+        and gate["inputs_reachable"]
+        and gate["avoids_required_scratch_work"]
+        and not gate["original_acquisition_still_unconditional"]
+    )
     step_ids = {str(x.get("id")) for x in (scratch_plan or {}).get("steps", [])}
     selected_ids = {x["primitive_id"] for x in selected}
     patches = []
@@ -182,7 +234,7 @@ def retrieve_audited_primitives(
             "avoids_when_accepted": avoids,
             "fallback": str(patch.get("fallback") or "Run the original scratch step"),
         })
-    if scratch_plan and decision == "adapt" and not patches:
+    if scratch_plan and decision == "adapt" and (not patches or not gate_passed):
         decision, selected = "skip", []
     elif scratch_plan and decision == "adapt":
         patched_ids = {x["primitive_id"] for x in patches}
@@ -193,7 +245,7 @@ def retrieve_audited_primitives(
         site=site, decision=decision, primitives=selected,
         reason=str(raw.get("reason") or ""),
         remaining_gap=[str(x) for x in raw.get("remaining_gap") or [] if isinstance(x, str)],
-        scratch_plan=scratch_plan, patches=patches,
+        scratch_plan=scratch_plan, patches=patches, gate=gate,
     )
 
 
@@ -270,5 +322,5 @@ def write_audited_retrieval(path: str | Path, result: AuditedRetrieval, *, task:
         "task": task, "site": result.site, "decision": result.decision,
         "retrieved": result.sources, "reason": result.reason,
         "remaining_gap": result.remaining_gap, "scratch_plan": result.scratch_plan,
-        "patches": result.patches,
+        "gate": result.gate, "patches": result.patches,
     }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

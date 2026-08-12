@@ -63,6 +63,19 @@ def _plan():
     }
 
 
+def _passing_gate():
+    return {
+        "core_acquisition": "acquire commit records",
+        "task_candidate_set_required": True,
+        "candidate_set_acquisition_provided": True,
+        "candidate_set_completion_reachable": True,
+        "core_acquisition_covered": True,
+        "inputs_reachable": True,
+        "avoids_required_scratch_work": True,
+        "original_acquisition_still_unconditional": False,
+    }
+
+
 def test_scratch_plan_is_created_without_library_assumptions():
     plan = draft_scratch_plan(
         "top commits", site="gitlab",
@@ -83,6 +96,7 @@ def test_adapt_requires_a_valid_local_patch(tmp_path):
         decide_fn=lambda *_: {
             "decision": "adapt", "primitive_ids": ["gitlab/commits/list_commits"],
             "reason": "related but no replaceable step", "patches": [],
+            "gate": _passing_gate(),
         },
     )
     assert result.decision == "skip"
@@ -97,6 +111,7 @@ def test_context_only_patch_is_rejected(tmp_path):
         "top commits", _library(tmp_path), site="gitlab", scratch_plan=_plan(),
         decide_fn=lambda *_: {
             "decision": "adapt", "primitive_ids": ["gitlab/commits/list_commits"],
+            "gate": _passing_gate(),
             "patches": [{"scratch_step_id": "S1",
                          "primitive_id": "gitlab/commits/list_commits",
                          "replaces": [], "preserves": ["original S1"],
@@ -112,6 +127,7 @@ def test_step_id_only_patch_is_rejected(tmp_path):
         "top commits", _library(tmp_path), site="gitlab", scratch_plan=_plan(),
         decide_fn=lambda *_: {
             "decision": "adapt", "primitive_ids": ["gitlab/commits/list_commits"],
+            "gate": _passing_gate(),
             "patches": [{"scratch_step_id": "S1",
                          "primitive_id": "gitlab/commits/list_commits",
                          "replaces": ["S1"], "acceptance_checks": ["records complete"]}],
@@ -126,6 +142,7 @@ def test_adapt_is_rendered_as_local_patch_with_fallback(tmp_path):
         decide_fn=lambda *_: {
             "decision": "adapt", "primitive_ids": ["gitlab/commits/list_commits"],
             "reason": "replaces acquisition only", "remaining_gap": ["ranking"],
+            "gate": _passing_gate(),
             "patches": [{
                 "scratch_step_id": "S1", "primitive_id": "gitlab/commits/list_commits",
                 "replaces": ["commit acquisition"], "preserves": ["S2 ranking"],
@@ -150,6 +167,7 @@ def test_metadata_only_ablation_renders_contract_without_code(tmp_path):
         "top commits", _library(tmp_path), site="gitlab", scratch_plan=_plan(),
         decide_fn=lambda *_: {
             "decision": "adapt", "primitive_ids": ["gitlab/commits/list_commits"],
+            "gate": _passing_gate(),
             "patches": [{
                 "scratch_step_id": "S1", "primitive_id": "gitlab/commits/list_commits",
                 "replaces": ["commit acquisition"],
@@ -179,3 +197,83 @@ def test_patch_without_avoidable_scratch_work_is_rejected(tmp_path):
     )
     assert result.decision == "skip"
     assert result.patches == []
+
+
+def test_adapt_is_rejected_when_core_acquisition_is_not_covered(tmp_path):
+    gate = _passing_gate()
+    gate["core_acquisition_covered"] = False
+    result = retrieve_audited_primitives(
+        "top commits", _library(tmp_path), site="gitlab", scratch_plan=_plan(),
+        decide_fn=lambda *_: {
+            "decision": "adapt", "primitive_ids": ["gitlab/commits/list_commits"],
+            "gate": gate,
+            "patches": [{
+                "scratch_step_id": "S1", "primitive_id": "gitlab/commits/list_commits",
+                "replaces": ["commit acquisition"],
+                "acceptance_checks": ["records complete"],
+                "avoids_when_accepted": ["manual commit-page traversal"],
+            }],
+        },
+    )
+    assert result.decision == "skip"
+    assert result.primitives == []
+    assert result.gate["core_acquisition_covered"] is False
+
+
+def test_adapt_is_rejected_when_original_acquisition_remains_unconditional(tmp_path):
+    gate = _passing_gate()
+    gate["original_acquisition_still_unconditional"] = True
+    result = retrieve_audited_primitives(
+        "top commits", _library(tmp_path), site="gitlab", scratch_plan=_plan(),
+        decide_fn=lambda *_: {
+            "decision": "adapt", "primitive_ids": ["gitlab/commits/list_commits"],
+            "gate": gate,
+            "patches": [{
+                "scratch_step_id": "S1", "primitive_id": "gitlab/commits/list_commits",
+                "replaces": ["commit acquisition"],
+                "acceptance_checks": ["records complete"],
+                "avoids_when_accepted": ["manual commit-page traversal"],
+            }],
+        },
+    )
+    assert result.decision == "skip"
+    assert result.patches == []
+
+
+def test_adapt_is_rejected_when_required_candidate_set_is_not_covered(tmp_path):
+    gate = _passing_gate()
+    gate["candidate_set_acquisition_provided"] = False
+    result = retrieve_audited_primitives(
+        "top commits", _library(tmp_path), site="gitlab", scratch_plan=_plan(),
+        decide_fn=lambda *_: {
+            "decision": "adapt", "primitive_ids": ["gitlab/commits/list_commits"],
+            "gate": gate,
+            "patches": [{
+                "scratch_step_id": "S1", "primitive_id": "gitlab/commits/list_commits",
+                "replaces": ["commit acquisition"],
+                "acceptance_checks": ["records complete"],
+                "avoids_when_accepted": ["manual commit-page traversal"],
+            }],
+        },
+    )
+    assert result.decision == "skip"
+    assert result.gate["task_candidate_set_required"] is True
+
+
+def test_partial_candidate_set_can_adapt_when_it_avoids_work(tmp_path):
+    gate = _passing_gate()
+    gate["candidate_set_completion_reachable"] = False
+    result = retrieve_audited_primitives(
+        "top commits", _library(tmp_path), site="gitlab", scratch_plan=_plan(),
+        decide_fn=lambda *_: {
+            "decision": "adapt", "primitive_ids": ["gitlab/commits/list_commits"],
+            "gate": gate,
+            "patches": [{
+                "scratch_step_id": "S1", "primitive_id": "gitlab/commits/list_commits",
+                "replaces": ["commit acquisition on the current page"],
+                "acceptance_checks": ["records complete for the current page"],
+                "avoids_when_accepted": ["manual current-page commit traversal"],
+            }],
+        },
+    )
+    assert result.decision == "adapt"
