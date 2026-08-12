@@ -37,6 +37,16 @@ class EpisodeResult:
         }
 
 
+def env_spec(name: str, value: object) -> str:
+    """Build an `environment.env.X=...` config spec that survives YAML parsing.
+
+    webwright parses a `key=value` spec's value with ``yaml.safe_load``, and the environment's
+    ``env`` field is ``dict[str, str]``. Unquoted, a batch number becomes an int and pydantic
+    rejects the whole environment config. Quoting keeps every value a string.
+    """
+    return f"environment.env.{name}={json.dumps(str(value))}"
+
+
 class AgentRunner(Protocol):
     def run_episode(
         self, *, stage: str, task: str, workspace: Path, step_limit: int, max_output_tokens: int
@@ -78,8 +88,8 @@ class WebwrightRunner:
             f"agent.step_limit={step_limit}",
             f"model.max_output_tokens={max_output_tokens}",
             f"environment.command_timeout_seconds={self.command_timeout_seconds}",
-            f"environment.env.PYTHONPATH={pythonpath}",
-            f"environment.env.PATH={path}",
+            env_spec("PYTHONPATH", pythonpath),
+            env_spec("PATH", path),
             *self.extra_specs,
         ]
 

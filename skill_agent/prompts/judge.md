@@ -1,4 +1,4 @@
-# Stage: quality — independent quality-and-coverage gate
+# Judge: independent quality-and-coverage gate
 
 Site: `{{SITE}}`
 
@@ -70,6 +70,6 @@ Mark such `REJECT` decisions `FAIL`, so the build stage regenerates an `ADD`/`UP
 
 ## Finish
 
-Run `python -m skill_agent.check quality` until it exits 0, then set `"done": true`.
+Run `python -m skill_agent.verify` until it exits 0, then set `"done": true`.
 A `FAIL` verdict is a legitimate outcome — the checker validates that your verdicts are complete
 and well-formed, not that everything passed.

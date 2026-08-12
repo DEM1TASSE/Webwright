@@ -1,4 +1,4 @@
-# Stage: consolidate — organize the full candidate pool for one site
+# Rules: consolidate — organize the full candidate pool for one site
 
 Site: `{{SITE}}`
 Pool size: {{POOL_SIZE}} primitive(s)
@@ -17,8 +17,6 @@ and feature organization — not new capability.
 1. One file per operation under `out/ops/` (`000_*.json`, `001_*.json`, …).
 2. Any new method body goes in `out/code/<name>.py`, referenced as `"method_code_file"`.
    `KEEP` never needs one — it must not alter code.
-3. `python -m skill_agent.assemble consolidate` → `out/proposal.json`.
-4. `python -m skill_agent.check consolidate` validates it.
 
 ### Operations
 
@@ -53,7 +51,3 @@ workflows.
 
 Do not emit package or class code. The deterministic class renderer builds `package.py` from your
 operations after this stage.
-
-## Finish
-
-Set `"done": true` only once `python -m skill_agent.check consolidate` exits 0.

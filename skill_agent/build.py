@@ -1,22 +1,28 @@
-"""Driver: run the audited primitive build as a sequence of terminal-agent episodes.
+"""Driver: stage each episode, launch the agent, verify and commit what came back.
 
-Structurally this mirrors ``webwright.skill_factory.audited_primitive_build.build_audited_site_library``
-one-for-one — same batching, same validators, same apply/consolidate/render steps, same on-disk
-artifact layout — with each ``llm_json`` call replaced by an agent episode in its own workspace.
-That means an agentic library and a scripted library can be diffed directly.
+The agent owns the procedure inside an episode. This module owns only what an agent must not
+be trusted with: what goes into a workspace, whether the result actually verifies, and the
+purely mechanical write to the library.
 
     PYTHONPATH=src:. python -m skill_agent.build \
         --workflows skill_agent/inputs/workflows \
         --output runs/agentic_v1 \
         --model-config /path/to/model_gateway.yaml
 
-Resumable: a stage whose ``validation.json`` already reports accepted is skipped on re-run.
+Two episode levels, matching where the pipeline's own context boundary falls:
+
+    batch  — extract every workflow, then build primitives that survive the judge. Sees this
+             batch's source code (~10k tokens at the current batch size) and the pool so far.
+    site   — consolidate the accumulated pool. Sees the pool, not the raw workflows.
+
+Resumable: an already-committed batch and an already-rendered site are skipped on re-run.
 """
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -28,39 +34,35 @@ from webwright.skill_factory.audited_primitive_build import (
     retrieve_pool,
     validate_build_proposal,
     validate_consolidation,
-    validate_extraction,
-    validate_quality_verdicts,
     write_candidate_review,
 )
 from webwright.skill_factory.site_package_candidate import expected_class_name
 
+from . import context as ctx
+from . import verify as verify_mod
 from .portability import fstring_quote_reuse, make_portable
-from .runner import AgentRunner, WebwrightRunner
-from .stages import STAGES
+from .runner import AgentRunner, WebwrightRunner, env_spec
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PROMPT_DIR = Path(__file__).resolve().parent / "prompts"
 
-MAX_OUTPUT_TOKENS = {"extract": 8000, "build": 16000, "quality": 8000, "consolidate": 16000}
+# A verify call spawns a whole judge episode inside one bash command; the per-command timeout
+# has to cover that.
+COMMAND_TIMEOUT_SECONDS = 1800
+EPISODE = {
+    "batch": {"step_limit": 80, "max_output_tokens": 16000},
+    "site": {"step_limit": 50, "max_output_tokens": 16000},
+}
 
 
-def _dump(path: Path, value: object) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-
-
-def _load(path: Path):
-    return json.loads(Path(path).read_text(encoding="utf-8"))
-
-
-def _prompt(stage: str, **substitutions: object) -> str:
-    text = (PROMPT_DIR / STAGES[stage].prompt).read_text(encoding="utf-8")
+def _prompt(name: str, **substitutions: object) -> str:
+    text = (PROMPT_DIR / f"{name}.md").read_text(encoding="utf-8")
     for key, value in substitutions.items():
         text = text.replace("{{" + key + "}}", str(value))
     return text
 
 
-def _stage_workspace(root: Path, *parts: str) -> Path:
+def _fresh_workspace(root: Path, *parts: str) -> Path:
     workspace = root.joinpath(*parts)
     if workspace.exists():
         shutil.rmtree(workspace)
@@ -69,300 +71,227 @@ def _stage_workspace(root: Path, *parts: str) -> Path:
     return workspace
 
 
-def _write_sources(workspace: Path, workflows: list[dict]) -> None:
+def _stage_rules(workspace: Path, names: list[str], *, site: str) -> None:
+    """Rules are files the agent reads at the step they govern, not prompt bulk it carries."""
+    rules = workspace / "in" / "rules"
+    rules.mkdir(parents=True, exist_ok=True)
+    for name in names:
+        text = (PROMPT_DIR / "rules" / f"{name}.md").read_text(encoding="utf-8")
+        (rules / f"{name}.md").write_text(text.replace("{{SITE}}", site), encoding="utf-8")
+
+
+def _stage_sources(workspace: Path, workflows: list[dict]) -> None:
     sources = workspace / "in" / "sources"
     sources.mkdir(parents=True, exist_ok=True)
     for workflow in workflows:
         (sources / f"{workflow['id']}.py").write_text(workflow["code"], encoding="utf-8")
 
 
-def _write_method_code(workspace: Path, primitives: list[dict]) -> None:
-    """Extract method bodies so the agent can read code without parsing JSON strings."""
-    code_dir = workspace / "in" / "code"
-    code_dir.mkdir(parents=True, exist_ok=True)
+def _stage_method_code(workspace: Path, primitives: list[dict]) -> None:
+    code = workspace / "in" / "code"
+    code.mkdir(parents=True, exist_ok=True)
     for primitive in primitives:
         if primitive.get("method") and primitive.get("method_code"):
-            (code_dir / f"{primitive['method']}.py").write_text(
-                primitive["method_code"], encoding="utf-8"
-            )
+            (code / f"{primitive['method']}.py").write_text(primitive["method_code"], encoding="utf-8")
 
 
-def _feedback(workspace: Path, errors: list[str], artifact: str) -> None:
-    """A rejected attempt leaves its errors in the next workspace, like the scripted retry did."""
-    _dump(workspace / "in" / "previous_attempt_feedback.json", {
-        "retry_instruction": (
-            f"A previous attempt at this stage was rejected. Regenerate the complete "
-            f"{artifact}; correct every error below without inventing code or evidence."
-        ),
+def _feedback(workspace: Path, errors: list[str]) -> None:
+    ctx.dump(workspace / "in" / "previous_attempt_feedback.json", {
+        "retry_instruction": "A previous attempt at this episode was rejected. Correct every "
+                             "error below without inventing code or evidence.",
         "validation_feedback": errors,
     })
 
 
-def _run_stage(
-    runner: AgentRunner, stage: str, workspace: Path, task: str,
-) -> tuple[dict, list[str], dict]:
-    episode = runner.run_episode(
-        stage=stage,
-        task=task,
-        workspace=workspace,
-        step_limit=STAGES[stage].step_limit,
-        max_output_tokens=MAX_OUTPUT_TOKENS[stage],
-    )
-    artifact, errors = STAGES[stage].validate(workspace)
-    if episode.error:
-        errors = [f"episode failed: {episode.error}", *errors]
-    return artifact, errors, episode.to_json()
+def _episode_env(library: Path, number: int, model_config: str) -> None:
+    """The driver verifies with the same state resolution the agent's commands used."""
+    os.environ[ctx.ENV_LIBRARY] = str(library)
+    os.environ[ctx.ENV_BATCH] = str(number)
+    os.environ[ctx.ENV_MODEL_CONFIG] = str(model_config)
+    os.environ[ctx.ENV_REPO_ROOT] = str(REPO_ROOT)
 
 
-def run_extract(runner: AgentRunner, *, site: str, workflow: dict, output: Path, runs: Path,
-                max_attempts: int) -> dict:
-    directory = output / "extractions" / str(workflow["id"])
-    existing = directory / "validation.json"
-    if existing.exists() and _load(existing).get("accepted") is True:
-        print(f"  [extract] {workflow['id']}: cached")
-        return _load(directory / "extraction.json")
+def commit_batch(library: Path, number: int, workspace: Path, context: dict,
+                 proposal: dict, verdicts: dict) -> list[dict]:
+    """Mechanical: no judgement here, which is why it is the driver's job and not the agent's."""
+    batch = context.get("batch") or []
+    extractions = ctx.load_extractions(workspace, batch=batch)
+    pool = ctx.load_pool(library)
+    accepted, errors = validate_build_proposal(
+        proposal, site=context["site"], batch=batch, pool=pool,
+        all_workflows={str(k): v for k, v in (context.get("all_workflows") or {}).items()},
+        extractions=extractions)
+    if errors:  # verify already passed; a mismatch here is a bug, not an agent mistake
+        raise ValueError(f"commit re-validation disagreed with verify: {errors}")
 
-    context = {"site": site, "workflow": workflow}
-    _dump(directory / "input.json", context)
-    attempts, artifact, errors = [], {}, []
-    for attempt in range(1, max_attempts + 1):
-        workspace = _stage_workspace(runs, "extract", str(workflow["id"]), f"attempt_{attempt}")
-        _dump(workspace / "in" / "context.json", context)
-        _write_sources(workspace, [workflow])
-        if errors:
-            _feedback(workspace, errors, "out/extraction.json")
-        task = _prompt("extract", SITE=site, WORKFLOW_ID=workflow["id"],
-                       TASK_ID=workflow.get("task_id"), TEMPLATE_ID=workflow.get("template_id"))
-        artifact, errors, episode = _run_stage(runner, "extract", workspace, task)
-        attempts.append({"attempt": attempt, "proposal": artifact, "errors": errors,
-                         "episode": episode})
-        print(f"  [extract] {workflow['id']} attempt {attempt}: "
-              f"{'accepted' if not errors else f'{len(errors)} error(s)'}")
-        if not errors:
-            break
-    _dump(directory / "attempts.json", attempts)
-    _dump(directory / "extraction.json", artifact)
-    _dump(directory / "validation.json", {"accepted": not errors, "errors": errors})
+    for workflow, extraction in zip(batch, extractions):
+        directory = library / "extractions" / str(workflow["id"])
+        ctx.dump(directory / "extraction.json", extraction)
+        ctx.dump(directory / "validation.json", {"accepted": True, "errors": []})
+
+    pool, diff = apply_build_operations(pool, accepted)
+    directory = library / "batches" / f"batch_{number:03d}"
+    ctx.dump(directory / "input.json", {
+        "site": context["site"], "batch": batch, "extractions": extractions,
+        "catalog_index": context.get("catalog_index") or [],
+        "retrieved_primitives": context.get("retrieved_primitives") or []})
+    ctx.dump(directory / "proposal.json", proposal)
+    ctx.dump(directory / "validation.json", {"accepted": True, "errors": []})
+    ctx.dump(directory / "quality_verdicts.json", verdicts)
+    ctx.dump(directory / "workflow_attribution.json", proposal.get("workflow_attribution") or [])
+    ctx.dump(directory / "primitive_diff.json", diff)
+    ctx.dump(directory / "snapshot" / "primitive_pool.json", list(pool.values()))
+    for primitive in pool.values():
+        (directory / "snapshot" / "code").mkdir(parents=True, exist_ok=True)
+        (directory / "snapshot" / "code" / f"{primitive['method']}.py").write_text(
+            primitive["method_code"], encoding="utf-8")
+    ctx.save_pool(pool, library)
+    return diff
+
+
+def render_final(library: Path, site: str, context: dict, proposal: dict) -> dict:
+    pool = ctx.load_pool(library)
+    final, errors, coverage = validate_consolidation(
+        proposal, site=site, pool=pool,
+        workflows={str(k): v for k, v in (context.get("workflows") or {}).items()})
     if errors:
-        raise ValueError(f"{site} extraction {workflow['id']} rejected: {errors}")
-    return artifact
+        raise ValueError(f"render re-validation disagreed with verify: {errors}")
+
+    # render_site_package round-trips through ast.unparse, which normalizes string literals to
+    # single quotes and can turn portable f"{p['lon']}" into 3.12-only f'{p['lon']}'. No agent
+    # can prevent that, so repair it here — and only if the rewrite parses to the same AST.
+    code, notes = make_portable(render_site_package(site, final))
+    if fstring_quote_reuse(code):
+        raise ValueError(f"{site} rendered package is not parsable before Python 3.12 and could "
+                         f"not be repaired: {fstring_quote_reuse(code)}")
+    for note in notes:
+        print(f"  [render] {note}")
+
+    ctx.dump(library / "pre_consolidation" / "primitive_pool.json", list(pool.values()))
+    ctx.dump(library / "consolidation" / "proposal.json", proposal)
+    ctx.dump(library / "consolidation" / "validation.json", {"accepted": True, "errors": []})
+    ctx.dump(library / "consolidation" / "coverage.json", coverage)
+    final_dir = library / "final_candidate"
+    final_dir.mkdir(parents=True, exist_ok=True)
+    (final_dir / "package.py").write_text(code, encoding="utf-8")
+    ctx.dump(final_dir / "index.json", {
+        "schema_version": 1, "status": "candidate", "approved": False, "site": site,
+        "root_class": expected_class_name(site), "primitives": final,
+        "package_sha256": "sha256:" + hashlib.sha256(code.encode()).hexdigest()})
+    ctx.dump(final_dir / "primitive_pool.json", final)
+    write_candidate_review(final_dir, site=site, primitives=final)
+    ctx.dump(library / "audit.json", {
+        "site": site, "status": "candidate",
+        "consolidation_operations": proposal.get("operations") or [], "coverage": coverage})
+    return {"final_count": len(final), "pre_consolidation_count": len(pool)}
 
 
-def run_build_batch(runner: AgentRunner, *, site: str, batch: list[dict], number: int,
-                    pool: dict, extractions: list[dict], all_workflows: dict, output: Path,
-                    runs: Path, max_attempts: int) -> list[dict]:
-    directory = output / "batches" / f"batch_{number:03d}"
-    catalog_index = [{key: value.get(key) for key in (
-        "primitive_id", "method", "capability", "input_contract", "output_contract",
-        "supported_patterns")} for value in pool.values()]
-    retrieved = retrieve_pool(batch, pool)
-    # `pool` and `all_workflows` are extra compared to the scripted input: the checker runs
-    # inside the workspace, so it needs the same state the scripted driver held in memory.
-    context = {"site": site, "batch": batch, "extractions": extractions,
-               "catalog_index": catalog_index, "retrieved_primitives": retrieved,
-               "pool": list(pool.values()), "all_workflows": all_workflows}
-    _dump(directory / "input.json", {"site": site, "batch": batch, "extractions": extractions,
-                                     "catalog_index": catalog_index,
-                                     "retrieved_primitives": retrieved})
+def _run_episode(runner: AgentRunner, *, level: str, task: str, workspace: Path,
+                 commit) -> list[str]:
+    """One attempt: run the agent, verify what it left behind, commit only if it verifies."""
+    episode = runner.run_episode(stage=level, task=task, workspace=workspace, **EPISODE[level])
+    errors = [f"episode failed: {episode.error}"] if episode.error else []
+    if not errors:
+        code, _, verify_errors, extra = verify_mod.run(workspace)
+        errors = list(verify_errors)
+        if code == 0:
+            commit(extra)
+    return errors, episode.api_calls
 
-    attempts, accepted, errors = [], [], []
+
+def run_batch(runner: AgentRunner, *, site: str, batch: list[dict], number: int,
+              all_workflows: dict, library: Path, runs: Path, max_attempts: int) -> None:
+    if (library / "batches" / f"batch_{number:03d}" / "validation.json").exists():
+        print(f"  [batch {number}] cached")
+        return
+
+    pool = ctx.load_pool(library)
+    context = {
+        "mode": "batch", "site": site, "batch": batch, "pool": list(pool.values()),
+        "catalog_index": [{key: value.get(key) for key in (
+            "primitive_id", "method", "capability", "input_contract", "output_contract",
+            "supported_patterns")} for value in pool.values()],
+        "retrieved_primitives": retrieve_pool(batch, pool),
+        "all_workflows": all_workflows,
+    }
+    errors: list[str] = []
     for attempt in range(1, max_attempts + 1):
-        workspace = _stage_workspace(runs, "build", f"batch_{number:03d}", f"attempt_{attempt}")
-        _dump(workspace / "in" / "context.json", context)
-        _write_sources(workspace, batch)
-        _write_method_code(workspace, list(pool.values()))
-        # extractions are in batch order; a SKIP extraction has no candidate to name it by.
-        for workflow, extraction in zip(batch, extractions):
-            _dump(workspace / "in" / "extractions" / f"{workflow['id']}.json", extraction)
+        workspace = _fresh_workspace(runs, f"batch_{number:03d}", f"attempt_{attempt}")
+        ctx.dump(workspace / "in" / "context.json", context)
+        _stage_sources(workspace, batch)
+        _stage_method_code(workspace, list(pool.values()))
+        _stage_rules(workspace, ["extract", "build"], site=site)
         if errors:
-            _feedback(workspace, errors, "out/proposal.json")
-        task = _prompt("build", SITE=site, BATCH_SIZE=len(batch),
-                       WORKFLOW_IDS=", ".join(str(x["id"]) for x in batch))
-        artifact, errors, episode = _run_stage(runner, "build", workspace, task)
-
-        quality: dict = {}
-        quality_episode: dict = {}
+            _feedback(workspace, errors)
+        errors, calls = _run_episode(
+            runner, level="batch", workspace=workspace,
+            task=_prompt("procedure_batch", SITE=site, BATCH=number, BATCH_SIZE=len(batch),
+                         WORKFLOW_IDS=", ".join(str(x["id"]) for x in batch)),
+            commit=lambda extra: commit_batch(library, number, workspace, context,
+                                              extra["proposal"], extra.get("verdicts") or {}))
+        print(f"  [batch {number}] attempt {attempt}: "
+              f"{'committed' if not errors else f'{len(errors)} error(s)'} ({calls} model calls)")
         if not errors:
-            accepted, errors = validate_build_proposal(
-                artifact, site=site, batch=batch, pool=pool,
-                all_workflows=all_workflows, extractions=extractions,
-            )
-        if not errors:
-            quality, quality_errors, quality_episode = run_quality(
-                runner, site=site, proposal=artifact, extractions=extractions,
-                batch=batch, runs=runs, number=number, attempt=attempt,
-                max_attempts=max_attempts,
-            )
-            errors = quality_errors
-        attempts.append({"attempt": attempt, "proposal": artifact, "quality_verdicts": quality,
-                         "errors": errors, "episode": episode, "quality_episode": quality_episode})
-        print(f"  [build] batch {number} attempt {attempt}: "
-              f"{'accepted' if not errors else f'{len(errors)} error(s)'}")
-        if not errors:
-            break
-
-    _dump(directory / "attempts.json", attempts)
-    _dump(directory / "proposal.json", attempts[-1]["proposal"])
-    _dump(directory / "validation.json", {"accepted": not errors, "errors": errors})
-    _dump(directory / "workflow_attribution.json",
-          attempts[-1]["proposal"].get("workflow_attribution") or [])
-    if errors:
-        raise ValueError(f"{site} batch {number} rejected: {errors}")
-    return accepted
+            return
+    raise ValueError(f"{site} batch {number} failed after {max_attempts} attempt(s): {errors}")
 
 
-# A malformed or incomplete verdicts file is the gate agent failing at its own job; a
-# well-formed file full of FAILs is the gate doing its job. Only the first kind should cost
-# the build stage a regeneration.
-_ARTIFACT_DEFECTS = ("missing artifact", "is not valid JSON", "must be a JSON object",
-                     "episode failed", "must cover every")
+def run_site(runner: AgentRunner, *, site: str, all_workflows: dict, library: Path,
+             runs: Path, max_attempts: int) -> None:
+    if (library / "final_candidate" / "index.json").exists():
+        print("  [site] cached")
+        return
 
-
-def _is_artifact_defect(error: str) -> bool:
-    return any(marker in error for marker in _ARTIFACT_DEFECTS)
-
-
-def run_quality(runner: AgentRunner, *, site: str, proposal: dict, extractions: list[dict],
-                batch: list[dict], runs: Path, number: int, attempt: int,
-                max_attempts: int) -> tuple[dict, list[str], dict]:
-    """The gate runs as its own episode: a fresh context that did not write the code it judges."""
-    operations = proposal.get("operations") or []
-    candidate_attribution = proposal.get("candidate_attribution") or []
-    context = {"review_kind": "primitive_boundary_quality", "site": site,
-               "operations": operations, "candidate_attribution": candidate_attribution,
-               "extractions": extractions}
-
-    artifact, errors, episode = {}, [], {}
-    for gate_attempt in range(1, max_attempts + 1):
-        workspace = _stage_workspace(
-            runs, "quality", f"batch_{number:03d}", f"attempt_{attempt}_gate_{gate_attempt}")
-        _dump(workspace / "in" / "context.json", context)
-        _write_sources(workspace, batch)
-        _write_method_code(
-            workspace, [op["replacement"] for op in operations if op.get("replacement")])
-        if errors:
-            _feedback(workspace, errors, "out/verdicts.json")
-        task = _prompt("quality", SITE=site)
-        artifact, errors, episode = _run_stage(runner, "quality", workspace, task)
-        if not errors:
-            errors = validate_quality_verdicts(artifact, operations, candidate_attribution)
-        defects = [e for e in errors if _is_artifact_defect(e)]
-        print(f"  [quality] batch {number} attempt {attempt}.{gate_attempt}: "
-              f"{'accepted' if not errors else f'{len(errors)} error(s)'}"
-              f"{' (gate artifact defect, retrying the gate)' if defects else ''}")
-        if not defects:
-            break
-    return artifact, errors, episode
-
-
-def run_consolidate(runner: AgentRunner, *, site: str, pool: dict, all_workflows: dict,
-                    output: Path, runs: Path, max_attempts: int) -> tuple[list[dict], dict, dict]:
-    # `pool` is what the in-workspace checker reads; the driver artifact keeps the scripted
-    # `primitive_pool` key so the two libraries stay diffable. Don't ship both to the agent —
-    # the pool carries every method body and duplicating it doubles the episode's context.
-    context = {"site": site, "pool": list(pool.values()), "workflows": all_workflows}
-    _dump(output / "consolidation" / "input.json",
-          {"site": site, "primitive_pool": list(pool.values())})
-
-    attempts, final, errors, coverage, artifact = [], [], [], {}, {}
+    pool = ctx.load_pool(library)
+    context = {"mode": "site", "site": site, "workflows": all_workflows}
+    errors: list[str] = []
     for attempt in range(1, max_attempts + 1):
-        workspace = _stage_workspace(runs, "consolidate", f"attempt_{attempt}")
-        _dump(workspace / "in" / "context.json", context)
-        _write_sources(workspace, list(all_workflows.values()))
-        _write_method_code(workspace, list(pool.values()))
+        workspace = _fresh_workspace(runs, "site", f"attempt_{attempt}")
+        ctx.dump(workspace / "in" / "context.json", context)
+        _stage_sources(workspace, list(all_workflows.values()))
+        _stage_method_code(workspace, list(pool.values()))
+        _stage_rules(workspace, ["consolidate"], site=site)
         if errors:
-            _feedback(workspace, errors, "out/proposal.json")
-        task = _prompt("consolidate", SITE=site, POOL_SIZE=len(pool))
-        artifact, errors, episode = _run_stage(runner, "consolidate", workspace, task)
+            _feedback(workspace, errors)
+        errors, calls = _run_episode(
+            runner, level="site", workspace=workspace,
+            task=_prompt("procedure_site", SITE=site, POOL_SIZE=len(pool)),
+            commit=lambda extra: render_final(library, site, context, extra["proposal"]))
+        print(f"  [site] attempt {attempt}: "
+              f"{'rendered' if not errors else f'{len(errors)} error(s)'} ({calls} model calls)")
         if not errors:
-            final, errors, coverage = validate_consolidation(
-                artifact, site=site, pool=pool, workflows=all_workflows
-            )
-        attempts.append({"attempt": attempt, "proposal": artifact, "errors": errors,
-                         "episode": episode})
-        print(f"  [consolidate] attempt {attempt}: "
-              f"{'accepted' if not errors else f'{len(errors)} error(s)'}")
-        if not errors:
-            break
-
-    _dump(output / "consolidation" / "attempts.json", attempts)
-    _dump(output / "consolidation" / "proposal.json", artifact)
-    _dump(output / "consolidation" / "validation.json", {"accepted": not errors, "errors": errors})
-    _dump(output / "consolidation" / "coverage.json", coverage)
-    if errors:
-        raise ValueError(f"{site} consolidation rejected: {errors}")
-    return final, coverage, artifact
+            return
+    raise ValueError(f"{site} consolidation failed after {max_attempts} attempt(s): {errors}")
 
 
-def build_site(runner: AgentRunner, *, site: str, workflows: list[dict], output: Path,
-               runs: Path, batch_size: int, seed: int, max_attempts: int) -> dict:
-    output.mkdir(parents=True, exist_ok=True)
+def build_site(runner_factory, *, site: str, workflows: list[dict], library: Path, runs: Path,
+               batch_size: int, seed: int, max_attempts: int, model_config: str = "") -> dict:
+    library.mkdir(parents=True, exist_ok=True)
     batches = partition_workflows(workflows, batch_size=batch_size, seed=seed)
-    _dump(output / "config.json", {
+    ctx.dump(library / "config.json", {
         "site": site, "batch_size": batch_size, "shuffle_seed": seed, "group_by": "site",
         "order_before_shuffle": ["template_id", "task_id"], "driver": "skill_agent.build",
+        "orchestration": "agent-driven",
     })
-    _dump(output / "workflow_order.json", {"batches": [
+    ctx.dump(library / "workflow_order.json", {"batches": [
         [{"id": x["id"], "task_id": x.get("task_id"), "template_id": x.get("template_id")}
          for x in batch] for batch in batches]})
 
     all_workflows = {str(x["id"]): x for x in workflows}
-    extractions_by_workflow = {
-        str(workflow["id"]): run_extract(runner, site=site, workflow=workflow, output=output,
-                                         runs=runs, max_attempts=max_attempts)
-        for workflow in workflows
-    }
-
-    pool: dict[str, dict] = {}
-    history = []
     for number, batch in enumerate(batches):
-        accepted = run_build_batch(
-            runner, site=site, batch=batch, number=number, pool=pool,
-            extractions=[extractions_by_workflow[str(x["id"])] for x in batch],
-            all_workflows=all_workflows, output=output, runs=runs, max_attempts=max_attempts,
-        )
-        pool, diff = apply_build_operations(pool, accepted)
-        directory = output / "batches" / f"batch_{number:03d}"
-        _dump(directory / "primitive_diff.json", diff)
-        _dump(directory / "snapshot" / "primitive_pool.json", list(pool.values()))
-        for primitive in pool.values():
-            (directory / "snapshot" / "code").mkdir(parents=True, exist_ok=True)
-            (directory / "snapshot" / "code" / f"{primitive['method']}.py").write_text(
-                primitive["method_code"], encoding="utf-8")
-        history.append({"batch": number, "workflows": [x["id"] for x in batch], "diff": diff})
+        _episode_env(library, number, model_config)
+        run_batch(runner_factory(library, number), site=site, batch=batch, number=number,
+                  all_workflows=all_workflows, library=library, runs=runs,
+                  max_attempts=max_attempts)
+    _episode_env(library, len(batches), model_config)
+    run_site(runner_factory(library, len(batches)), site=site, all_workflows=all_workflows,
+             library=library, runs=runs, max_attempts=max_attempts)
 
-    _dump(output / "pre_consolidation" / "primitive_pool.json", list(pool.values()))
-    final, coverage, raw = run_consolidate(
-        runner, site=site, pool=pool, all_workflows=all_workflows,
-        output=output, runs=runs, max_attempts=max_attempts,
-    )
-
-    # render_site_package round-trips through ast.unparse, which on 3.12 normalizes string
-    # literals to single quotes and can turn the agent's portable f"{p['lon']}" into
-    # 3.12-only f'{p['lon']}'. Repair it here, after rendering — the agent cannot.
-    code, portability_notes = make_portable(render_site_package(site, final))
-    if fstring_quote_reuse(code):
-        raise ValueError(f"{site} rendered package is not parsable before Python 3.12 and could "
-                         f"not be repaired: {fstring_quote_reuse(code)}")
-    for note in portability_notes:
-        print(f"  [render] {note}")
-    final_dir = output / "final_candidate"
-    final_dir.mkdir(parents=True, exist_ok=True)
-    (final_dir / "package.py").write_text(code, encoding="utf-8")
-    _dump(final_dir / "index.json", {
-        "schema_version": 1, "status": "candidate", "approved": False, "site": site,
-        "root_class": expected_class_name(site), "primitives": final,
-        "package_sha256": "sha256:" + hashlib.sha256(code.encode()).hexdigest()})
-    _dump(final_dir / "primitive_pool.json", final)
-    write_candidate_review(final_dir, site=site, primitives=final)
-    _dump(output / "audit.json", {
-        "site": site, "status": "candidate", "history": history,
-        "consolidation_operations": raw.get("operations") or [], "coverage": coverage,
-        "portability_notes": portability_notes})
-    return {"site": site, "status": "candidate", "batch_count": len(batches),
-            "pre_consolidation_count": len(pool), "final_count": len(final),
-            "portability_notes": portability_notes,
-            "package": str(final_dir / "package.py")}
+    index = ctx.load(library / "final_candidate" / "index.json")
+    return {"site": site, "status": index["status"], "batch_count": len(batches),
+            "pre_consolidation_count": len(ctx.load_pool(library)),
+            "final_count": len(index["primitives"]),
+            "package": str(library / "final_candidate" / "package.py")}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -375,7 +304,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--sites", nargs="*", help="Optional site subset")
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--seed", type=int, default=20260810)
-    parser.add_argument("--max-attempts", type=int, default=3)
+    parser.add_argument("--max-attempts", type=int, default=2)
     parser.add_argument("--runs", default=None,
                         help="Episode workspace root (default: <output>/agent_runs)")
     args = parser.parse_args(argv)
@@ -383,7 +312,18 @@ def main(argv: list[str] | None = None) -> int:
     workflow_dir = Path(args.workflows)
     output_root = Path(args.output)
     runs_root = Path(args.runs) if args.runs else output_root / "agent_runs"
-    runner = WebwrightRunner(model_config=args.model_config, repo_root=REPO_ROOT)
+
+    def runner_factory(library: Path, number: int) -> WebwrightRunner:
+        return WebwrightRunner(
+            model_config=args.model_config, repo_root=REPO_ROOT,
+            command_timeout_seconds=COMMAND_TIMEOUT_SECONDS,
+            extra_specs=(
+                env_spec(ctx.ENV_LIBRARY, library),
+                env_spec(ctx.ENV_BATCH, number),
+                env_spec(ctx.ENV_MODEL_CONFIG, args.model_config),
+                env_spec(ctx.ENV_REPO_ROOT, REPO_ROOT),
+            ),
+        )
 
     sites = sorted(p.stem for p in workflow_dir.glob("*.json") if p.stem != "MANIFEST")
     if args.sites:
@@ -391,14 +331,14 @@ def main(argv: list[str] | None = None) -> int:
 
     summary = {"status": "candidate", "promoted": False, "driver": "agentic", "sites": {}}
     for site in sites:
-        workflows = _load(workflow_dir / f"{site}.json")
+        workflows = ctx.load(workflow_dir / f"{site}.json")
         print(f"[{site}] {len(workflows)} workflow(s)")
         summary["sites"][site] = build_site(
-            runner, site=site, workflows=workflows,
-            output=output_root / site, runs=runs_root / site,
+            runner_factory, site=site, workflows=workflows,
+            library=output_root / site, runs=runs_root / site,
             batch_size=args.batch_size, seed=args.seed, max_attempts=args.max_attempts,
-        )
-    _dump(output_root / "summary.json", summary)
+            model_config=args.model_config)
+    ctx.dump(output_root / "summary.json", summary)
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     return 0
 

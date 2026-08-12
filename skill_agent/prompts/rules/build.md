@@ -1,4 +1,4 @@
-# Stage: build — reconcile extracted capabilities into an unclassified primitive pool
+# Rules: build — reconcile extracted capabilities into an unclassified primitive pool
 
 Site: `{{SITE}}`
 Batch: {{BATCH_SIZE}} workflow(s) — {{WORKFLOW_IDS}}
@@ -30,8 +30,6 @@ Do not try to write one giant JSON. Write small files and assemble them:
    `"method_code_file": "code/<name>.py"` instead of `"method_code"`. Write normal Python — no
    JSON escaping.
 3. `out/workflow_attribution.json` and `out/candidate_attribution.json` — JSON arrays.
-4. `python -m skill_agent.assemble build` composes `out/proposal.json` and prints the index map.
-5. `python -m skill_agent.check build` validates it.
 
 ### Operation shapes
 
@@ -75,7 +73,7 @@ f-string expression (`f'{d['key']}'` is a syntax error before 3.12 — use `f"{d
 local variable). The validator parses with whichever interpreter runs the build, so it will not
 catch this for you.
 
-Check your code parses before assembling: `python -c "import ast,sys; ast.parse(open('out/code/x.py').read())"`.
+Check your code parses before verifying: `python -c "import ast; ast.parse(open('out/code/x.py').read())"`.
 
 ### Primitive boundary
 
@@ -123,8 +121,3 @@ Every `ADD`/`UPDATE` cites supplied gold workflows and explains how concrete cod
 Hard-coded project/product/date/branch values become inputs where that preserves the site
 operation. Source excerpts may be shortened or paraphrased. Do not invent source workflows,
 unsupported site behavior, or source answers.
-
-## Finish
-
-Re-run assemble and check after every fix. Set `"done": true` only once
-`python -m skill_agent.check build` exits 0.

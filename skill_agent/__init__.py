@@ -1,12 +1,10 @@
 """Agentic port of the audited primitive build pipeline.
 
-The scripted pipeline in ``webwright.skill_factory.audited_primitive_build`` drives each
-stage with a single-shot ``llm_json`` call and feeds validator errors back into the next
-prompt. This package keeps the validators byte-identical and replaces the single-shot
-calls with terminal-agent episodes: the agent reads the source workflow with bash, writes
-its proposal to disk, runs the validator itself, and iterates until the validator exits 0.
+The scripted pipeline in ``webwright.skill_factory.audited_primitive_build`` drives each step
+with a single-shot ``llm_json`` call and feeds validator errors into the next prompt. Here a
+terminal agent owns the procedure: it reads the source workflows with bash, writes its
+artifacts to disk, and runs ``python -m skill_agent.verify`` until the work is accepted.
+
+The validators are imported unchanged, so an agentic library and a scripted library are
+directly diffable.
 """
-
-__all__ = ["STAGES"]
-
-from .stages import STAGES

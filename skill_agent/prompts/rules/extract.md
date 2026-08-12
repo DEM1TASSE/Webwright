@@ -1,16 +1,15 @@
-# Stage: extract — one workflow, no cross-workflow comparison
+# Rules: extract — one workflow, no cross-workflow comparison
 
 Site: `{{SITE}}`
-Workflow: `{{WORKFLOW_ID}}` (task {{TASK_ID}}, template {{TEMPLATE_ID}})
 
-## Inputs
+Apply these rules to **one workflow at a time**. `in/context.json` lists the batch; each
+workflow's source is `in/sources/<workflow_id>.py`, the exact `final_script.py` from a
+gold-verified run of that task.
 
-- `in/context.json` — `{"site": ..., "workflow": {id, task_id, template_id, intent, site, code}}`
-- `in/sources/{{WORKFLOW_ID}}.py` — the exact `final_script.py` from a gold-verified run of this task.
-
-This is the only workflow you may look at. Do not deduplicate against any library, do not merge
-candidates, and do not generate primitive code at this stage. You are enumerating what this one
-verified run demonstrably knows how to do on this website.
+While extracting a given workflow, that is the only workflow you may reason from. Do not
+deduplicate against the pool or against the other workflows in the batch, do not merge
+candidates, and do not generate primitive code yet. You are enumerating what this one verified
+run demonstrably knows how to do on this website.
 
 ## Your job
 
@@ -22,19 +21,19 @@ Then enumerate **every distinct reusable site operation the workflow actually de
 
 ## Output
 
-Write `out/extraction.json` containing either:
+Write `out/extractions/<workflow_id>.json` containing either:
 
 ```json
 {"decision": "CANDIDATES",
  "candidates": [
-   {"candidate_id": "{{WORKFLOW_ID}}::<snake_name>",
+   {"candidate_id": "<workflow_id>::<snake_name>",
     "proposed_method": "snake_case",
     "capability": "reusable website capability",
     "owns": ["..."],
     "does_not_own": ["..."],
     "input_contract": {"...": "..."},
     "output_contract": {"...": "..."},
-    "source_evidence": {"workflow_id": "{{WORKFLOW_ID}}", "template_id": "{{TEMPLATE_ID}}",
+    "source_evidence": {"workflow_id": "<workflow_id>", "template_id": "<template_id>",
       "code_quote": "representative source excerpt or concise source description",
       "explanation": "what was generalized from the workflow and why it supports this capability"}}]}
 ```
@@ -74,8 +73,3 @@ pagination inputs are called `page_number` in input contracts.
 Source evidence is attribution, not a demand to copy code verbatim: explicitly describe how
 hard-coded instance values become parameters and how task-specific logic is removed. Do not
 discard a real capability merely because an API or embedded-JSON source would be more stable.
-
-## Finish
-
-Run `python -m skill_agent.check extract`, fix every reported error, and re-run until it exits 0.
-Only then set `"done": true`.
