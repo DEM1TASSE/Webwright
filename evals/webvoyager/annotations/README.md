@@ -4,9 +4,11 @@ This directory contains a preliminary machine annotation of all 643 official
 WebVoyager tasks. It is intended for human review before freezing same-template
 or cross-template pilot splits; it is not ground truth.
 
-The WebArena-granularity third pass is in `webvoyager_annotations.strict_v3.csv`;
-this is the recommended file for human review. It preserves the v2 template, the
-strict template, the review decision, confidence, and rationale. Edit `review_status`
+The exact-signature fourth pass is in `webvoyager_annotations.v4.review.csv`;
+this is the recommended file for human review. Each row explicitly separates the
+slot schema from concrete parameters and parameter evidence. Tasks share a template
+only when their constraint, route, action, sort, output, and fixed-literal signatures
+all match. Edit `review_status`
 to `approved`
 or `edited`. Prioritize rows with low `confidence`, high live-web risk, login
 requirements, or broad families/templates. Same-template membership is defined

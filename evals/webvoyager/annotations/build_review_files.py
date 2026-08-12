@@ -15,6 +15,11 @@ STRICT_REVIEWS = (
     ROOT / "review_strict_b.jsonl",
     ROOT / "review_strict_c.jsonl",
 )
+V4_PARTS = (
+    ROOT / "template_v4_a.jsonl",
+    ROOT / "template_v4_b.jsonl",
+    ROOT / "template_v4_c.jsonl",
+)
 JSON_FIELDS = {"capabilities", "slots", "interaction_type"}
 
 
@@ -164,6 +169,66 @@ def main() -> None:
     print(json.dumps({
         "strict_templates": summary["strict_templates"],
         "strict_changes_from_v2": summary["strict_changes_from_v2"],
+    }, ensure_ascii=False, indent=2))
+
+    v4 = {row["id"]: row for path in V4_PARTS for row in load(path)}
+    if set(v4) != set(ids):
+        raise SystemExit("v4 annotations do not exactly cover official task IDs")
+    signatures_by_template = {}
+    v4_rows = []
+    for base in rows:
+        annotation = v4[base["id"]]
+        slot_names = {slot["name"] for slot in annotation["slot_schema"]}
+        if slot_names != set(annotation["parameters"]):
+            raise SystemExit(f"{base['id']}: slot_schema/parameters mismatch")
+        if slot_names != set(annotation["parameter_evidence"]):
+            raise SystemExit(f"{base['id']}: slot_schema/evidence mismatch")
+        signature = json.dumps([
+            annotation["constraint_signature"], annotation["route_signature"],
+            annotation["action_signature"], annotation["sort_signature"],
+            annotation["output_signature"], annotation["fixed_literals"],
+        ], ensure_ascii=False, sort_keys=True)
+        previous = signatures_by_template.setdefault(annotation["template_id"], signature)
+        if previous != signature:
+            raise SystemExit(f"{base['id']}: shared template has inconsistent signatures")
+        merged = dict(base)
+        merged.update(annotation)
+        merged["annotation_version"] = "exact-signature-v4"
+        merged["review_status"] = "pending"
+        v4_rows.append(merged)
+
+    (ROOT / "webvoyager_annotations.v4.jsonl").write_text(
+        "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in v4_rows),
+        encoding="utf-8",
+    )
+    v4_fields = [
+        "review_status", "id", "web_name", "ques", "template_id", "template_text",
+        "slot_schema", "parameters", "parameter_evidence", "fixed_literals",
+        "constraint_signature", "route_signature", "action_signature",
+        "sort_signature", "output_signature", "confidence", "rationale",
+    ]
+    with (ROOT / "webvoyager_annotations.v4.review.csv").open(
+        "w", encoding="utf-8", newline=""
+    ) as handle:
+        writer = csv.DictWriter(handle, fieldnames=v4_fields, extrasaction="ignore")
+        writer.writeheader()
+        for row in v4_rows:
+            rendered = dict(row)
+            for field in v4_fields[6:15]:
+                rendered[field] = json.dumps(rendered[field], ensure_ascii=False)
+            writer.writerow(rendered)
+
+    summary["v4_templates"] = len(signatures_by_template)
+    summary["v4_multi_instance_templates"] = len({
+        template_id for template_id in signatures_by_template
+        if sum(row["template_id"] == template_id for row in v4_rows) > 1
+    })
+    (ROOT / "summary.json").write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    print(json.dumps({
+        "v4_templates": summary["v4_templates"],
+        "v4_multi_instance_templates": summary["v4_multi_instance_templates"],
     }, ensure_ascii=False, indent=2))
 
 
