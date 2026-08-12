@@ -52,13 +52,22 @@ def main():
     if not isinstance(model, dict) or not model.get("model_name"):
         raise SystemExit(f"invalid model config: {args.model_config}")
     work_root, library = Path(args.work_root), Path(args.library)
-    events = []
+    events_path = work_root / "build_events.json"
+    events = load(events_path) if events_path.exists() else []
+    completed = {(row["site"], str(row["template_id"])) for row in events
+                 if row.get("status") in {"built", "insufficient_gold_sources"}}
     for site, template_id, records in eligible_templates(split, manifests):
+        if (site, template_id) in completed:
+            continue
         site_library = library / site
         event = {"site": site, "template_id": int(template_id), "gold_sources": len(records)}
         if len(records) < args.min_gold_sources:
             event["status"] = "insufficient_gold_sources"
             events.append(event)
+            work_root.mkdir(parents=True, exist_ok=True)
+            events_path.write_text(
+                json.dumps(events, ensure_ascii=False, indent=2) + "\n"
+            )
             continue
         source_dir = work_root / site / f"template_{template_id}" / "runs"
         source_dir.mkdir(parents=True, exist_ok=True)
@@ -102,7 +111,7 @@ def main():
                 event["skill_ids"] = load(build_output).get("skill_ids") or []
         events.append(event)
         work_root.mkdir(parents=True, exist_ok=True)
-        (work_root / "build_events.json").write_text(
+        events_path.write_text(
             json.dumps(events, ensure_ascii=False, indent=2) + "\n"
         )
     summary = {
