@@ -37,15 +37,19 @@ def main():
     ap.add_argument("--primitive-library", required=True)
     ap.add_argument("--model-config", required=True)
     ap.add_argument("--output", required=True)
+    ap.add_argument("--sites", nargs="*", help="Optional site subset for resumable parallel audit")
     args = ap.parse_args()
     split, dataset = load(args.split), load(args.dataset)
     validate_no_leakage(split)
     tasks = {row["task_id"]: row for row in dataset}
     skills = workflow_map(args.workflow_events)
     configure_router_model(args.model_config)
+    selected_sites = set(args.sites or split["train"])
 
     rows = []
     for site, template_id, task_id in build_jobs(split, "t1"):
+        if site not in selected_sites:
+            continue
         skill_id = skills.get((site, template_id))
         rows.append({
             "partition": "t1", "arm": "workflow", "site": site,
@@ -56,6 +60,8 @@ def main():
 
     from webwright.skill_factory.audited_primitive_retrieve import retrieve_audited_primitives
     for site, template_id, task_id in build_jobs(split, "t2"):
+        if site not in selected_sites:
+            continue
         task = tasks[task_id]
         try:
             workflow = prepare_workflow_hint(task, Path(args.workflow_library) / site)
