@@ -31,18 +31,30 @@ def _load(path: Path):
 
 
 class ReplayJudge:
-    """Stands in for the fresh judge episode that `verify` spawns."""
+    """Stands in for the fresh judge episodes that `verify` spawns.
 
-    calls = 0
+    There are two: a completeness reviewer over the extractions, and a boundary judge over the
+    proposal. Each gets its own episode with an empty context.
+    """
+
+    calls: list[str] = []
 
     def __init__(self, **_):
         pass
 
     def run_episode(self, *, stage, task, workspace, step_limit, max_output_tokens):
-        ReplayJudge.calls += 1
-        ctx.dump(Path(workspace) / "out" / "verdicts.json",
-                 _load(FIXTURE / "quality" / "batch_000.json"))
-        return EpisodeResult(stage=stage, workspace=Path(workspace), exit_status="Submitted",
+        ReplayJudge.calls.append(stage)
+        workspace = Path(workspace)
+        if stage == "extraction_review":
+            extractions = ctx.load_context(workspace).get("extractions") or []
+            ctx.dump(workspace / "out" / "extraction_review.json", {"reviews": [
+                {"workflow_id": (x.get("candidates") or [{}])[0].get("candidate_id", "").split("::")[0],
+                 "verdict": "COMPLETE", "missed": [], "reason": "read the source"}
+                for x in extractions]})
+        else:
+            ctx.dump(workspace / "out" / "verdicts.json",
+                     _load(FIXTURE / "quality" / "batch_000.json"))
+        return EpisodeResult(stage=stage, workspace=workspace, exit_status="Submitted",
                              api_calls=1, final_response="replayed judge")
 
 
@@ -107,7 +119,7 @@ def _patch_driver_host_check(monkeypatch):
 def built(tmp_path, monkeypatch):
     _patch_driver_host_check(monkeypatch)
     monkeypatch.setattr("skill_agent.runner.WebwrightRunner", ReplayJudge)
-    ReplayJudge.calls = 0
+    ReplayJudge.calls = []
     log: list[str] = []
     library = tmp_path / "map"
     result = build_mod.build_site(
@@ -131,9 +143,10 @@ def test_each_episode_verified_before_the_driver_committed(built):
     assert log == ["batch: verify -> ready", "site: verify -> ready"]
 
 
-def test_the_judge_was_a_separate_episode_run_once(built):
-    """Once for the agent's own verify; the driver's re-verify reuses the cached verdict."""
-    assert ReplayJudge.calls == 1
+def test_both_judges_ran_as_separate_episodes(built):
+    """One completeness review over the extractions, one boundary judge over the proposal.
+    The driver's re-verify reuses both cached rulings rather than spawning them again."""
+    assert ReplayJudge.calls == ["extraction_review", "judge"]
 
 
 def test_writes_the_scripted_artifact_layout(built):

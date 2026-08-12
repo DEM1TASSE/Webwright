@@ -50,14 +50,19 @@ python -m skill_agent.verify
 ```
 
 One command, run it as often as you like. It reports what is still missing, composes your
-operation files into a proposal, validates everything, and — once the structure is clean —
-submits the proposal to an **independent judge**: a separate agent with an empty context that
-reads your code and the evidence it cites and rules PASS or FAIL per operation.
+operation files into a proposal, validates everything, and puts your work in front of two
+**independent readers** — each a separate agent with an empty context:
 
-A FAIL is information, not an accident. Read the reason and fix that operation — usually by
-narrowing what the primitive owns, or by restoring record fields the evidence supports. Do not
-re-submit unchanged work hoping for a different verdict. An unchanged proposal reuses the
-existing verdict anyway.
+- once every workflow is extracted, a reader checks the extractions against the sources for a
+  demonstrated capability nobody claimed. This is the one place where losing a capability is
+  invisible to everything downstream, so it is checked before you build;
+- once the proposal is structurally clean, a judge reads your code and the evidence it cites and
+  rules PASS or FAIL per operation.
+
+A FAIL, or a capability reported as missed, is information rather than an accident. Read the
+reason and fix the thing — usually by extracting the capability that was passed over, by
+narrowing what a primitive owns, or by restoring record fields the evidence supports. Do not
+re-submit unchanged work hoping for a different ruling: unchanged work reuses the existing one.
 
 Exit 0 means you are done. Set `"done": true` and summarize what you added in `final_response`.
 

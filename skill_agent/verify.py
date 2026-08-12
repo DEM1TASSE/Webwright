@@ -127,58 +127,95 @@ def _digest(value: object) -> str:
 
 
 # --------------------------------------------------------------------------- independent judge
-def judge(workspace: Path, proposal: dict, context: dict) -> tuple[dict, list[str]]:
-    """Run a fresh judge episode over this proposal, reusing a verdict for unchanged work.
+def _spawn_judge(workspace: Path, *, kind: str, prompt: str, artifact: str, judge_context: dict,
+                 fingerprint: str, site: str, stage_code: bool = False) -> tuple[dict, list[str]]:
+    """Run a fresh judge episode, reusing its ruling while the thing judged is unchanged.
 
-    The judge is a separate agent with an empty context. Letting the author grade its own work
-    loses exactly what this catches: task-level filtering or formatting living inside a
-    primitive, and record schemas narrowed to whatever the source task happened to need.
+    Every judge here is a separate agent with an empty context. The author of a thing is the
+    worst reviewer of it, and this has been load-bearing: the boundary judge rejected an
+    over-claimed capability three rounds running before the author narrowed it.
     """
     from .runner import WebwrightRunner
 
     workspace = Path(workspace)
-    fingerprint = _digest(proposal)
-    cached = workspace / "out" / "verdicts.json"
-    meta = workspace / "out" / "verdicts.meta.json"
+    cached = workspace / "out" / artifact
+    meta = workspace / "out" / f"{Path(artifact).stem}.meta.json"
     if cached.is_file() and meta.is_file():
-        if ctx.load(meta).get("proposal_sha256") == fingerprint:
+        if ctx.load(meta).get("fingerprint") == fingerprint:
             return ctx.load(cached), []
 
-    gate_dir = workspace / ".judge"
-    attempt = max([int(p.name.split("_")[-1]) for p in gate_dir.glob("attempt_*")], default=0) + 1
-    judge_ws = gate_dir / f"attempt_{attempt:03d}"
+    root = workspace / f".{kind}"
+    attempt = max([int(p.name.split("_")[-1]) for p in root.glob("attempt_*")], default=0) + 1
+    judge_ws = root / f"attempt_{attempt:03d}"
     (judge_ws / "in").mkdir(parents=True, exist_ok=True)
     (judge_ws / "out").mkdir(parents=True, exist_ok=True)
-
-    operations = proposal.get("operations") or []
-    ctx.dump(judge_ws / "in" / "context.json", {
-        "mode": "judge", "review_kind": "primitive_boundary_quality", "site": context["site"],
-        "operations": operations,
-        "candidate_attribution": proposal.get("candidate_attribution") or [],
-        "extractions": ctx.load_extractions(workspace, batch=context.get("batch") or [])})
+    ctx.dump(judge_ws / "in" / "context.json", judge_context)
     if (workspace / "in" / "sources").is_dir():
         shutil.copytree(workspace / "in" / "sources", judge_ws / "in" / "sources", dirs_exist_ok=True)
-    code_dir = judge_ws / "in" / "code"
-    code_dir.mkdir(parents=True, exist_ok=True)
-    for op in operations:
-        replacement = op.get("replacement") if isinstance(op, dict) else None
-        if isinstance(replacement, dict) and replacement.get("method") and replacement.get("method_code"):
-            (code_dir / f"{replacement['method']}.py").write_text(
-                replacement["method_code"], encoding="utf-8")
+    if stage_code:
+        code_dir = judge_ws / "in" / "code"
+        code_dir.mkdir(parents=True, exist_ok=True)
+        for op in judge_context.get("operations") or []:
+            replacement = op.get("replacement") if isinstance(op, dict) else None
+            if isinstance(replacement, dict) and replacement.get("method") and replacement.get("method_code"):
+                (code_dir / f"{replacement['method']}.py").write_text(
+                    replacement["method_code"], encoding="utf-8")
 
-    prompt = (ctx.repo_root() / "skill_agent" / "prompts" / "judge.md").read_text(encoding="utf-8")
+    text = (ctx.repo_root() / "skill_agent" / "prompts" / prompt).read_text(encoding="utf-8")
     episode = WebwrightRunner(model_config=ctx.model_config(), repo_root=ctx.repo_root()).run_episode(
-        stage="judge", task=prompt.replace("{{SITE}}", context["site"]), workspace=judge_ws,
+        stage=kind, task=text.replace("{{SITE}}", site), workspace=judge_ws,
         step_limit=JUDGE_STEP_LIMIT, max_output_tokens=JUDGE_MAX_OUTPUT_TOKENS)
 
-    verdict_path = judge_ws / "out" / "verdicts.json"
-    if not verdict_path.is_file():
-        return {}, [f"the judge episode produced no verdicts ({episode.exit_status})"
+    produced = judge_ws / "out" / artifact
+    if not produced.is_file():
+        return {}, [f"the {kind} episode produced no {artifact} ({episode.exit_status})"
                     + (f": {episode.error}" if episode.error else "")]
-    verdicts = ctx.load(verdict_path)
-    ctx.dump(cached, verdicts)
-    ctx.dump(meta, {"proposal_sha256": fingerprint, "judge_workspace": str(judge_ws.name)})
-    return verdicts, []
+    ruling = ctx.load(produced)
+    ctx.dump(cached, ruling)
+    ctx.dump(meta, {"fingerprint": fingerprint, "judge_workspace": judge_ws.name})
+    return ruling, []
+
+
+def review_extractions(workspace: Path, context: dict, extractions: list[dict]) -> list[str]:
+    """Ask an independent reader whether extraction missed a demonstrated capability.
+
+    Extraction is where capability is silently lost: everything downstream only ever sees what
+    was enumerated, so no later check can notice an omission. Two attempts to detect this
+    statically failed -- matching every string literal was noise, and reading only call-site
+    arguments was too sparse, because these workflows assemble URLs into variables first.
+    """
+    ruling, errors = _spawn_judge(
+        workspace, kind="extraction_review", prompt="judge_extractions.md",
+        artifact="extraction_review.json", site=context["site"],
+        judge_context={"mode": "extraction_review", "site": context["site"],
+                       "extractions": extractions},
+        fingerprint=_digest(extractions))
+    if errors:
+        return errors
+    reviews = {str(r.get("workflow_id")): r for r in ruling.get("reviews") or []}
+    expected = {str(w["id"]) for w in context.get("batch") or []}
+    if set(reviews) != expected:
+        return [f"extraction review must cover every workflow exactly once; missing "
+                f"{sorted(expected - set(reviews))}, unexpected {sorted(set(reviews) - expected)}"]
+    return [f"extraction for {wid} is incomplete: "
+            + "; ".join(str(m.get("capability")) for m in (review.get("missed") or []))
+            + f" ({review.get('reason', '')})"
+            for wid, review in sorted(reviews.items())
+            if str(review.get("verdict")).upper() != "COMPLETE"]
+
+
+def judge(workspace: Path, proposal: dict, context: dict) -> tuple[dict, list[str]]:
+    """Submit the proposal to an independent boundary-and-evidence judge."""
+    return _spawn_judge(
+        workspace, kind="judge", prompt="judge.md", artifact="verdicts.json",
+        site=context["site"], stage_code=True,
+        judge_context={"mode": "judge", "review_kind": "primitive_boundary_quality",
+                       "site": context["site"],
+                       "operations": proposal.get("operations") or [],
+                       "candidate_attribution": proposal.get("candidate_attribution") or [],
+                       "extractions": ctx.load_extractions(
+                           workspace, batch=context.get("batch") or [])},
+        fingerprint=_digest(proposal))
 
 
 # --------------------------------------------------------------------------- verification
@@ -204,6 +241,16 @@ def verify_batch(workspace: Path, context: dict, *, with_judge: bool,
     if errors:
         steps.append("[ ] build — blocked until every workflow is extracted")
         return steps, errors, {}
+
+    if with_judge:
+        review_errors = review_extractions(
+            workspace, context, ctx.load_extractions(workspace, batch=batch))
+        steps.append(f"{'[x]' if not review_errors else '[ ]'} extraction review"
+                     + (f" — {len(review_errors)} incomplete" if review_errors else
+                        " — nothing demonstrated was missed"))
+        if review_errors:
+            steps.append("[ ] build — blocked until every demonstrated capability is extracted")
+            return steps, review_errors, {}
 
     proposal, compose_errors, index_map = compose(workspace)
     if compose_errors:
@@ -237,6 +284,31 @@ def verify_batch(workspace: Path, context: dict, *, with_judge: bool,
                  + (f" — {len(verdict_errors)} unresolved" if verdict_errors else " — all passed"))
     return steps, verdict_errors, {"proposal": proposal, "verdicts": verdicts,
                                    "index_map": index_map}
+
+
+def verify_extraction_review(workspace: Path, context: dict, **_) -> tuple[list[str], list[str], dict]:
+    """The completeness reviewer checks its own ruling with the same command."""
+    path = Path(workspace) / "out" / "extraction_review.json"
+    if not path.is_file():
+        return ["[ ] review — out/extraction_review.json does not exist"], \
+               ["write out/extraction_review.json covering every workflow exactly once"], {}
+    try:
+        ruling = ctx.load(path)
+    except json.JSONDecodeError as exc:
+        return ["[ ] review — invalid JSON"], [f"not valid JSON: {exc}"], {}
+    reviews = ruling.get("reviews") or []
+    expected = {str(x.get("workflow_id")) for x in context.get("extractions") or []
+                if x.get("workflow_id")} or None
+    seen = [str(r.get("workflow_id")) for r in reviews]
+    errors = []
+    if len(seen) != len(set(seen)):
+        errors.append("each workflow may appear only once")
+    for review in reviews:
+        if str(review.get("verdict")).upper() not in {"COMPLETE", "INCOMPLETE"}:
+            errors.append(f"{review.get('workflow_id')}: verdict must be COMPLETE or INCOMPLETE")
+        if str(review.get("verdict")).upper() == "INCOMPLETE" and not (review.get("missed") or []):
+            errors.append(f"{review.get('workflow_id')}: INCOMPLETE needs at least one missed entry")
+    return [f"{'[x]' if not errors else '[ ]'} review — {len(reviews)} workflow ruling(s)"], errors, {}
 
 
 def verify_judge(workspace: Path, context: dict, **_) -> tuple[list[str], list[str], dict]:
@@ -292,7 +364,8 @@ def run(workspace: Path, *, with_judge: bool = True,
         with_host_check: bool = True) -> tuple[int, list[str], list[str], dict]:
     workspace = Path(workspace).resolve()
     context = ctx.load_context(workspace)
-    verifier = {"site": verify_site, "judge": verify_judge}.get(
+    verifier = {"site": verify_site, "judge": verify_judge,
+                "extraction_review": verify_extraction_review}.get(
         context.get("mode", "batch"), verify_batch)
     steps, errors, extra = verifier(workspace, context, with_judge=with_judge,
                                     with_host_check=with_host_check)

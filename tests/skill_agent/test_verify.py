@@ -184,3 +184,79 @@ def test_outside_an_episode_it_fails_with_a_readable_message(tmp_path, monkeypat
     monkeypatch.delenv(ctx.ENV_LIBRARY, raising=False)
     assert verify_mod.main(["--workspace", str(tmp_path)]) == 2
     assert "context.json" in capsys.readouterr().out
+
+
+class TestExtractionReview:
+    """Extraction is where capability is lost silently: everything downstream only sees what
+    was enumerated, so no later check can notice an omission. Two static approaches failed --
+    matching every string literal was noise, reading call-site arguments was too sparse
+    because these workflows assemble URLs into variables -- so an independent reader rules.
+    """
+
+    def _reviewer(self, ruling, calls):
+        class Reviewer:
+            def __init__(self, **_):
+                pass
+
+            def run_episode(self, *, stage, task, workspace, step_limit, max_output_tokens):
+                calls.append(stage)
+                ctx.dump(Path(workspace) / "out" / "extraction_review.json", ruling)
+                from skill_agent.runner import EpisodeResult
+                return EpisodeResult(stage=stage, workspace=Path(workspace),
+                                     exit_status="Submitted", api_calls=1)
+        return Reviewer
+
+    def test_an_incomplete_extraction_blocks_the_build(self, episode, monkeypatch):
+        workspace, _ = episode
+        calls = []
+        monkeypatch.setattr("skill_agent.runner.WebwrightRunner", self._reviewer({"reviews": [
+            {"workflow_id": WORKFLOW["id"], "verdict": "INCOMPLETE",
+             "missed": [{"capability": "reading project members", "evidence": "goto members"}],
+             "reason": "the source visits two areas, one became a candidate"}]}, calls))
+        ctx.dump(workspace / "out" / "extractions" / f"{WORKFLOW['id']}.json", SKIP_EXTRACTION)
+
+        code, steps, errors, _ = verify_mod.run(workspace)
+        assert code == 1
+        assert any("reading project members" in e for e in errors)
+        assert any("blocked until every demonstrated capability" in s for s in steps)
+        assert calls == ["extraction_review"], "the boundary judge is not reached yet"
+
+    def test_a_complete_extraction_lets_the_build_be_evaluated(self, episode, monkeypatch):
+        workspace, _ = episode
+        calls = []
+        monkeypatch.setattr("skill_agent.runner.WebwrightRunner", self._reviewer({"reviews": [
+            {"workflow_id": WORKFLOW["id"], "verdict": "COMPLETE", "missed": [],
+             "reason": "read the source"}]}, calls))
+        ctx.dump(workspace / "out" / "extractions" / f"{WORKFLOW['id']}.json", SKIP_EXTRACTION)
+
+        _, steps, errors, _ = verify_mod.run(workspace)
+        assert any("nothing demonstrated was missed" in s for s in steps)
+        assert any("out/ops/" in e for e in errors), "it moves on to asking for operations"
+
+    def test_a_review_that_skips_a_workflow_is_rejected(self, episode, monkeypatch):
+        workspace, _ = episode
+        monkeypatch.setattr("skill_agent.runner.WebwrightRunner",
+                            self._reviewer({"reviews": []}, []))
+        ctx.dump(workspace / "out" / "extractions" / f"{WORKFLOW['id']}.json", SKIP_EXTRACTION)
+        _, _, errors, _ = verify_mod.run(workspace)
+        assert any("must cover every workflow exactly once" in e for e in errors)
+
+    def test_the_reviewer_checks_its_own_ruling(self, tmp_path, monkeypatch):
+        monkeypatch.setenv(ctx.ENV_LIBRARY, str(tmp_path / "lib"))
+        (tmp_path / "in").mkdir(parents=True)
+        (tmp_path / "out").mkdir(parents=True)
+        ctx.dump(tmp_path / "in" / "context.json",
+                 {"mode": "extraction_review", "site": "gitlab", "extractions": []})
+
+        code, _, errors, _ = verify_mod.run(tmp_path, with_judge=False)
+        assert code == 1 and "extraction_review.json" in errors[0]
+
+        ctx.dump(tmp_path / "out" / "extraction_review.json", {"reviews": [
+            {"workflow_id": "w1", "verdict": "INCOMPLETE", "missed": []}]})
+        _, _, errors, _ = verify_mod.run(tmp_path, with_judge=False)
+        assert any("needs at least one missed entry" in e for e in errors)
+
+        ctx.dump(tmp_path / "out" / "extraction_review.json", {"reviews": [
+            {"workflow_id": "w1", "verdict": "COMPLETE", "missed": [], "reason": "checked"}]})
+        code, _, errors, _ = verify_mod.run(tmp_path, with_judge=False)
+        assert (code, errors) == (0, [])
