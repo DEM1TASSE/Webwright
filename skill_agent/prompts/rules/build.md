@@ -78,15 +78,27 @@ Where the site's base URL comes from, since the class cannot hold it:
 - a method that only calls an **API** must take it as an explicit parameter — it never
   navigates, so `self.page.url` may still be `about:blank`. Declare it in `input_contract`.
 
+**Everything in this section constrains how you write a primitive. None of it is a reason to
+reject a capability.** If a source workflow does something in a way these rules forbid, you
+reimplement it — the capability is demonstrated either way. Rejecting a real site capability
+because its evidence used a forbidden technique throws away the thing you were sent to find.
+
 Import only the standard library. A method that imports a third-party package this project does
 not depend on raises ModuleNotFoundError on its first call, and nothing about the code looks
 wrong. Use `urllib` for HTTP — including authenticated requests, by forwarding
 `self.page.context.cookies()` as a `Cookie` header — and `self.page` for anything the browser
-should do.
+should do. A source that used `requests` is still evidence of the capability: write the same
+acquisition with `urllib`.
 
-Never hard-code the deployment's host or IP into a method. The site address is environment
-state that changes between deployments; a primitive that bakes it in stops working the moment
-the library moves.
+Never hard-code the deployment's host or IP into a method — take the base URL as a parameter
+instead. The address is environment state that changes between deployments, so a primitive that
+bakes it in stops working the moment the library moves.
+
+This is emphatically **not** a reason to reject an endpoint that lives somewhere other than the
+web app. Many sites put a service on its own host or port — a geocoding service, a routing
+engine, a search backend — and reaching it is exactly the kind of site capability worth
+capturing. Give the method that service's base URL as a parameter, declare it in
+`input_contract`, and keep the capability.
 
 Keep the code portable across Python versions: never reuse the same quote character inside an
 f-string expression (`f'{d['key']}'` is a syntax error before 3.12 — use `f"{d['key']}"` or a

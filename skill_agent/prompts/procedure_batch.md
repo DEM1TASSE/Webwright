@@ -66,8 +66,16 @@ re-submit unchanged work hoping for a different ruling: unchanged work reuses th
 
 Exit 0 means you are done. Set `"done": true` and summarize what you added in `final_response`.
 
-If an operation genuinely cannot pass the judge, drop that one operation rather than weakening
-its contract until the objection goes away, and say so in `final_response`. That is the only
-reason to deliver less: a capability is never set aside because the batch would otherwise be
-larger. Every extracted candidate ends up as an operation, covered by a primitive you can name,
-or rejected for a defect you can state.
+When the judge objects, **narrow the primitive before you consider dropping it**. Most
+objections name a specific defect with a specific repair: raw page text becomes the typed fields
+you can actually parse out of it; an over-claimed collection gains the completeness signal it
+was missing; a capability that claims more than the evidence shows shrinks to what the evidence
+shows. A primitive that survives as a smaller, honest version is worth far more than one that
+disappears.
+
+Drop an operation only when narrowing leaves nothing reusable — no site acquisition or parsing
+core at all — and say so in `final_response`. That is the only reason to deliver less: a
+capability is never set aside because the batch would otherwise be larger, and never because
+the source workflow implemented it in a way these rules forbid. Every extracted candidate ends
+up as an operation, covered by a primitive you can name, or rejected for a defect you can
+state.

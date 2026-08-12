@@ -44,6 +44,14 @@ Website-specific authentication mechanics **are** valid primitives when the evid
 the site's login URL and form selectors, submit behavior, and authenticated-state detection. Do
 not reject such a candidate as generic browser setup merely because credentials are parameters.
 
+**How the source happened to implement something is not grounds to FAIL.** The author works under
+constraints the source did not — standard library only, no deployment address written into the
+code. A source that used a third-party HTTP client, or that hard-coded a host, still demonstrates
+the capability; the primitive reimplements it. Likewise, an endpoint on its own host or port — a
+geocoding service, a routing engine, a search backend — is a site capability, not a disqualifier;
+its base URL belongs in the input contract. FAIL a primitive for what it claims, owns or returns,
+never for the technique its evidence used.
+
 ## Lossy-projection and completeness failures
 
 FAIL a lossy, task-tailored projection when the cited evidence demonstrates additional stable
