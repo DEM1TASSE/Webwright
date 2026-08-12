@@ -36,6 +36,8 @@ def main():
     traces = []
     for record, task in zip(records, source_tasks):
         run_dir = Path(record["run_dir"])
+        run_task = load(run_dir / "task.json")
+        start_url = run_task["start_url"]
         schema = next((item.get("results_schema") for item in task.get("eval", [])
                        if item.get("evaluator") == "AgentResponseEvaluator"), None)
         traces.append(Trace(
@@ -43,8 +45,8 @@ def main():
             code=(run_dir / "final_script.py").read_text(encoding="utf-8"),
             answer=record["answer"], correct=True, verdict="skip",
             meta={"params": task.get("instantiation_dict") or {},
-                  "site": urlparse(task["start_urls"][0]).netloc,
-                  "start_url": task["start_urls"][0], "output_schema": schema},
+                  "site": urlparse(start_url).netloc,
+                  "start_url": start_url, "output_schema": schema},
         ))
     library = Library(args.library)
     before = {skill.skill_id for skill in library.list()}
