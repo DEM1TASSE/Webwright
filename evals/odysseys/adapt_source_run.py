@@ -92,6 +92,72 @@ def site_for_url(url: str) -> str | None:
     return canonical_site(host)
 
 
+def site_code_ranges(script_lines: list[str], site: str, urls: list[str]) -> list[tuple[int, int]]:
+    """Locate both URL declarations and the Playwright block that executes them.
+
+    Final scripts commonly declare ``YT_URL`` near the top, then use it much later in a
+    dedicated ``yt = await context.new_page()`` block.  Token windows around the declaration
+    alone are not executable evidence, so trace URL constants into ``page.goto(...)`` and keep
+    the corresponding page block through the next page creation.
+    """
+    tokens = set(SITE_ALIASES.get(site, ()))
+    tokens.update((urlparse(url).hostname or "").lower() for url in urls)
+    url_vars: set[str] = set()
+    for line in script_lines:
+        match = re.match(r"^\s*([A-Za-z_]\w*)\s*=\s*(['\"])(https?://.+?)\2\s*$", line)
+        if match and site_for_url(match.group(3)) == site:
+            url_vars.add(match.group(1))
+
+    selected: list[tuple[int, int]] = []
+    for number, line in enumerate(script_lines, start=1):
+        if any(token and token in line.lower() for token in tokens):
+            selected.append((max(1, number - 2), min(len(script_lines), number + 3)))
+
+        goto = re.search(r"\b([A-Za-z_]\w*)\.goto\((.*)", line)
+        if not goto:
+            continue
+        page, args = goto.groups()
+        direct_urls = urls_in_text(args)
+        targets_site = any(site_for_url(url) == site for url in direct_urls)
+        targets_site = targets_site or any(re.search(rf"\b{re.escape(var)}\b", args)
+                                           for var in url_vars)
+        if not targets_site:
+            continue
+
+        start = number
+        for previous in range(number - 1, 0, -1):
+            candidate = script_lines[previous - 1]
+            if re.search(rf"^\s*{re.escape(page)}\s*=\s*await\s+.*new_page\(", candidate):
+                start = previous
+                break
+            if re.search(rf"\b{re.escape(page)}\.goto\(", candidate):
+                break
+        end = len(script_lines)
+        base_indent = len(script_lines[start - 1]) - len(script_lines[start - 1].lstrip())
+        for following in range(number + 1, len(script_lines) + 1):
+            candidate = script_lines[following - 1]
+            indent = len(candidate) - len(candidate.lstrip())
+            new_page = re.match(r"^\s*([A-Za-z_]\w*)\s*=\s*await\s+.*new_page\(", candidate)
+            if new_page and new_page.group(1) != page and indent == base_indent:
+                end = following - 1
+                break
+            next_goto = re.search(rf"\b{re.escape(page)}\.goto\((.*)", candidate)
+            if next_goto:
+                next_urls = urls_in_text(next_goto.group(1))
+                if next_urls and not any(site_for_url(url) == site for url in next_urls):
+                    end = following - 1
+                    break
+        selected.append((start, end))
+
+    merged: list[tuple[int, int]] = []
+    for lo, hi in sorted(selected):
+        if merged and lo <= merged[-1][1] + 1:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], hi))
+        else:
+            merged.append((lo, hi))
+    return merged
+
+
 def discover_site_evidence(run_dir: str | Path) -> dict[str, dict]:
     run = Path(run_dir)
     log = (run / "final_script_log.txt").read_text(encoding="utf-8", errors="ignore")
@@ -126,19 +192,7 @@ def discover_site_evidence(run_dir: str | Path) -> dict[str, dict]:
             by_site[matches[0]]["screenshots"].append(str(shot))
     script_lines = script.splitlines()
     for site, item in by_site.items():
-        tokens = set(SITE_ALIASES.get(site, ()))
-        tokens.update((urlparse(url).hostname or "").lower() for url in item["urls"])
-        selected = []
-        for number, line in enumerate(script_lines, start=1):
-            if any(token and token in line.lower() for token in tokens):
-                lo, hi = max(1, number - 2), min(len(script_lines), number + 3)
-                selected.append((lo, hi))
-        merged = []
-        for lo, hi in selected:
-            if merged and lo <= merged[-1][1] + 1:
-                merged[-1] = (merged[-1][0], max(merged[-1][1], hi))
-            else:
-                merged.append((lo, hi))
+        merged = site_code_ranges(script_lines, site, item["urls"])
         item["code_ranges"] = merged
         item["code_excerpt"] = "\n\n".join(
             f"# source lines {lo}-{hi}\n" + "\n".join(script_lines[lo - 1:hi])
@@ -175,6 +229,8 @@ def adapt(task: dict, run_dir: str | Path, judge_results: str | Path,
     approvals = approvals or {}
     root = Path(output) / task_id
     root.mkdir(parents=True, exist_ok=True)
+    script_lines = (Path(run_dir) / "final_script.py").read_text(
+        encoding="utf-8", errors="ignore").splitlines()
     segments = []
     for number, (site, item) in enumerate(sorted(evidence.items()), start=1):
         override = approvals.get(site) or {}
@@ -182,6 +238,21 @@ def adapt(task: dict, run_dir: str | Path, judge_results: str | Path,
         template_id = str(override.get("template_id") or "")
         approved = override.get("review_status") == "approved"
         rubric_passed = bool(rubric_ids) and all(scores.get(rid) == 1 for rid in rubric_ids)
+        if "code_ranges" in override:
+            reviewed_ranges = []
+            for value in override["code_ranges"]:
+                if (not isinstance(value, list) or len(value) != 2
+                        or not all(isinstance(x, int) for x in value)):
+                    raise ValueError(f"invalid reviewed code range for {site}: {value!r}")
+                lo, hi = value
+                if lo < 1 or hi < lo or hi > len(script_lines):
+                    raise ValueError(f"reviewed code range out of bounds for {site}: {value!r}")
+                reviewed_ranges.append((lo, hi))
+            item["code_ranges"] = reviewed_ranges
+            item["code_excerpt"] = "\n\n".join(
+                f"# source lines {lo}-{hi}\n" + "\n".join(script_lines[lo - 1:hi])
+                for lo, hi in reviewed_ranges
+            )
         code_path = root / f"{site}.source_excerpt.py"
         code_path.write_text(item["code_excerpt"] or "# no site-specific code located\n",
                              encoding="utf-8")

@@ -37,6 +37,28 @@ def test_google_maps_urls_are_evidence_but_google_search_is_not():
     assert MODULE.site_for_url("https://www.google.com/search?q=A") is None
 
 
+def test_site_excerpt_traces_url_constant_into_playwright_page_block(tmp_path):
+    run = tmp_path / "run"
+    (run / "screenshots").mkdir(parents=True)
+    (run / "final_script_log.txt").write_text(
+        "YouTube URL: https://www.youtube.com/watch?v=abc\n")
+    (run / "final_script.py").write_text(
+        'YT_URL = "https://www.youtube.com/watch?v=abc"\n'
+        'OTHER_URL = "https://example.com/item"\n'
+        'async def main():\n'
+        '    yt = await context.new_page()\n'
+        '    await yt.goto(YT_URL)\n'
+        '    await yt.keyboard.press("k")\n'
+        '    await snap(yt, "youtube_playing.png")\n'
+        '    other = await context.new_page()\n'
+        '    await other.goto(OTHER_URL)\n')
+    evidence = MODULE.discover_site_evidence(run)
+    excerpt = evidence["youtube_com"]["code_excerpt"]
+    assert 'await yt.goto(YT_URL)' in excerpt
+    assert 'await yt.keyboard.press("k")' in excerpt
+    assert 'await other.goto(OTHER_URL)' not in excerpt
+
+
 def test_adapter_requires_review_and_passing_rubric(tmp_path):
     run = tmp_path / "run"
     (run / "screenshots").mkdir(parents=True)
@@ -56,6 +78,28 @@ def test_adapter_requires_review_and_passing_rubric(tmp_path):
                        "template_id": "reddit.thread.open", "goal": "open thread"},
     })
     assert approved["segments"][0]["admitted"] is True
+
+
+def test_approved_code_ranges_replace_heuristic_excerpt(tmp_path):
+    run = tmp_path / "run"
+    (run / "screenshots").mkdir(parents=True)
+    (run / "final_script_log.txt").write_text("https://reddit.com/r/test\n")
+    (run / "final_script.py").write_text(
+        'URL = "https://reddit.com/r/test"\n'
+        'page = await context.new_page()\n'
+        'await page.goto(URL)\n'
+        'await page.click("article")\n')
+    judge = tmp_path / "judge.json"
+    judge.write_text(json.dumps({"tasks": [{"task_id": "t", "rubric_scores": {"R1": 1}}]}))
+    task = {"task_id": "t", "rubrics": {"R1": {"requirement": "Reddit"}}}
+    result = MODULE.adapt(task, run, judge, tmp_path / "out", approvals={
+        "reddit_com": {"review_status": "approved", "rubric_ids": ["R1"],
+                       "template_id": "reddit.open", "code_ranges": [[2, 4]]},
+    })
+    segment = result["segments"][0]
+    assert segment["code_ranges"] == [(2, 4)]
+    assert 'await page.click("article")' in Path(segment["code_path"]).read_text()
+    assert 'URL = "https://reddit.com/r/test"' not in Path(segment["code_path"]).read_text()
 
 
 def test_failed_rubric_cannot_be_admitted(tmp_path):
