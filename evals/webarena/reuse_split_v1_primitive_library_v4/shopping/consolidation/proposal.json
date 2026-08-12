@@ -1,0 +1,221 @@
+{
+  "operations": [
+    {
+      "op": "KEEP",
+      "source": "shopping/login_customer_account",
+      "feature": "auth"
+    },
+    {
+      "op": "KEEP",
+      "source": "shopping/list_customer_order_history_page",
+      "feature": "orders"
+    },
+    {
+      "op": "MERGE",
+      "sources": [
+        "shopping/get_order_detail",
+        "shopping/get_order_detail_status_and_arrival"
+      ],
+      "feature": "orders",
+      "replacement": {
+        "primitive_id": "shopping/orders/get_order_detail",
+        "method": "get_order_detail",
+        "capability": "Retrieve structured objective facts from an authenticated customer order detail page, including order identity, dates, status, displayed financial totals, line items shown on the page, and any displayed arrival or delivery date normalized when recoverable.",
+        "method_code": "def get_order_detail(self, order_detail_url: str, order_number: str | None = None) -> dict:\n    import re\n    import html as html_lib\n    from datetime import datetime\n    from urllib.parse import urljoin\n\n    def _clean(text: str) -> str:\n        text = re.sub(r'<script.*?</script>', ' ', text, flags=re.I | re.S)\n        text = re.sub(r'<style.*?</style>', ' ', text, flags=re.I | re.S)\n        text = re.sub(r'<[^>]+>', ' ', text)\n        return html_lib.unescape(re.sub(r'\\s+', ' ', text)).strip()\n\n    def _normalize_date(raw: str):\n        raw = raw.strip()\n        for fmt in ('%B %d, %Y', '%b %d, %Y', '%m/%d/%Y', '%m/%d/%y'):\n            try:\n                return datetime.strptime(raw, fmt).strftime('%Y-%m-%d')\n            except Exception:\n                pass\n        return None\n\n    base_url = \"http://ec2-18-223-172-69.us-east-2.compute.amazonaws.com:7770/\"\n    self.page.goto(urljoin(base_url, order_detail_url), wait_until=\"domcontentloaded\")\n    html = self.page.content()\n    body_text = _clean(html)\n\n    extracted_order_number = None\n    order_number_match = re.search(r'Order\\s*#\\s*([0-9]+)', body_text, re.I)\n    if order_number_match:\n        extracted_order_number = order_number_match.group(1)\n\n    anchor_order_number = order_number or extracted_order_number\n    status = None\n    if anchor_order_number:\n        anchored_status_match = re.search(\n            r'Order\\s*#\\s*' + re.escape(anchor_order_number) + r'\\s+([A-Za-z ]+?)\\s+Order Date:',\n            body_text,\n            re.I,\n        )\n        if anchored_status_match:\n            status = anchored_status_match.group(1).strip()\n    if status is None:\n        status_match = re.search(r'Order Status:\\s*([A-Za-z ]+)', body_text, re.I)\n        if status_match:\n            status = status_match.group(1).strip()\n\n    order_date_long_match = re.search(r'Order Date:\\s*([A-Za-z]+\\s+\\d{1,2},\\s+\\d{4})', body_text, re.I)\n    order_date_short_match = re.search(r'\\b(\\d{1,2}/\\d{1,2}/\\d{2})\\b', body_text)\n\n    item_rows = re.findall(r'<tr[^>]*id=[\"\\']order-item-row-[^\"\\']*[\"\\'][^>]*>(.*?)</tr>', html, re.I | re.S)\n    items = []\n    for row_html in item_rows:\n        row_text = _clean(row_html)\n        prices = re.findall(r'\\$[\\d,]+\\.\\d{2}', row_text)\n        name_match = re.search(r'^(.*?)(?:\\s+SKU\\b|\\s+Qty\\b|\\s+Price\\b)', row_text, re.I)\n        item_name = name_match.group(1).strip() if name_match and name_match.group(1).strip() else None\n        items.append({\n            \"item_name\": item_name,\n            \"item_text\": row_text,\n            \"item_price_display\": prices[0] if prices else None,\n        })\n\n    tfoot_match = re.search(r'<tfoot[^>]*>(.*?)</tfoot>', html, re.I | re.S)\n    footer_text = _clean(tfoot_match.group(1)) if tfoot_match else body_text\n    subtotal_match = re.search(r'Subtotal\\s*(\\$[\\d,]+\\.\\d{2})', footer_text, re.I)\n    shipping_match = re.search(r'Shipping\\s*&\\s*Handling\\s*(\\$[\\d,]+\\.\\d{2})', footer_text, re.I)\n    grand_total_match = re.search(r'Grand Total\\s*(\\$[\\d,]+\\.\\d{2})', footer_text, re.I)\n\n    arrival_date = None\n    patterns = [\n        r'(?:Arrival|Arrives|Estimated Delivery|Delivery Date|Delivered on|Expected by|Expected delivery)[:\\s]+([A-Za-z]+\\s+\\d{1,2},\\s*\\d{4})',\n        r'(?:Arrival|Arrives|Estimated Delivery|Delivery Date|Delivered on|Expected by|Expected delivery)[:\\s]+(\\d{1,2}/\\d{1,2}/\\d{2,4})',\n    ]\n    for pattern in patterns:\n        match = re.search(pattern, body_text, re.I)\n        if match:\n            arrival_date = _normalize_date(match.group(1))\n            if arrival_date is not None:\n                break\n\n    return {\n        \"order_number\": extracted_order_number,\n        \"order_date_display\": order_date_short_match.group(1) if order_date_short_match else None,\n        \"order_date_long\": order_date_long_match.group(1) if order_date_long_match else None,\n        \"status\": status,\n        \"subtotal_display\": subtotal_match.group(1) if subtotal_match else None,\n        \"shipping_and_handling_display\": shipping_match.group(1) if shipping_match else None,\n        \"grand_total_display\": grand_total_match.group(1) if grand_total_match else None,\n        \"arrival_date\": arrival_date,\n        \"items\": items,\n        \"order_detail_url\": self.page.url,\n    }\n",
+        "owns": [
+          "Open a specific authenticated order detail page",
+          "Parse displayed order identity, order date, and status facts when present",
+          "Parse line items shown on the detail page",
+          "Extract displayed subtotal, shipping and handling, and grand total amounts",
+          "Detect displayed arrival or delivery date text when present and normalize it to YYYY-MM-DD"
+        ],
+        "does_not_own": [
+          "Choosing which order to inspect",
+          "Classifying items into semantic categories",
+          "Applying refund policy or exclusion rules",
+          "Aggregating across multiple orders",
+          "Inferring an arrival date when the page does not display one"
+        ],
+        "input_contract": {
+          "type": "object",
+          "properties": {
+            "order_detail_url": {
+              "type": "string",
+              "description": "Absolute URL or site-relative path for the target authenticated order detail page"
+            },
+            "order_number": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Optional expected website order number used to anchor status extraction when available"
+            }
+          },
+          "required": [
+            "order_detail_url"
+          ]
+        },
+        "output_contract": {
+          "type": "object",
+          "properties": {
+            "order_number": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Displayed order number when recoverable from the detail page"
+            },
+            "order_date_display": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Displayed short date string when present on the page"
+            },
+            "order_date_long": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Displayed long-form order date when present"
+            },
+            "status": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Displayed order status when present"
+            },
+            "subtotal_display": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Displayed subtotal amount"
+            },
+            "shipping_and_handling_display": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Displayed shipping and handling amount"
+            },
+            "grand_total_display": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Displayed grand total amount"
+            },
+            "arrival_date": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Displayed arrival or delivery date normalized to YYYY-MM-DD, or null if not shown"
+            },
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "item_name": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "Displayed item name when recoverable from the item row"
+                  },
+                  "item_text": {
+                    "type": "string",
+                    "description": "Cleaned visible text content from the order item row"
+                  },
+                  "item_price_display": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "Displayed item price found in the row, if present"
+                  }
+                },
+                "required": [
+                  "item_name",
+                  "item_text",
+                  "item_price_display"
+                ]
+              }
+            },
+            "order_detail_url": {
+              "type": "string",
+              "description": "Final resolved URL for the fetched order detail page"
+            }
+          },
+          "required": [
+            "items",
+            "order_detail_url",
+            "arrival_date"
+          ]
+        },
+        "requires": [
+          "authenticated_customer_session"
+        ],
+        "provides": [
+          "customer_order_detail"
+        ],
+        "supported_patterns": [
+          "authenticated_order_detail_page",
+          "order_financial_totals_extraction",
+          "order_line_items_extraction",
+          "order_status_extraction",
+          "delivery_date_extraction"
+        ],
+        "source_evidence": [
+          {
+            "workflow_id": "task143_t162",
+            "template_id": "162",
+            "code_quote": "detail = s.get(jan_row['href'], timeout=30)\nitem_rows = re.findall(r'<tr[^>]*id=\"order-item-row-[^\"]*\"[^>]*>(.*?)</tr>', detail.text, re.I | re.S)\nitems = []\nfor row in item_rows:\n    txt = clean(row)\n    prices = re.findall(r'\\$[\\d,]+\\.\\d{2}', txt)\n    price = prices[0] if prices else None\n    items.append({'text': txt, 'price': price})\n...\nsubtotal_m = re.search(r'Subtotal\\s*(\\$[\\d,]+\\.\\d{2})', footer_text)\nshipping_m = re.search(r'Shipping\\s*&\\s*Handling\\s*(\\$[\\d,]+\\.\\d{2})', footer_text)\ngrand_m = re.search(r'Grand Total\\s*(\\$[\\d,]+\\.\\d{2})', footer_text)",
+            "explanation": "Supports the merged primitive's order-detail page boundary for line items and displayed financial totals.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          },
+          {
+            "workflow_id": "task322_t160",
+            "template_id": "160",
+            "code_quote": "page=s.get(item['view']).text\nplain=normalize_text(page)\ngrand=re.search(r'Grand Total\\s*\\$([0-9,]+\\.[0-9]{2})', plain)\nship=re.search(r'Shipping\\s*&\\s*Handling\\s*\\$([0-9,]+\\.[0-9]{2})', plain)\norder_date=re.search(r'Order Date:\\s*([A-Za-z]+\\s+\\d{1,2},\\s+\\d{4})', plain)\nstatus='Canceled' if 'Canceled' in plain else 'Unknown'",
+            "explanation": "Confirms stable extraction of long-form order date, shipping, grand total, and status from the same order detail page.",
+            "evidence_match_mode": "exact"
+          },
+          {
+            "workflow_id": "task96_t193",
+            "template_id": "193",
+            "code_quote": "detail_url, detail_html = sess.open(latest['detail_url'])\ndetail_text = strip_text(detail_html)\ndetail_status = None\nm = re.search(r'Order\\s+#\\s*' + re.escape(latest['order_number']) + r'\\s+([A-Za-z]+)\\s+Order Date:', detail_text, re.I)\nif m:\n    detail_status = m.group(1)\narrival_date = parse_arrival_date(detail_text)\n...\ndef parse_arrival_date(detail_text):\n    patterns = [\n        r'(?:Arrival|Arrives|Estimated Delivery|Delivery Date|Delivered on|Expected by|Expected delivery)[:\\s]+([A-Za-z]+\\s+\\d{1,2},\\s*\\d{4})',\n        r'(?:Arrival|Arrives|Estimated Delivery|Delivery Date|Delivered on|Expected by|Expected delivery)[:\\s]+(\\d{1,2}/\\d{1,2}/\\d{2,4})',\n    ]",
+            "explanation": "Adds the same-page extraction of anchored status and displayed arrival or delivery date, making merge appropriate.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        ],
+        "source_attribution": {
+          "sources": [
+            "shopping/get_order_detail",
+            "shopping/get_order_detail_status_and_arrival"
+          ],
+          "explanation": "Merged two primitives with the same authenticated order-detail page boundary. The second only adds another objective field family from that same page, so one cohesive orders primitive is a better fit."
+        }
+      },
+      "reason": "Both sources read the same authenticated order detail page and extract complementary objective facts. Merging removes overlap while preserving the primitive/workflow boundary."
+    },
+    {
+      "op": "KEEP",
+      "source": "shopping/list_product_reviews",
+      "feature": "reviews"
+    },
+    {
+      "op": "KEEP",
+      "source": "shopping/search_products",
+      "feature": "catalog"
+    },
+    {
+      "op": "KEEP",
+      "source": "shopping/get_product_review_feed_metadata",
+      "feature": "reviews"
+    }
+  ]
+}

@@ -1,0 +1,174 @@
+{
+  "decision": "CANDIDATES",
+  "candidates": [
+    {
+      "candidate_id": "task30_t33::list_forum_posts",
+      "proposed_method": "list_forum_posts",
+      "capability": "List posts from a Reddit forum listing page in the displayed order with post identity and ordering evidence.",
+      "owns": [
+        "Open a forum listing URL parameterized by forum name and listing mode/path segment.",
+        "Parse post links from the listing page into typed post records.",
+        "Preserve displayed order from the page so workflows can select first/latest according to the chosen listing.",
+        "Return stable post identity available from the URL, including post id and relative/absolute post URL.",
+        "Return listing-level temporal evidence exposed on the page for listed posts when available.",
+        "Indicate whether results may be partial via page-level completeness metadata."
+      ],
+      "does_not_own": [
+        "Decide which forum or listing mode to use for a task.",
+        "Infer that the first post is the correct business answer beyond the page's displayed order semantics.",
+        "Aggregate, rank, or filter posts according to task-specific criteria beyond the chosen listing page.",
+        "Fetch post detail fields not present on the listing page."
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "forum_name": {
+            "type": "string",
+            "description": "Forum name/path segment, e.g. 'space'."
+          },
+          "listing_mode": {
+            "type": "string",
+            "description": "Forum listing mode/path segment, e.g. 'new'."
+          }
+        },
+        "required": [
+          "forum_name",
+          "listing_mode"
+        ]
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "forum_name": {
+            "type": "string"
+          },
+          "listing_mode": {
+            "type": "string"
+          },
+          "posts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "post_id": {
+                  "type": "string",
+                  "description": "Stable post identifier parsed from the post URL."
+                },
+                "post_path": {
+                  "type": "string",
+                  "description": "Relative URL path to the post."
+                },
+                "post_url": {
+                  "type": "string",
+                  "description": "Resolved URL to the post page."
+                },
+                "listing_position": {
+                  "type": "integer",
+                  "description": "1-based position on the returned listing page."
+                },
+                "listed_datetime": {
+                  "type": "string",
+                  "description": "ISO-like datetime string from the listing page's <time datetime=...> when available."
+                }
+              },
+              "required": [
+                "post_id",
+                "post_path",
+                "post_url",
+                "listing_position"
+              ]
+            }
+          },
+          "is_complete_page": {
+            "type": "boolean",
+            "description": "Whether the returned posts represent the complete relevant result set for the requested page/view. For a single forum listing page without pagination traversal, this should generally be false."
+          }
+        },
+        "required": [
+          "forum_name",
+          "listing_mode",
+          "posts",
+          "is_complete_page"
+        ]
+      },
+      "source_evidence": {
+        "workflow_id": "task30_t33",
+        "template_id": "33",
+        "code_quote": "forum_resp = get('/f/space/new')\npost_matches = re.findall(r'href=\"(/f/space/(\\d+)/[^\"]+)\"', forum_html)\nunique_posts = []\nfor href, pid in post_matches:\n    if href not in [u[0] for u in unique_posts]:\n        unique_posts.append((href, pid))\nlatest_href, latest_id = unique_posts[0]\nall_times = re.findall(r'<time[^>]*datetime=\"([^\"]+)\"[^>]*>(.*?)</time>', forum_html, re.I|re.S)",
+        "explanation": "The workflow demonstrates opening a parameterized forum listing page, extracting multiple post URLs and post ids from that page, deduplicating them, preserving page order, and reading listing timestamps from <time datetime>. Generalizing '/f/space/new' to forum_name and listing_mode yields a reusable forum-post listing primitive.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    },
+    {
+      "candidate_id": "task30_t33::get_post_details",
+      "proposed_method": "get_post_details",
+      "capability": "Fetch a Reddit post page and extract stable post metadata and comment-section summary fields exposed in page markup.",
+      "owns": [
+        "Open a post detail page by URL/path.",
+        "Parse stable post metadata from the page, including title and author username.",
+        "Parse page-exposed comment count summary metadata.",
+        "Detect whether the comments area is empty based on stable displayed text/markup cues.",
+        "Return post identity derived from the URL along with extracted detail fields."
+      ],
+      "does_not_own": [
+        "Choose which post to inspect.",
+        "Count comments satisfying task-specific vote/author conditions unless individually parsed comments are demonstrated.",
+        "Perform task-specific reasoning such as concluding the final answer object format."
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "post_url": {
+            "type": "string",
+            "description": "URL or relative path of the Reddit post page to fetch."
+          }
+        },
+        "required": [
+          "post_url"
+        ]
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "post_id": {
+            "type": "string",
+            "description": "Stable post identifier parsed from the post URL when available."
+          },
+          "post_url": {
+            "type": "string"
+          },
+          "post_title": {
+            "type": "string",
+            "description": "Post title extracted from page metadata/title markup."
+          },
+          "author_username": {
+            "type": "string",
+            "description": "Post author's username extracted from page metadata."
+          },
+          "comment_count": {
+            "type": "integer",
+            "description": "Comment count summary exposed by the page, e.g. data-comment-count."
+          },
+          "comments_empty": {
+            "type": "boolean",
+            "description": "Whether the page displays an empty-comments state."
+          }
+        },
+        "required": [
+          "post_url",
+          "post_title",
+          "author_username",
+          "comment_count",
+          "comments_empty"
+        ]
+      },
+      "source_evidence": {
+        "workflow_id": "task30_t33",
+        "template_id": "33",
+        "code_quote": "post_resp = get(latest_href)\ntitle_match = re.search(r'<title>\\s*(.*?)\\s*</title>', post_html, re.I|re.S)\npost_title = html.unescape(title_match.group(1)).strip() if title_match else ''\nauthor_match = re.search(r'og:article:author\" content=\"([^\"]+)\"', post_html)\nusername = author_match.group(1) if author_match else ''\ncomment_count_match = re.search(r'data-comment-count=\"(\\d+)\"', post_html)\ncomment_count_attr = int(comment_count_match.group(1)) if comment_count_match else 0\nhas_empty_comments = \"There's nothing here\" in post_html or \"There&#039;s nothing here\" in post_html",
+        "explanation": "The workflow demonstrates a reusable post-detail read capability: given a post page, it extracts title, author username, comment count metadata, and whether the comments section is empty. These are stable page-level fields independent of the specific task.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    }
+  ]
+}

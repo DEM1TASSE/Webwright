@@ -1,0 +1,261 @@
+{
+  "operations": [
+    {
+      "operation": "ADD",
+      "replacement": {
+        "primitive_id": "gitlab/list_projects_from_projects_index",
+        "method": "list_projects_from_projects_index",
+        "capability": "List project records from the GitLab projects index with supported scope and sort settings, parsing typed project metadata from visible project rows on the fetched page.",
+        "method_code": "def list_projects_from_projects_index(self, scope: str = \"personal\", sort_by: str = \"most_stars\", page_number: int = 1) -> dict:\n    from urllib.parse import urlencode\n\n    scope_to_param = {\n        \"personal\": \"personal\",\n    }\n    sort_to_ui_label = {\n        \"most_stars\": \"Most stars\",\n    }\n    if scope not in scope_to_param:\n        raise ValueError(f\"Unsupported scope: {scope}\")\n    if sort_by not in sort_to_ui_label:\n        raise ValueError(f\"Unsupported sort_by: {sort_by}\")\n\n    params = {}\n    if page_number != 1:\n        params[\"page\"] = page_number\n\n    url = \"/dashboard/projects\"\n    if params:\n        url = f\"{url}?{urlencode(params)}\"\n\n    self.page.goto(url, wait_until=\"domcontentloaded\")\n    self.page.wait_for_timeout(1200)\n\n    if scope == \"personal\":\n        personal_link = self.page.get_by_role(\"link\", name=\"Personal\")\n        if personal_link.count() == 0:\n            raise RuntimeError(\"Personal scope control not found on projects index\")\n        personal_link.first.click()\n        self.page.wait_for_load_state(\"domcontentloaded\")\n        self.page.wait_for_timeout(1200)\n        if page_number != 1:\n            paged_url = self.page.url\n            sep = \"&\" if \"?\" in paged_url else \"?\"\n            self.page.goto(f\"{paged_url}{sep}page={page_number}\", wait_until=\"domcontentloaded\")\n            self.page.wait_for_timeout(1200)\n\n    if sort_by == \"most_stars\":\n        sort_button = self.page.get_by_role(\"button\", name=\"Most stars\")\n        if sort_button.count() == 0:\n            sort_button = self.page.get_by_role(\"button\", name=\"Updated date\")\n        if sort_button.count() == 0:\n            sort_button = self.page.get_by_role(\"button\", name=\"Last created\")\n        if sort_button.count() == 0:\n            sort_button = self.page.get_by_role(\"button\", name=\"Name\")\n        if sort_button.count() == 0:\n            raise RuntimeError(\"Projects sort control not found on projects index\")\n        sort_button.first.click()\n        self.page.wait_for_timeout(500)\n        self.page.get_by_role(\"link\", name=sort_to_ui_label[sort_by]).click()\n        self.page.wait_for_load_state(\"domcontentloaded\")\n        self.page.wait_for_timeout(1200)\n\n    projects = self.page.evaluate(\n        \"\"\"\n        () => {\n          const items = Array.from(document.querySelectorAll('main ul > li')).filter(li => li.querySelector('h2 a'));\n          const out = [];\n          for (const li of items) {\n            const nameEl = li.querySelector('h2 a');\n            const rowText = (li.innerText || '').replace(/\\s+/g, ' ').trim();\n            const starLink = Array.from(li.querySelectorAll('a')).find(a => /\\/\\-\\/starrers$/.test(a.getAttribute('href') || ''));\n            let starsCount = null;\n            if (starLink) {\n              const raw = (starLink.textContent || '').trim();\n              const parsed = parseInt(raw || '0', 10);\n              starsCount = Number.isNaN(parsed) ? null : parsed;\n            }\n            out.push({\n              name: (nameEl.textContent || '').trim(),\n              project_url: nameEl.href,\n              stars_count: starsCount,\n              role_label: /Owner/.test(rowText) ? 'Owner' : null,\n              is_owner: /Owner/.test(rowText)\n            });\n          }\n          return out;\n        }\n        \"\"\"\n    )\n\n    next_link = self.page.locator('a[rel=\"next\"], .gl-pagination a[aria-label=\"Next page\"], .pagination a[rel=\"next\"]')\n    has_next_page = next_link.count() > 0\n\n    return {\n        \"projects\": projects,\n        \"page_number\": page_number,\n        \"has_next_page\": has_next_page,\n    }\n",
+        "owns": [
+          "Navigating to the GitLab projects listing area in the authenticated site UI",
+          "Applying the demonstrated Personal scope filter on the projects index",
+          "Applying the demonstrated Most stars sort option on the projects index",
+          "Parsing visible project rows into typed project records from the fetched page",
+          "Extracting stable listing fields demonstrated by the workflow: project name, project URL, star count, and visible owner indicator",
+          "Reporting page-scoped pagination availability for the fetched results page"
+        ],
+        "does_not_own": [
+          "Authenticating to GitLab",
+          "Deciding which projects are relevant to a user task",
+          "Filtering to only owner projects for task purposes",
+          "Computing maxima, ties, rankings, or other aggregations over returned project records",
+          "Opening individual project pages to collect fields not shown in the listing"
+        ],
+        "input_contract": {
+          "type": "object",
+          "properties": {
+            "scope": {
+              "type": "string",
+              "enum": [
+                "personal"
+              ],
+              "description": "Projects index scope to apply. Evidence demonstrates the Personal filter."
+            },
+            "sort_by": {
+              "type": "string",
+              "enum": [
+                "most_stars"
+              ],
+              "description": "Projects index sort option to apply. Evidence demonstrates Most stars."
+            },
+            "page_number": {
+              "type": "integer",
+              "description": "1-based projects index results page number to fetch.",
+              "default": 1
+            }
+          },
+          "required": []
+        },
+        "output_contract": {
+          "type": "object",
+          "properties": {
+            "projects": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "project_url": {
+                    "type": "string"
+                  },
+                  "stars_count": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "role_label": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "Visible role text parsed from the row when present, e.g. Owner."
+                  },
+                  "is_owner": {
+                    "type": "boolean",
+                    "description": "Whether the row visibly indicates Owner on the listing page."
+                  }
+                },
+                "required": [
+                  "name",
+                  "project_url",
+                  "stars_count",
+                  "role_label",
+                  "is_owner"
+                ]
+              }
+            },
+            "page_number": {
+              "type": "integer"
+            },
+            "has_next_page": {
+              "type": "boolean",
+              "description": "Whether the fetched listing page visibly offers a next page."
+            }
+          },
+          "required": [
+            "projects",
+            "page_number",
+            "has_next_page"
+          ]
+        },
+        "requires": [
+          "authenticated_gitlab_browser_session"
+        ],
+        "provides": [
+          "gitlab_projects_index_page"
+        ],
+        "supported_patterns": [
+          "Projects index page retrieval",
+          "Personal-scope project listing",
+          "Most-stars project sorting",
+          "Typed project row extraction from visible listing"
+        ],
+        "source_evidence": [
+          {
+            "workflow_id": "task169_t289",
+            "template_id": "289",
+            "code_quote": "await page.get_by_role(\"link\", name=re.compile(r\"^Personal$\")).click()\n...\nawait page.get_by_role(\"button\", name=re.compile(r\"^(Name|Updated date|Last created|Most stars)$\")).click()\nawait page.get_by_role(\"link\", name=\"Most stars\").click()\n...\nconst items = Array.from(document.querySelectorAll('main ul > li')).filter(li => li.querySelector('h2 a'));\n...\nconst starLink = Array.from(li.querySelectorAll('a')).find(a => /\\/\\-\\/starrers$/.test(a.getAttribute('href') || ''));\nconst stars = starLink ? parseInt((starLink.textContent || '').trim() || '0', 10) : null;\nout.push({ name: (nameEl.textContent || '').trim(), href: nameEl.href, stars, ownerFlag: /Owner/.test(roleText) });",
+            "explanation": "Generalized the workflow's site-native projects-index controls into parameterized scope and sort inputs, limited to the demonstrated Personal scope and Most stars sort, and preserved the row-structured typed fields actually parsed from the listing: name, project URL, stars count, and owner indicator."
+          }
+        ]
+      }
+    },
+    {
+      "operation": "ADD",
+      "replacement": {
+        "primitive_id": "gitlab/get_project_details_from_project_page",
+        "method": "get_project_details_from_project_page",
+        "capability": "Open a GitLab project page and extract stable project details exposed on the rendered page, including the numeric project ID.",
+        "method_code": "def get_project_details_from_project_page(self, project_url: str) -> dict:\n    import re\n\n    self.page.goto(project_url, wait_until=\"domcontentloaded\")\n    self.page.wait_for_timeout(1200)\n    body_text = self.page.locator(\"body\").inner_text()\n\n    project_id_match = re.search(r\"Project ID:\\s*(\\d+)\", body_text)\n    if not project_id_match:\n        raise RuntimeError(\"Could not find Project ID on project page\")\n\n    return {\n        \"project_url\": self.page.url,\n        \"project_id\": int(project_id_match.group(1)),\n    }\n",
+        "owns": [
+          "Navigating to a specific GitLab project page by URL",
+          "Reading rendered page text from the project page",
+          "Parsing the displayed numeric Project ID from stable page text",
+          "Returning the resolved project URL together with the parsed numeric project ID"
+        ],
+        "does_not_own": [
+          "Discovering which project URLs to inspect",
+          "Comparing multiple projects or choosing winners",
+          "Listing projects from the projects index",
+          "Performing mutations on a project"
+        ],
+        "input_contract": {
+          "type": "object",
+          "properties": {
+            "project_url": {
+              "type": "string",
+              "description": "Absolute or site-relative URL of the GitLab project page to inspect."
+            }
+          },
+          "required": [
+            "project_url"
+          ]
+        },
+        "output_contract": {
+          "type": "object",
+          "properties": {
+            "project_url": {
+              "type": "string"
+            },
+            "project_id": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "project_url",
+            "project_id"
+          ]
+        },
+        "requires": [
+          "authenticated_gitlab_browser_session"
+        ],
+        "provides": [
+          "gitlab_project_page_identity"
+        ],
+        "supported_patterns": [
+          "Project page retrieval",
+          "Displayed numeric Project ID extraction"
+        ],
+        "source_evidence": [
+          {
+            "workflow_id": "task169_t289",
+            "template_id": "289",
+            "code_quote": "async def extract_project_id(page, url: str, name: str) -> int:\n    await page.goto(url, wait_until=\"domcontentloaded\")\n    await page.wait_for_timeout(1200)\n    body = await page.locator(\"body\").inner_text()\n    m = re.search(r\"Project ID:\\s*(\\d+)\", body)\n    if not m:\n        raise RuntimeError(f\"Could not find Project ID on {url}\")",
+            "explanation": "Generalized the workflow's narrow acquisition step from a hard-coded loop helper into a reusable primitive that opens any provided project URL and returns the stable displayed numeric Project ID."
+          }
+        ]
+      }
+    }
+  ],
+  "workflow_attribution": [
+    {
+      "workflow_id": "task296_t329",
+      "decision": "SKIP",
+      "reason": "Its clone-url acquisition is already covered by the existing gitlab/get_project_clone_urls primitive, while the explore-page candidate lacks sufficient evidence for stable typed row parsing from the fetched explore results."
+    },
+    {
+      "workflow_id": "task180_t500",
+      "decision": "SKIP",
+      "reason": "Its acquisition needs are already covered by existing pool primitives for dashboard issue listing and issue detail/status retrieval; remaining logic is workflow-level latest-match selection and boolean formatting."
+    },
+    {
+      "workflow_id": "task169_t289",
+      "decision": "CONTRIBUTED",
+      "operation_indices": [
+        0,
+        1
+      ]
+    },
+    {
+      "workflow_id": "task307_t321",
+      "decision": "SKIP",
+      "reason": "Its candidate is already covered by the existing commit-listing primitive; the remaining logic is workflow-level selection of one date and counting."
+    }
+  ],
+  "candidate_attribution": [
+    {
+      "candidate_id": "task296_t329::list_explore_projects",
+      "decision": "REJECT",
+      "target_id": null,
+      "reason": "Evidence only supports fetching the Explore Projects page with language and sort parameters and inspecting raw HTML near one known repository name, not stable typed parsing of project result rows or claimed displayed-order record extraction."
+    },
+    {
+      "candidate_id": "task296_t329::get_repository_clone_urls",
+      "decision": "COVERED",
+      "target_id": "gitlab/get_project_clone_urls",
+      "reason": "Covered by the existing project-page clone URL primitive, which returns typed SSH and HTTP clone URLs for a given project path."
+    },
+    {
+      "candidate_id": "task180_t500::list_issues",
+      "decision": "COVERED",
+      "target_id": "gitlab/list_dashboard_issues",
+      "reason": "Covered by the existing dashboard issues listing primitive with site-native filters and displayed-order issue link extraction."
+    },
+    {
+      "candidate_id": "task180_t500::get_issue_details",
+      "decision": "COVERED",
+      "target_id": "gitlab/get_issue_detail_status",
+      "reason": "Covered by the existing issue detail status primitive for visible page-state extraction; the pool also already contains an API issue-detail primitive."
+    },
+    {
+      "candidate_id": "task169_t289::list_projects_from_projects_index",
+      "decision": "ADD",
+      "operation_index": 0
+    },
+    {
+      "candidate_id": "task169_t289::get_project_details_from_project_page",
+      "decision": "ADD",
+      "operation_index": 1
+    },
+    {
+      "candidate_id": "task307_t321::list_commits_by_author_on_branch",
+      "decision": "COVERED",
+      "target_id": "gitlab/list_repository_commits",
+      "reason": "Covered by the existing commits-page primitive with optional author filter and typed commit records; workflows can perform date filtering and counting over those records."
+    }
+  ]
+}

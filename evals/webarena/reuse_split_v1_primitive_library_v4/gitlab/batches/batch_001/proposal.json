@@ -1,0 +1,420 @@
+{
+  "operations": [
+    {
+      "operation": "ADD",
+      "replacement": {
+        "primitive_id": "gitlab/list_author_dashboard_issues",
+        "method": "list_author_dashboard_issues",
+        "capability": "Open the GitLab dashboard issues page with author-based filtering and return typed issue link summaries from the current results page.",
+        "method_code": "def list_author_dashboard_issues(self, author_username: str, search_query: str = None, sort: str = \"created_date_desc\", state: str = \"all\", page_number: int = 1) -> dict:\n    import re\n    from urllib.parse import urlencode\n\n    params = {\n        \"author_username\": author_username,\n        \"sort\": sort,\n        \"state\": state,\n        \"page\": page_number,\n    }\n    if search_query is not None:\n        params[\"search\"] = search_query\n\n    url = f\"{self.base_url}/dashboard/issues?{urlencode(params)}\"\n    self.page.goto(url, wait_until=\"domcontentloaded\")\n    self.page.wait_for_load_state(\"networkidle\")\n\n    issue_links = self.page.locator('a[href*=\"/-/issues/\"]')\n    count = issue_links.count()\n    issues = []\n    seen = set()\n\n    for i in range(count):\n        link = issue_links.nth(i)\n        href = link.get_attribute(\"href\")\n        title = (link.inner_text() or \"\").strip()\n        if not href:\n            continue\n\n        issue_url = href if href.startswith(\"http://\") or href.startswith(\"https://\") else f\"{self.base_url}{href if href.startswith('/') else '/' + href}\"\n        if issue_url in seen:\n            continue\n        seen.add(issue_url)\n\n        match = re.search(r'/([^/]+/[^/]+)/-/issues/(\\d+)', href)\n        project_path_with_namespace = match.group(1) if match else None\n        issue_iid = int(match.group(2)) if match else None\n\n        issues.append({\n            \"title\": title or None,\n            \"web_url\": issue_url,\n            \"project_path_with_namespace\": project_path_with_namespace,\n            \"issue_iid\": issue_iid,\n            \"order_index\": len(issues),\n        })\n\n    return {\n        \"author_username\": author_username,\n        \"search_query\": search_query,\n        \"sort\": sort,\n        \"state\": state,\n        \"page_number\": page_number,\n        \"issues\": issues,\n        \"is_complete_page\": False,\n    }\n",
+        "owns": [
+          "Navigate to the GitLab dashboard issues page for an author-filtered query.",
+          "Apply demonstrated query-string controls for author username, free-text search, sort, state, and page number.",
+          "Parse issue links from the rendered current results page into typed issue summary records.",
+          "Preserve visible result order on the fetched page.",
+          "Return page-scoped results without claiming corpus-wide completeness."
+        ],
+        "does_not_own": [
+          "Choosing which returned issue is the latest relevant one for a task.",
+          "Opening an issue detail page to inspect additional fields like state.",
+          "Aggregating across multiple dashboard pages.",
+          "Formatting a downstream boolean or final answer."
+        ],
+        "input_contract": {
+          "type": "object",
+          "properties": {
+            "author_username": {
+              "type": "string",
+              "description": "GitLab username used in the author filter."
+            },
+            "search_query": {
+              "type": "string",
+              "required": false,
+              "description": "Free-text search term sent in the dashboard issues query."
+            },
+            "sort": {
+              "type": "string",
+              "required": false,
+              "default": "created_date_desc",
+              "description": "Sort mode from the dashboard query string."
+            },
+            "state": {
+              "type": "string",
+              "required": false,
+              "default": "all",
+              "enum": [
+                "all",
+                "opened",
+                "closed"
+              ],
+              "description": "Issue state filter as represented in the dashboard query string."
+            },
+            "page_number": {
+              "type": "integer",
+              "required": false,
+              "default": 1,
+              "minimum": 1,
+              "description": "Dashboard issues results page number."
+            }
+          },
+          "required": [
+            "author_username"
+          ]
+        },
+        "output_contract": {
+          "type": "object",
+          "properties": {
+            "author_username": {
+              "type": "string"
+            },
+            "search_query": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "sort": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string"
+            },
+            "page_number": {
+              "type": "integer"
+            },
+            "issues": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "web_url": {
+                    "type": "string"
+                  },
+                  "project_path_with_namespace": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "issue_iid": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "order_index": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "web_url",
+                  "order_index"
+                ]
+              }
+            },
+            "is_complete_page": {
+              "type": "boolean",
+              "description": "False unless pagination has been explicitly exhausted; this primitive parses only the fetched dashboard page."
+            }
+          },
+          "required": [
+            "author_username",
+            "search_query",
+            "sort",
+            "state",
+            "page_number",
+            "issues",
+            "is_complete_page"
+          ]
+        },
+        "requires": [
+          "authenticated_gitlab_browser_session",
+          "self.base_url"
+        ],
+        "provides": [
+          "gitlab_author_dashboard_issue_results_page"
+        ],
+        "supported_patterns": [
+          "UI"
+        ],
+        "source_evidence": [
+          {
+            "workflow_id": "task180_t500",
+            "template_id": "500",
+            "code_quote": "list_url = BASE + \"/dashboard/issues?author_username=byteblaze&search=depend&sort=created_date_desc&state=all\" ... issue_links = await page.locator('a').evaluate_all(\"els => els.map(a => ({text:(a.innerText||'').trim(), href:a.href})).filter(x => x.text && x.href.includes('/-/issues/'))\")",
+            "explanation": "Generalized the workflow's author-filtered dashboard issues retrieval into a reusable current-page listing primitive with parameterized author_username, search_query, sort, state, and page_number. Removed task-specific selection of the single 'Outdated dependencies' issue while preserving typed issue-link acquisition from the rendered dashboard page."
+          }
+        ]
+      }
+    },
+    {
+      "operation": "ADD",
+      "replacement": {
+        "primitive_id": "gitlab/get_issue_state_from_page",
+        "method": "get_issue_state_from_page",
+        "capability": "Open a GitLab issue detail page and extract its normalized open or closed state from the rendered page.",
+        "method_code": "def get_issue_state_from_page(self, issue_url: str) -> dict:\n    import re\n\n    self.page.goto(issue_url, wait_until=\"domcontentloaded\")\n    self.page.wait_for_load_state(\"networkidle\")\n    body_text = self.page.locator(\"body\").inner_text()\n\n    state = None\n    if re.search(r'(^|\\n)\\s*Closed\\s*(\\n|$)', body_text, re.I):\n        state = \"closed\"\n    elif re.search(r'(^|\\n)\\s*Open\\s*(\\n|$)', body_text, re.I):\n        state = \"open\"\n\n    if state is None:\n        raise RuntimeError(f\"Could not determine issue state from page: {issue_url}\")\n\n    return {\n        \"issue_url\": issue_url,\n        \"state\": state,\n    }\n",
+        "owns": [
+          "Navigate to a GitLab issue detail page by URL.",
+          "Read rendered issue page text from the browser session.",
+          "Parse the displayed issue state into a normalized open or closed value.",
+          "Return typed issue-state facts from the page boundary."
+        ],
+        "does_not_own": [
+          "Finding the correct issue URL from search or list pages.",
+          "Converting the state into a task-specific boolean answer.",
+          "Mutating issue state or performing issue actions."
+        ],
+        "input_contract": {
+          "type": "object",
+          "properties": {
+            "issue_url": {
+              "type": "string",
+              "description": "Absolute GitLab issue detail URL."
+            }
+          },
+          "required": [
+            "issue_url"
+          ]
+        },
+        "output_contract": {
+          "type": "object",
+          "properties": {
+            "issue_url": {
+              "type": "string",
+              "description": "The requested issue URL."
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "open",
+                "closed"
+              ],
+              "description": "Normalized issue state parsed from the rendered issue page."
+            }
+          },
+          "required": [
+            "issue_url",
+            "state"
+          ]
+        },
+        "requires": [
+          "authenticated_gitlab_browser_session"
+        ],
+        "provides": [
+          "gitlab_issue_state_from_page"
+        ],
+        "supported_patterns": [
+          "UI"
+        ],
+        "source_evidence": [
+          {
+            "workflow_id": "task180_t500",
+            "template_id": "500",
+            "code_quote": "await page.goto(first_issue, wait_until=\"domcontentloaded\") ... issue_body = await page.locator('body').inner_text() ... is_open = 'Open\\nIssue created' in issue_body or '\\nOpen\\n' in issue_body\nis_closed = 'Closed\\nIssue created' in issue_body or '\\nClosed\\n' in issue_body",
+            "explanation": "Generalized the workflow's issue detail inspection into a reusable primitive that accepts an issue URL and returns normalized state. Removed the task-specific boolean output formatting while preserving the rendered-page acquisition boundary."
+          }
+        ]
+      }
+    },
+    {
+      "operation": "ADD",
+      "replacement": {
+        "primitive_id": "gitlab/list_personal_projects_page",
+        "method": "list_personal_projects_page",
+        "capability": "Open the GitLab personal projects listing with supported sort options and return typed project summaries from the current page.",
+        "method_code": "def list_personal_projects_page(self, sort_by: str = \"most_stars\", page_number: int = 1) -> dict:\n    import re\n    from urllib.parse import urlencode\n\n    sort_map = {\n        \"most_stars\": \"stars_desc\",\n    }\n\n    params = {\n        \"personal\": \"true\",\n        \"page\": page_number,\n    }\n    if sort_by in sort_map:\n        params[\"sort\"] = sort_map[sort_by]\n\n    url = f\"{self.base_url}/dashboard/projects?{urlencode(params)}\"\n    self.page.goto(url, wait_until=\"domcontentloaded\")\n\n    items = self.page.locator('main ul > li')\n    count = items.count()\n    projects = []\n\n    for i in range(count):\n        item = items.nth(i)\n        name_link = item.locator('h2 a').first\n        if name_link.count() == 0:\n            continue\n\n        href = name_link.get_attribute(\"href\")\n        name = (name_link.inner_text() or \"\").strip()\n        if not href or not name:\n            continue\n\n        full_url = href if href.startswith(\"http://\") or href.startswith(\"https://\") else f\"{self.base_url}{href if href.startswith('/') else '/' + href}\"\n        path_with_namespace = href.split(\"?\", 1)[0].split(\"#\", 1)[0].strip(\"/\")\n        role_text = item.inner_text() or \"\"\n        viewer_role_is_owner = bool(re.search(r'\\bOwner\\b', role_text))\n\n        star_count = None\n        star_link = item.locator('a[href$=\"/-/starrers\"]').first\n        if star_link.count() > 0:\n            star_text = (star_link.inner_text() or \"\").strip()\n            star_match = re.search(r'\\d+', star_text)\n            if star_match:\n                star_count = int(star_match.group(0))\n\n        projects.append({\n            \"name\": name,\n            \"web_url\": full_url,\n            \"path_with_namespace\": path_with_namespace,\n            \"star_count\": star_count,\n            \"viewer_role_is_owner\": viewer_role_is_owner,\n        })\n\n    return {\n        \"page_number\": page_number,\n        \"applied_scope\": \"personal\",\n        \"sort_by\": sort_by,\n        \"projects\": projects,\n        \"completeness\": \"visible_page_only\",\n    }\n",
+        "owns": [
+          "Navigate to the GitLab personal projects listing UI.",
+          "Apply the Personal scope and supported sort option demonstrated by the source.",
+          "Parse visible current-page project list items into typed project summaries.",
+          "Extract stable listing fields demonstrated in evidence, including project name, URL, path, star count, and viewer owner marker.",
+          "Limit completeness claims to the visible page."
+        ],
+        "does_not_own": [
+          "Choosing which project has the highest star count.",
+          "Resolving ties or aggregating across pages.",
+          "Opening individual projects to retrieve additional metadata such as project ID.",
+          "Performing authentication bootstrapping beyond requiring an authenticated browser session."
+        ],
+        "input_contract": {
+          "type": "object",
+          "properties": {
+            "sort_by": {
+              "type": "string",
+              "required": false,
+              "default": "most_stars",
+              "enum": [
+                "most_stars"
+              ],
+              "description": "Sort order to apply on the personal projects listing UI."
+            },
+            "page_number": {
+              "type": "integer",
+              "required": false,
+              "default": 1,
+              "minimum": 1,
+              "description": "Projects listing page number."
+            }
+          },
+          "required": []
+        },
+        "output_contract": {
+          "type": "object",
+          "properties": {
+            "page_number": {
+              "type": "integer"
+            },
+            "applied_scope": {
+              "type": "string",
+              "enum": [
+                "personal"
+              ]
+            },
+            "sort_by": {
+              "type": "string"
+            },
+            "projects": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "web_url": {
+                    "type": "string"
+                  },
+                  "path_with_namespace": {
+                    "type": "string"
+                  },
+                  "star_count": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "viewer_role_is_owner": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "name",
+                  "web_url",
+                  "path_with_namespace",
+                  "viewer_role_is_owner"
+                ]
+              }
+            },
+            "completeness": {
+              "type": "string",
+              "enum": [
+                "visible_page_only"
+              ],
+              "description": "Only the currently displayed listing page is parsed; no pagination exhaustion is established."
+            }
+          },
+          "required": [
+            "page_number",
+            "applied_scope",
+            "sort_by",
+            "projects",
+            "completeness"
+          ]
+        },
+        "requires": [
+          "authenticated_gitlab_browser_session",
+          "self.base_url"
+        ],
+        "provides": [
+          "gitlab_personal_projects_results_page"
+        ],
+        "supported_patterns": [
+          "UI"
+        ],
+        "source_evidence": [
+          {
+            "workflow_id": "task169_t289",
+            "template_id": "289",
+            "code_quote": "go_personal_and_sort(): clicks the \"Personal\" link, then opens the sort menu and selects \"Most stars\". extract_sorted_projects(): evaluates DOM over `main ul > li`, finds `h2 a` for project name/url, finds starrers link matching `/-/starrers` for star count, and detects `Owner` from list item text.",
+            "explanation": "Generalized the workflow's UI steps into a reusable primitive for the personal projects listing page. Removed task-specific max-star selection and tie handling, and preserved typed listing fields demonstrated directly on the page."
+          }
+        ]
+      }
+    }
+  ],
+  "workflow_attribution": [
+    {
+      "workflow_id": "task296_t329",
+      "decision": "SKIP",
+      "reason": "Covered by existing primitive gitlab/get_project_clone_urls for project-page clone URL extraction. The explore-listing candidate was not added because the available evidence only shows fetching one explore URL and inspecting a snippet around a known project, which is insufficient to support a robust typed listing primitive without overclaiming selectors, pagination, or listing-field semantics."
+    },
+    {
+      "workflow_id": "task180_t500",
+      "decision": "CONTRIBUTED",
+      "operation_indices": [
+        0,
+        1
+      ]
+    },
+    {
+      "workflow_id": "task169_t289",
+      "decision": "CONTRIBUTED",
+      "operation_indices": [
+        2
+      ]
+    },
+    {
+      "workflow_id": "task307_t321",
+      "decision": "SKIP",
+      "reason": "Covered by existing primitives gitlab/list_repository_commits_history_page for UI commits-page date-group parsing and gitlab/list_repository_commits for API commit listing; the extracted candidate's author-and-day specialization adds workflow-level selection/counting rather than a new primitive."
+    }
+  ],
+  "candidate_attribution": [
+    {
+      "candidate_id": "task296_t329::list_explore_projects",
+      "decision": "REJECT",
+      "target_id": null,
+      "reason": "Boundary/evidence defect: the workflow only fetches one explore URL and inspects a text snippet around a known repository name. That evidence does not safely support a robust current-page listing primitive with stable project-card selection, page_number support, or typed listing fields such as language/stars/forks without inventing parsing semantics."
+    },
+    {
+      "candidate_id": "task296_t329::get_repository_clone_urls",
+      "decision": "COVERED",
+      "target_id": "gitlab/get_project_clone_urls",
+      "reason": "Existing primitive already covers opening a project page and extracting typed SSH/HTTP clone URLs with the same core capability and stable contract."
+    },
+    {
+      "candidate_id": "task180_t500::list_issues",
+      "decision": "ADD",
+      "operation_index": 0
+    },
+    {
+      "candidate_id": "task180_t500::get_issue_state",
+      "decision": "ADD",
+      "operation_index": 1
+    },
+    {
+      "candidate_id": "task169_t289::list_projects_from_projects_index",
+      "decision": "ADD",
+      "operation_index": 2
+    },
+    {
+      "candidate_id": "task169_t289::get_project_metadata_from_project_page",
+      "decision": "COVERED",
+      "target_id": "gitlab/get_project_by_path",
+      "reason": "Existing API primitive already returns authoritative typed project metadata including project id for a project path, covering the need while preserving the same site semantics."
+    },
+    {
+      "candidate_id": "task307_t321::list_repository_commits_by_author_and_day",
+      "decision": "COVERED",
+      "target_id": "gitlab/list_repository_commits_history_page",
+      "reason": "Existing UI primitive already returns current-page commit date groups and visible commit metadata from the repository commits page; choosing a specific day and counting one author's commits are workflow responsibilities."
+    }
+  ]
+}

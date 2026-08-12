@@ -1,0 +1,194 @@
+{
+  "decision": "CANDIDATES",
+  "candidates": [
+    {
+      "candidate_id": "task154_t36::geocode_place_query",
+      "proposed_method": "geocode_place_query",
+      "capability": "Resolve a free-form place query on the site's Nominatim search service into structured place candidates with stable identity and coordinates.",
+      "owns": [
+        "Constructing a Nominatim search URL from a parameterized free-form query string",
+        "Requesting the site's geocoding endpoint and parsing JSON results",
+        "Returning structured place candidate records including stable OSM identity, display semantics, and coordinates",
+        "Reporting when no candidates are found"
+      ],
+      "does_not_own": [
+        "Choosing which candidate best matches a task's intent among multiple results",
+        "Applying task-specific query rewriting such as substituting a resolved origin phrase",
+        "Computing routes or durations from coordinates",
+        "Formatting final answers for a user"
+      ],
+      "input_contract": {
+        "query": {
+          "type": "string",
+          "description": "Free-form place search text to send to the site's Nominatim search endpoint."
+        }
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "candidates": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "place_id": {
+                  "type": "integer|string"
+                },
+                "osm_type": {
+                  "type": "string"
+                },
+                "osm_id": {
+                  "type": "integer|string"
+                },
+                "display_name": {
+                  "type": "string"
+                },
+                "lat": {
+                  "type": "string"
+                },
+                "lon": {
+                  "type": "string"
+                },
+                "class": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string"
+                },
+                "importance": {
+                  "type": "number|string"
+                }
+              },
+              "required": [
+                "display_name",
+                "lat",
+                "lon"
+              ]
+            }
+          },
+          "is_complete": {
+            "type": "boolean",
+            "description": "False when the endpoint may have returned only a ranked subset rather than an exhaustive set of matches."
+          }
+        },
+        "required": [
+          "candidates",
+          "is_complete"
+        ]
+      },
+      "source_evidence": {
+        "workflow_id": "task154_t36",
+        "template_id": "36",
+        "code_quote": "with urllib.request.urlopen(base_nom + urllib.parse.quote(queries['origin_resolved_query']), timeout=30) as r:\n    origin_results = json.load(r)\nwith urllib.request.urlopen(base_nom + urllib.parse.quote(queries['destination_query']), timeout=30) as r:\n    dest_results = json.load(r)\n...\norigin = origin_results[0]\ndest = dest_results[0]\n...\n'evidence.json' writes full 'origin_result' and 'destination_result' objects",
+        "explanation": "The workflow demonstrates a reusable website operation against the site's Nominatim search service: given a text query, fetch JSON place candidates and use returned structured records. The generalized capability keeps the full candidate acquisition boundary rather than only the chosen display name and coordinates, because the workflow stores the entire result objects in evidence and Nominatim results stably expose identity and metadata fields.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    },
+    {
+      "candidate_id": "task154_t36::get_driving_route",
+      "proposed_method": "get_driving_route",
+      "capability": "Request a driving route from the site's OSRM directions service between two coordinates and return structured route summaries.",
+      "owns": [
+        "Constructing the OSRM route URL from origin and destination coordinates",
+        "Calling the driving profile directions endpoint",
+        "Parsing the route response JSON",
+        "Returning route summary fields demonstrated by the response, including duration and distance",
+        "Reporting failure when the routing service returns no route or a non-Ok code"
+      ],
+      "does_not_own": [
+        "Geocoding free-form place names into coordinates",
+        "Selecting origin and destination for a particular task",
+        "Formatting duration into HH:MM:SS for final user output",
+        "Ranking among alternative routes beyond preserving service-returned order"
+      ],
+      "input_contract": {
+        "origin": {
+          "type": "object",
+          "properties": {
+            "lon": {
+              "type": "number|string"
+            },
+            "lat": {
+              "type": "number|string"
+            }
+          },
+          "required": [
+            "lon",
+            "lat"
+          ]
+        },
+        "destination": {
+          "type": "object",
+          "properties": {
+            "lon": {
+              "type": "number|string"
+            },
+            "lat": {
+              "type": "number|string"
+            }
+          },
+          "required": [
+            "lon",
+            "lat"
+          ]
+        },
+        "steps": {
+          "type": "boolean",
+          "description": "Whether to request turn-by-turn steps from the OSRM service.",
+          "default": true
+        },
+        "overview": {
+          "type": "string|boolean",
+          "description": "OSRM overview parameter to control route geometry summary.",
+          "default": false
+        },
+        "geometries": {
+          "type": "string",
+          "description": "Requested geometry encoding format.",
+          "default": "polyline"
+        }
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "routes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "duration_seconds": {
+                  "type": "number"
+                },
+                "distance_meters": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "duration_seconds",
+                "distance_meters"
+              ]
+            }
+          },
+          "waypoints": {
+            "type": "array",
+            "description": "Waypoint metadata if provided by the service response."
+          }
+        },
+        "required": [
+          "code",
+          "routes"
+        ]
+      },
+      "source_evidence": {
+        "workflow_id": "task154_t36",
+        "template_id": "36",
+        "code_quote": "coords = f\"{origin['lon']},{origin['lat']};{dest['lon']},{dest['lat']}\"\nroute_url = base_osrm + coords + '?overview=false&steps=true&geometries=polyline'\nwith urllib.request.urlopen(route_url, timeout=30) as r:\n    route = json.load(r)\n\nif route.get('code') != 'Ok' or not route.get('routes'):\n    ...\nseconds = route['routes'][0]['duration']\n...\n'evidence.json' writes 'route_summary': {'duration_seconds': seconds, 'distance_meters': route['routes'][0]['distance']}",
+        "explanation": "The workflow directly demonstrates a reusable routing primitive on the site's OSRM backend: parameterize origin/destination coordinates, request a driving route, and parse route summaries. The generalized output preserves objective route metrics actually exposed by the evidence—duration and distance—and keeps route arrays because the service returns potentially multiple routes.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    }
+  ]
+}

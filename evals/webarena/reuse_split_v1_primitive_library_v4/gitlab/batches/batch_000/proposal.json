@@ -1,0 +1,1302 @@
+{
+  "operations": [
+    {
+      "operation": "ADD",
+      "replacement": {
+        "primitive_id": "gitlab/list_membership_projects",
+        "method": "list_membership_projects",
+        "capability": "List GitLab projects accessible to the authenticated user from the membership-scoped projects API.",
+        "method_code": "def list_membership_projects(self, page_number: int = 1, per_page: int = 100) -> dict:\n    from urllib.parse import urlencode\n\n    params = {\n        \"membership\": \"true\",\n        \"simple\": \"true\",\n        \"page\": page_number,\n        \"per_page\": per_page,\n    }\n    url = f\"{self.base_url}/api/v4/projects?{urlencode(params)}\"\n    response = self.page.request.get(url, headers={\"Accept\": \"application/json\"})\n    if not response.ok:\n        raise RuntimeError(f\"GitLab membership projects API request failed: {response.status} {url}\")\n\n    payload = response.json()\n    headers = response.headers\n    next_page_raw = headers.get(\"x-next-page\") or headers.get(\"X-Next-Page\")\n    next_page = int(next_page_raw) if next_page_raw and str(next_page_raw).strip() else None\n\n    projects = []\n    for item in payload:\n        projects.append({\n            \"id\": item.get(\"id\"),\n            \"name\": item.get(\"name\"),\n            \"path\": item.get(\"path\"),\n            \"path_with_namespace\": item.get(\"path_with_namespace\"),\n            \"web_url\": item.get(\"web_url\"),\n        })\n\n    return {\n        \"page_number\": page_number,\n        \"per_page\": per_page,\n        \"projects\": projects,\n        \"next_page\": next_page,\n        \"is_complete_page\": next_page is None,\n    }\n",
+        "owns": [
+          "Call the GitLab membership-scoped projects API endpoint.",
+          "Accept pagination inputs supported by the endpoint.",
+          "Parse and return typed project records from the API response.",
+          "Preserve stable project identity, path, namespace, and web URL fields.",
+          "Expose page-scoped pagination completeness using response headers."
+        ],
+        "does_not_own": [
+          "Filtering projects for a downstream task.",
+          "Inspecting issues within each project.",
+          "Ranking or selecting projects for a workflow goal.",
+          "Combining project results with issue-derived conclusions."
+        ],
+        "input_contract": {
+          "type": "object",
+          "properties": {
+            "page_number": {
+              "type": "integer",
+              "required": false,
+              "default": 1,
+              "description": "Results page number."
+            },
+            "per_page": {
+              "type": "integer",
+              "required": false,
+              "default": 100,
+              "description": "Results per page."
+            }
+          }
+        },
+        "output_contract": {
+          "type": "object",
+          "properties": {
+            "page_number": {
+              "type": "integer"
+            },
+            "per_page": {
+              "type": "integer"
+            },
+            "projects": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "integer",
+                    "required": false
+                  },
+                  "name": {
+                    "type": "string",
+                    "required": false
+                  },
+                  "path": {
+                    "type": "string",
+                    "required": false
+                  },
+                  "path_with_namespace": {
+                    "type": "string",
+                    "required": false
+                  },
+                  "web_url": {
+                    "type": "string",
+                    "required": false
+                  }
+                }
+              }
+            },
+            "next_page": {
+              "type": "integer",
+              "required": false
+            },
+            "is_complete_page": {
+              "type": "boolean",
+              "description": "True when the current query has no next page according to GitLab pagination headers."
+            }
+          }
+        },
+        "requires": [
+          "authenticated_gitlab_session",
+          "self.base_url"
+        ],
+        "provides": [
+          "gitlab_membership_project_records"
+        ],
+        "supported_patterns": [
+          "API"
+        ],
+        "source_evidence": [
+          {
+            "workflow_id": "task175_t310",
+            "template_id": "310",
+            "code_quote": "projects = s.get(BASE + '/api/v4/projects?membership=true&simple=true&per_page=100', timeout=30).json() ... for p in projects: pid = p['id'] ... 'project': p['path_with_namespace']",
+            "explanation": "Generalized the workflow's membership-scoped project enumeration into a reusable API primitive with pagination. Preserved stable project identifiers and namespace fields demonstrated at the acquisition boundary rather than the workflow's cross-project issue search logic."
+          }
+        ]
+      }
+    },
+    {
+      "operation": "ADD",
+      "replacement": {
+        "primitive_id": "gitlab/list_project_issues",
+        "method": "list_project_issues",
+        "capability": "List issues for a GitLab project via the REST API with optional scope, ordering, sorting, and pagination.",
+        "method_code": "def list_project_issues(self, project_id: int, scope: str = \"all\", order_by: str = \"updated_at\", sort: str = \"desc\", page_number: int = 1, per_page: int = 100) -> dict:\n    from urllib.parse import urlencode\n\n    params = {\n        \"scope\": scope,\n        \"order_by\": order_by,\n        \"sort\": sort,\n        \"page\": page_number,\n        \"per_page\": per_page,\n    }\n    url = f\"{self.base_url}/api/v4/projects/{project_id}/issues?{urlencode(params)}\"\n    response = self.page.request.get(url, headers={\"Accept\": \"application/json\"})\n    if not response.ok:\n        raise RuntimeError(f\"GitLab issues API request failed: {response.status} {url}\")\n\n    payload = response.json()\n    headers = response.headers\n    next_page_raw = headers.get(\"x-next-page\") or headers.get(\"X-Next-Page\")\n    next_page = int(next_page_raw) if next_page_raw and str(next_page_raw).strip() else None\n\n    issues = []\n    for item in payload:\n        issues.append({\n            \"id\": item.get(\"id\"),\n            \"iid\": item.get(\"iid\"),\n            \"project_id\": item.get(\"project_id\", project_id),\n            \"title\": item.get(\"title\"),\n            \"state\": item.get(\"state\"),\n            \"created_at\": item.get(\"created_at\"),\n            \"updated_at\": item.get(\"updated_at\"),\n            \"closed_at\": item.get(\"closed_at\"),\n            \"web_url\": item.get(\"web_url\"),\n        })\n\n    return {\n        \"project_id\": project_id,\n        \"scope\": scope,\n        \"order_by\": order_by,\n        \"sort\": sort,\n        \"page_number\": page_number,\n        \"per_page\": per_page,\n        \"issues\": issues,\n        \"next_page\": next_page,\n        \"is_complete_page\": next_page is None,\n    }\n",
+        "owns": [
+          "Call the GitLab project issues API endpoint for a specified project.",
+          "Accept scope, ordering, sort direction, and pagination inputs supported by the endpoint.",
+          "Parse and return typed issue records from the API response.",
+          "Preserve stable issue identity, timestamps, state, and web URL fields.",
+          "Expose page-scoped pagination completeness using response headers."
+        ],
+        "does_not_own": [
+          "Filtering issues by task-specific title substring or semantic relevance.",
+          "Selecting the latest matching issue across multiple projects.",
+          "Converting issue state into a workflow boolean answer.",
+          "Aggregating issues across projects."
+        ],
+        "input_contract": {
+          "type": "object",
+          "properties": {
+            "project_id": {
+              "type": "integer",
+              "description": "GitLab project id."
+            },
+            "scope": {
+              "type": "string",
+              "required": false,
+              "default": "all",
+              "description": "Issue scope supported by the endpoint, such as all, created_by_me, or assigned_to_me."
+            },
+            "order_by": {
+              "type": "string",
+              "required": false,
+              "default": "updated_at",
+              "description": "Server-side order field, such as created_at or updated_at."
+            },
+            "sort": {
+              "type": "string",
+              "required": false,
+              "default": "desc",
+              "description": "Sort direction, asc or desc."
+            },
+            "page_number": {
+              "type": "integer",
+              "required": false,
+              "default": 1,
+              "description": "Results page number."
+            },
+            "per_page": {
+              "type": "integer",
+              "required": false,
+              "default": 100,
+              "description": "Results per page."
+            }
+          },
+          "required": [
+            "project_id"
+          ]
+        },
+        "output_contract": {
+          "type": "object",
+          "properties": {
+            "project_id": {
+              "type": "integer"
+            },
+            "scope": {
+              "type": "string"
+            },
+            "order_by": {
+              "type": "string"
+            },
+            "sort": {
+              "type": "string"
+            },
+            "page_number": {
+              "type": "integer"
+            },
+            "per_page": {
+              "type": "integer"
+            },
+            "issues": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "integer",
+                    "required": false
+                  },
+                  "iid": {
+                    "type": "integer",
+                    "required": false
+                  },
+                  "project_id": {
+                    "type": "integer",
+                    "required": false
+                  },
+                  "title": {
+                    "type": "string",
+                    "required": false
+                  },
+                  "state": {
+                    "type": "string",
+                    "required": false
+                  },
+                  "created_at": {
+                    "type": "string",
+                    "required": false
+                  },
+                  "updated_at": {
+                    "type": "string",
+                    "required": false
+                  },
+                  "closed_at": {
+                    "type": "string",
+                    "required": false
+                  },
+                  "web_url": {
+                    "type": "string",
+                    "required": false
+                  }
+                }
+              }
+            },
+            "next_page": {
+              "type": "integer",
+              "required": false
+            },
+            "is_complete_page": {
+              "type": "boolean",
+              "description": "True when the current query has no next page according to GitLab pagination headers."
+            }
+          }
+        },
+        "requires": [
+          "authenticated_gitlab_session",
+          "self.base_url"
+        ],
+        "provides": [
+          "gitlab_project_issue_records"
+        ],
+        "supported_patterns": [
+          "API"
+        ],
+        "source_evidence": [
+          {
+            "workflow_id": "task175_t310",
+            "template_id": "310",
+            "code_quote": "issues = s.get(BASE + f'/api/v4/projects/{pid}/issues?scope=all&per_page=100&order_by=updated_at&sort=desc', timeout=30).json() ... matching.append({'project': p['path_with_namespace'], 'iid': iss.get('iid'), 'title': title, 'state': iss.get('state'), 'updated_at': iss.get('updated_at'), 'web_url': iss.get('web_url')})",
+            "explanation": "Generalized the per-project issues API call into a reusable listing primitive with parameterized scope, order_by, sort, and pagination. Preserved stable issue fields shown at the acquisition boundary and exposed pagination metadata instead of claiming full completeness."
+          }
+        ]
+      }
+    },
+    {
+      "operation": "ADD",
+      "replacement": {
+        "primitive_id": "gitlab/get_issue_details",
+        "method": "get_issue_details",
+        "capability": "Retrieve details for a specific GitLab issue by project path with namespace and issue IID.",
+        "method_code": "def get_issue_details(self, project_path_with_namespace: str, issue_iid: int) -> dict:\n    from urllib.parse import quote\n\n    encoded_project = quote(project_path_with_namespace, safe=\"\")\n    url = f\"{self.base_url}/api/v4/projects/{encoded_project}/issues/{issue_iid}\"\n    response = self.page.request.get(url, headers={\"Accept\": \"application/json\"})\n    if not response.ok:\n        raise RuntimeError(f\"GitLab issue detail API request failed: {response.status} {url}\")\n\n    item = response.json()\n    return {\n        \"issue\": {\n            \"id\": item.get(\"id\"),\n            \"iid\": item.get(\"iid\"),\n            \"project_id\": item.get(\"project_id\"),\n            \"project_path_with_namespace\": project_path_with_namespace,\n            \"title\": item.get(\"title\"),\n            \"description\": item.get(\"description\"),\n            \"state\": item.get(\"state\"),\n            \"created_at\": item.get(\"created_at\"),\n            \"updated_at\": item.get(\"updated_at\"),\n            \"closed_at\": item.get(\"closed_at\"),\n            \"web_url\": item.get(\"web_url\"),\n        }\n    }\n",
+        "owns": [
+          "Call the GitLab issue detail API for a specific project and issue IID.",
+          "Handle URL encoding of project path with namespace.",
+          "Return typed issue detail fields from the API response.",
+          "Provide authoritative issue state and timestamps for downstream workflows."
+        ],
+        "does_not_own": [
+          "Choosing which issue to inspect.",
+          "Converting state into a final boolean answer.",
+          "Comparing multiple issues or applying task-specific title matching."
+        ],
+        "input_contract": {
+          "type": "object",
+          "properties": {
+            "project_path_with_namespace": {
+              "type": "string",
+              "description": "Full project path including namespace, for example group/project."
+            },
+            "issue_iid": {
+              "type": "integer",
+              "description": "Issue IID within the project."
+            }
+          },
+          "required": [
+            "project_path_with_namespace",
+            "issue_iid"
+          ]
+        },
+        "output_contract": {
+          "type": "object",
+          "properties": {
+            "issue": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer",
+                  "required": false
+                },
+                "iid": {
+                  "type": "integer",
+                  "required": false
+                },
+                "project_id": {
+                  "type": "integer",
+                  "required": false
+                },
+                "project_path_with_namespace": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string",
+                  "required": false
+                },
+                "description": {
+                  "type": "string",
+                  "required": false
+                },
+                "state": {
+                  "type": "string",
+                  "required": false
+                },
+                "created_at": {
+                  "type": "string",
+                  "required": false
+                },
+                "updated_at": {
+                  "type": "string",
+                  "required": false
+                },
+                "closed_at": {
+                  "type": "string",
+                  "required": false
+                },
+                "web_url": {
+                  "type": "string",
+                  "required": false
+                }
+              }
+            }
+          }
+        },
+        "requires": [
+          "authenticated_gitlab_session",
+          "self.base_url"
+        ],
+        "provides": [
+          "gitlab_issue_detail"
+        ],
+        "supported_patterns": [
+          "API"
+        ],
+        "source_evidence": [
+          {
+            "workflow_id": "task175_t310",
+            "template_id": "310",
+            "code_quote": "project_enc = quote(latest['project'], safe='')\ndetail = s.get(BASE + f\"/api/v4/projects/{project_enc}/issues/{latest['iid']}\", timeout=30).json()\nstate_text = 'Issue detail evidence:\\n' + json.dumps({\n    'project': latest['project'],\n    'iid': latest['iid'],\n    'title': detail.get('title'),\n    'state': state,\n    'updated_at': detail.get('updated_at'),\n    'web_url': detail.get('web_url')\n}, ensure_ascii=False, indent=2)",
+            "explanation": "Generalized the issue detail API lookup into a reusable primitive parameterized by project path and issue IID. Preserved stable fields demonstrated by the workflow and kept workflow-specific boolean conversion out of the primitive."
+          }
+        ]
+      }
+    },
+    {
+      "operation": "ADD",
+      "replacement": {
+        "primitive_id": "gitlab/get_project_by_path",
+        "method": "get_project_by_path",
+        "capability": "Retrieve a GitLab project record by full path with namespace via the REST API.",
+        "method_code": "def get_project_by_path(self, project_path_with_namespace: str) -> dict:\n    from urllib.parse import quote\n\n    encoded_project = quote(project_path_with_namespace, safe=\"\")\n    url = f\"{self.base_url}/api/v4/projects/{encoded_project}\"\n    response = self.page.request.get(url, headers={\"Accept\": \"application/json\"})\n    if not response.ok:\n        raise RuntimeError(f\"GitLab project API request failed: {response.status} {url}\")\n\n    item = response.json()\n    return {\n        \"project\": {\n            \"id\": item.get(\"id\"),\n            \"name\": item.get(\"name\"),\n            \"path\": item.get(\"path\"),\n            \"path_with_namespace\": item.get(\"path_with_namespace\"),\n            \"default_branch\": item.get(\"default_branch\"),\n            \"web_url\": item.get(\"web_url\"),\n            \"ssh_url_to_repo\": item.get(\"ssh_url_to_repo\"),\n            \"http_url_to_repo\": item.get(\"http_url_to_repo\"),\n        }\n    }\n",
+        "owns": [
+          "Call the GitLab project API using a URL-encoded full path with namespace.",
+          "Parse and return a typed project record from the JSON response.",
+          "Preserve stable project identity, path, default branch, and repository URL fields."
+        ],
+        "does_not_own": [
+          "Choosing which project path to resolve.",
+          "Comparing the returned project against task-specific expectations.",
+          "Searching across multiple projects."
+        ],
+        "input_contract": {
+          "type": "object",
+          "properties": {
+            "project_path_with_namespace": {
+              "type": "string",
+              "description": "Full GitLab project path including namespace, for example group/project."
+            }
+          },
+          "required": [
+            "project_path_with_namespace"
+          ]
+        },
+        "output_contract": {
+          "type": "object",
+          "properties": {
+            "project": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer",
+                  "required": false
+                },
+                "name": {
+                  "type": "string",
+                  "required": false
+                },
+                "path": {
+                  "type": "string",
+                  "required": false
+                },
+                "path_with_namespace": {
+                  "type": "string",
+                  "required": false
+                },
+                "default_branch": {
+                  "type": "string",
+                  "required": false
+                },
+                "web_url": {
+                  "type": "string",
+                  "required": false
+                },
+                "ssh_url_to_repo": {
+                  "type": "string",
+                  "required": false
+                },
+                "http_url_to_repo": {
+                  "type": "string",
+                  "required": false
+                }
+              }
+            }
+          }
+        },
+        "requires": [
+          "authenticated_gitlab_session",
+          "self.base_url"
+        ],
+        "provides": [
+          "gitlab_project_record"
+        ],
+        "supported_patterns": [
+          "API"
+        ],
+        "source_evidence": [
+          {
+            "workflow_id": "task133_t322",
+            "template_id": "322",
+            "code_quote": "url, headers, body = fetch(base + '/api/v4/projects/' + urllib.parse.quote('a11yproject/a11yproject.com', safe=''))\nproject = json.loads(body.decode('utf-8', 'ignore'))\nif project.get('path_with_namespace') != 'a11yproject/a11yproject.com':\n    raise RuntimeError(f'Unexpected project namespace: {project.get(\"path_with_namespace\")}')\nproject_id = project['id']",
+            "explanation": "Generalized the direct project lookup by full namespaced path into a reusable primitive. Preserved stable project fields available at the same API boundary rather than only the subset used by the task."
+          }
+        ]
+      }
+    },
+    {
+      "operation": "ADD",
+      "replacement": {
+        "primitive_id": "gitlab/list_repository_commits",
+        "method": "list_repository_commits",
+        "capability": "List repository commits for a GitLab project with optional ref and time-window filters via the REST API.",
+        "method_code": "def list_repository_commits(self, project_id: int, ref_name: str = None, since: str = None, until: str = None, page_number: int = 1, per_page: int = 100) -> dict:\n    from urllib.parse import urlencode\n\n    params = {\n        \"page\": page_number,\n        \"per_page\": per_page,\n    }\n    if ref_name is not None:\n        params[\"ref_name\"] = ref_name\n    if since is not None:\n        params[\"since\"] = since\n    if until is not None:\n        params[\"until\"] = until\n\n    url = f\"{self.base_url}/api/v4/projects/{project_id}/repository/commits?{urlencode(params)}\"\n    response = self.page.request.get(url, headers={\"Accept\": \"application/json\"})\n    if not response.ok:\n        raise RuntimeError(f\"GitLab commits API request failed: {response.status} {url}\")\n\n    payload = response.json()\n    headers = response.headers\n    next_page_raw = headers.get(\"x-next-page\") or headers.get(\"X-Next-Page\")\n    next_page = int(next_page_raw) if next_page_raw and str(next_page_raw).strip() else None\n\n    commits = []\n    for item in payload:\n        commits.append({\n            \"id\": item.get(\"id\"),\n            \"short_id\": item.get(\"short_id\"),\n            \"title\": item.get(\"title\"),\n            \"author_name\": item.get(\"author_name\"),\n            \"author_email\": item.get(\"author_email\"),\n            \"authored_date\": item.get(\"authored_date\"),\n            \"committed_date\": item.get(\"committed_date\"),\n            \"web_url\": item.get(\"web_url\"),\n        })\n\n    return {\n        \"project_id\": project_id,\n        \"ref_name\": ref_name,\n        \"since\": since,\n        \"until\": until,\n        \"page_number\": page_number,\n        \"per_page\": per_page,\n        \"commits\": commits,\n        \"next_page\": next_page,\n        \"is_complete_page\": next_page is None,\n    }\n",
+        "owns": [
+          "Call the GitLab repository commits API for a specified project.",
+          "Accept optional ref and time-window filters supported by the endpoint.",
+          "Parse and return typed commit records from the API response.",
+          "Preserve stable commit identity, author, timestamp, title, and link fields.",
+          "Expose page-scoped pagination completeness from response headers."
+        ],
+        "does_not_own": [
+          "Filtering commits to a specific contributor after retrieval.",
+          "Counting commits for a month, date, or author.",
+          "Summarizing or formatting final numeric answers."
+        ],
+        "input_contract": {
+          "type": "object",
+          "properties": {
+            "project_id": {
+              "type": "integer",
+              "description": "GitLab project id."
+            },
+            "ref_name": {
+              "type": "string",
+              "required": false,
+              "description": "Branch or ref name, for example main."
+            },
+            "since": {
+              "type": "string",
+              "required": false,
+              "description": "Inclusive ISO-8601 lower bound."
+            },
+            "until": {
+              "type": "string",
+              "required": false,
+              "description": "Inclusive ISO-8601 upper bound."
+            },
+            "page_number": {
+              "type": "integer",
+              "required": false,
+              "default": 1,
+              "description": "Results page number."
+            },
+            "per_page": {
+              "type": "integer",
+              "required": false,
+              "default": 100,
+              "description": "Results per page."
+            }
+          },
+          "required": [
+            "project_id"
+          ]
+        },
+        "output_contract": {
+          "type": "object",
+          "properties": {
+            "project_id": {
+              "type": "integer"
+            },
+            "ref_name": {
+              "type": "string",
+              "required": false
+            },
+            "since": {
+              "type": "string",
+              "required": false
+            },
+            "until": {
+              "type": "string",
+              "required": false
+            },
+            "page_number": {
+              "type": "integer"
+            },
+            "per_page": {
+              "type": "integer"
+            },
+            "commits": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "required": false
+                  },
+                  "short_id": {
+                    "type": "string",
+                    "required": false
+                  },
+                  "title": {
+                    "type": "string",
+                    "required": false
+                  },
+                  "author_name": {
+                    "type": "string",
+                    "required": false
+                  },
+                  "author_email": {
+                    "type": "string",
+                    "required": false
+                  },
+                  "authored_date": {
+                    "type": "string",
+                    "required": false
+                  },
+                  "committed_date": {
+                    "type": "string",
+                    "required": false
+                  },
+                  "web_url": {
+                    "type": "string",
+                    "required": false
+                  }
+                }
+              }
+            },
+            "next_page": {
+              "type": "integer",
+              "required": false
+            },
+            "is_complete_page": {
+              "type": "boolean",
+              "description": "True when the current query has no next page according to GitLab pagination headers."
+            }
+          }
+        },
+        "requires": [
+          "authenticated_gitlab_session",
+          "self.base_url"
+        ],
+        "provides": [
+          "gitlab_repository_commit_records"
+        ],
+        "supported_patterns": [
+          "API"
+        ],
+        "source_evidence": [
+          {
+            "workflow_id": "task133_t322",
+            "template_id": "322",
+            "code_quote": "api_url = base + f'/api/v4/projects/{project_id}/repository/commits?ref_name=main&since=2023-03-02T00:00:00Z&until=2023-03-02T23:59:59Z&per_page=100'\nurl, headers, body = fetch(api_url)\ncommits = json.loads(body.decode('utf-8', 'ignore'))\n... c.get('short_id') ... c.get('author_name') ... c.get('authored_date') ... c.get('title') ... c.get('web_url')",
+            "explanation": "Generalized the commits API retrieval into a reusable listing primitive with parameterized project, ref, time bounds, and pagination. Preserved stable commit fields shown in the workflow and exposed pagination completeness instead of returning task-specific counts."
+          }
+        ]
+      }
+    },
+    {
+      "operation": "ADD",
+      "replacement": {
+        "primitive_id": "gitlab/search_issues",
+        "method": "search_issues",
+        "capability": "Search GitLab issues from the current search results page and return typed issue result records in displayed order.",
+        "method_code": "def search_issues(self, query: str, scope: str = \"issues\", page_number: int = 1) -> dict:\n    from urllib.parse import urlencode\n    import re\n\n    params = {\n        \"search\": query,\n        \"scope\": scope,\n        \"page\": page_number,\n    }\n    url = f\"{self.base_url}/search?{urlencode(params)}\"\n    self.page.goto(url, wait_until=\"networkidle\")\n\n    cards = self.page.locator('.issue, .search-result-row, .search-result, li[data-testid=\"search-result-row\"]')\n    card_count = cards.count()\n    results = []\n\n    for i in range(card_count):\n        card = cards.nth(i)\n        text = (card.inner_text() or \"\").strip()\n        if not text:\n            continue\n        lines = [line.strip() for line in text.splitlines() if line.strip()]\n        state = None\n        title = None\n        if lines:\n            first = lines[0].lower()\n            if first in {\"open\", \"opened\", \"closed\"}:\n                state = \"closed\" if first == \"closed\" else \"opened\"\n        if len(lines) >= 2:\n            title = lines[1]\n        elif len(lines) == 1 and state is None:\n            title = lines[0]\n\n        link = card.locator('a[href*=\"/issues/\"]').first\n        href = link.get_attribute(\"href\") if link.count() > 0 else None\n        if href and not href.startswith(\"http://\") and not href.startswith(\"https://\"):\n            href = f\"{self.base_url}{href if href.startswith('/') else '/' + href}\"\n\n        issue_iid = None\n        if href:\n            match = re.search(r'/issues/(\\d+)', href)\n            if match:\n                issue_iid = int(match.group(1))\n\n        if title or href:\n            results.append({\n                \"title\": title,\n                \"state\": state,\n                \"url\": href,\n                \"issue_iid\": issue_iid,\n                \"order_index\": len(results),\n            })\n\n    return {\n        \"query\": query,\n        \"scope\": scope,\n        \"page_number\": page_number,\n        \"results\": results,\n        \"is_complete_page\": False,\n    }\n",
+        "owns": [
+          "Navigate to GitLab search results with issues scope and a caller-provided query.",
+          "Parse visible issue search result cards from the current results page.",
+          "Extract typed issue facts demonstrated at the result boundary, including title, visible state label, and issue link when present.",
+          "Preserve displayed result ordering for the parsed current page.",
+          "Limit completeness claims to the fetched search results page."
+        ],
+        "does_not_own": [
+          "Choosing which matching issue is relevant for a specific task.",
+          "Interpreting 'latest updated' from visible ordering as a final task answer.",
+          "Aggregating results into a single boolean answer.",
+          "Guaranteeing corpus-wide completeness across additional pages."
+        ],
+        "input_contract": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "Search query text."
+            },
+            "scope": {
+              "type": "string",
+              "required": false,
+              "default": "issues",
+              "enum": [
+                "issues"
+              ],
+              "description": "GitLab search scope demonstrated by the workflow."
+            },
+            "page_number": {
+              "type": "integer",
+              "required": false,
+              "default": 1,
+              "description": "Search results page number."
+            }
+          },
+          "required": [
+            "query"
+          ]
+        },
+        "output_contract": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string"
+            },
+            "scope": {
+              "type": "string"
+            },
+            "page_number": {
+              "type": "integer"
+            },
+            "results": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "required": false
+                  },
+                  "state": {
+                    "type": "string",
+                    "required": false,
+                    "enum": [
+                      "opened",
+                      "closed"
+                    ],
+                    "description": "Visible issue state label parsed from the result card when present."
+                  },
+                  "url": {
+                    "type": "string",
+                    "required": false
+                  },
+                  "issue_iid": {
+                    "type": "integer",
+                    "required": false
+                  },
+                  "order_index": {
+                    "type": "integer"
+                  }
+                }
+              }
+            },
+            "is_complete_page": {
+              "type": "boolean",
+              "description": "False unless pagination has been explicitly exhausted; this primitive parses only the fetched search results page."
+            }
+          }
+        },
+        "requires": [
+          "authenticated_gitlab_browser_session",
+          "self.base_url"
+        ],
+        "provides": [
+          "gitlab_issue_search_results_page"
+        ],
+        "supported_patterns": [
+          "UI"
+        ],
+        "source_evidence": [
+          {
+            "workflow_id": "task174_t310",
+            "template_id": "310",
+            "code_quote": "SEARCH_URL = BASE + '/search?search=feature&group_id=&project_id=&scope=issues' ... cards = page.locator('.issue, .search-result-row, .search-result, li[data-testid=\"search-result-row\"]') ... for i in range(min(count, 30)): txt = (await cards.nth(i).inner_text()).strip() ... status = lines[0] ... title = lines[1] ... results.append({'status': status, 'title': title, 'text': txt})",
+            "explanation": "Generalized the workflow's issue-search results parsing into a typed current-page search primitive. Removed raw text output and kept only stable typed facts demonstrated at the visible result-card boundary: title, visible state, and link-derived identity when available."
+          }
+        ]
+      }
+    },
+    {
+      "operation": "ADD",
+      "replacement": {
+        "primitive_id": "gitlab/get_project_clone_urls",
+        "method": "get_project_clone_urls",
+        "capability": "Open a GitLab project page and extract clone URLs exposed in the rendered HTML.",
+        "method_code": "def get_project_clone_urls(self, project_path: str) -> dict:\n    import re\n\n    if not project_path.startswith(\"/\"):\n        project_path = \"/\" + project_path\n\n    url = f\"{self.base_url}{project_path}\"\n    self.page.goto(url, wait_until=\"domcontentloaded\")\n    html = self.page.content()\n\n    ssh_clone_url = None\n    http_clone_url = None\n\n    ssh_patterns = [\n        r'name=[\"\\']ssh_project_clone[\"\\'][^>]*value=[\"\\']([^\"\\']+)[\"\\']',\n        r'Clone with SSH.*?value=[\"\\']([^\"\\']+)[\"\\']',\n        r'(ssh://git@[^\"\\'\\s<>]+?\\.git)',\n        r'(git@[^\"\\'\\s<>]+?\\.git)',\n    ]\n    for pattern in ssh_patterns:\n        match = re.search(pattern, html, re.I | re.S)\n        if match:\n            ssh_clone_url = match.group(1)\n            break\n\n    http_patterns = [\n        r'name=[\"\\']http_project_clone[\"\\'][^>]*value=[\"\\']([^\"\\']+)[\"\\']',\n        r'Clone with HTTPS.*?value=[\"\\']([^\"\\']+)[\"\\']',\n        r'(https?://[^\"\\'\\s<>]+?\\.git)',\n    ]\n    for pattern in http_patterns:\n        match = re.search(pattern, html, re.I | re.S)\n        if match:\n            http_clone_url = match.group(1)\n            break\n\n    return {\n        \"project_path\": project_path,\n        \"project_url\": url,\n        \"ssh_clone_url\": ssh_clone_url,\n        \"http_clone_url\": http_clone_url,\n    }\n",
+        "owns": [
+          "Navigate to a GitLab project page by project path.",
+          "Read the project page HTML from the authenticated browser session.",
+          "Parse clone URL fields exposed by the page, including SSH and HTTP when present.",
+          "Return typed clone URL data associated with the project page."
+        ],
+        "does_not_own": [
+          "Searching for the correct project to inspect.",
+          "Choosing which clone protocol a workflow should prefer.",
+          "Performing git clone or other local repository operations."
+        ],
+        "input_contract": {
+          "type": "object",
+          "properties": {
+            "project_path": {
+              "type": "string",
+              "description": "GitLab project path, with or without leading slash, for example /group/project."
+            }
+          },
+          "required": [
+            "project_path"
+          ]
+        },
+        "output_contract": {
+          "type": "object",
+          "properties": {
+            "project_path": {
+              "type": "string"
+            },
+            "project_url": {
+              "type": "string"
+            },
+            "ssh_clone_url": {
+              "type": "string",
+              "required": false
+            },
+            "http_clone_url": {
+              "type": "string",
+              "required": false
+            }
+          }
+        },
+        "requires": [
+          "authenticated_gitlab_browser_session",
+          "self.base_url"
+        ],
+        "provides": [
+          "gitlab_project_clone_urls"
+        ],
+        "supported_patterns": [
+          "UI"
+        ],
+        "source_evidence": [
+          {
+            "workflow_id": "task295_t329",
+            "template_id": "329",
+            "code_quote": "project_html = opener.open(BASE + project_path).read().decode('utf-8', 'ignore')\nclone_with_ssh = re.search(r'Clone with SSH.*?value=\\\"([^\\\"]+)\\\"', project_html, re.S | re.I)\nif not ssh_url:\n    ssh_alt = re.search(r'(git@ec2-18-223-172-69\\\\.us-east-2\\\\.compute\\\\.amazonaws\\\\.com:2222/root/metaseq\\\\.git)', project_html)",
+            "explanation": "Generalized project-page clone URL extraction into a reusable primitive that accepts project_path and returns typed clone URLs. Removed task-specific hostname and repository-name assumptions while preserving the HTML acquisition boundary."
+          },
+          {
+            "workflow_id": "task293_t329",
+            "template_id": "329",
+            "code_quote": "repo_resp = session.get(urljoin(BASE, match_path), timeout=20)\nssh_match = re.search(r'name=[\"\\']ssh_project_clone[\"\\'][^>]*value=[\"\\']([^\"\\']+)', repo_resp.text, re.I|re.S)\nif not ssh_match:\n    ssh_match = re.search(r'value=[\"\\'](ssh://git@[^\"\\']+?\\.git)[\"\\']', repo_resp.text, re.I|re.S)\nif not ssh_match:\n    ssh_match = re.search(r'(git@[^\"\\'\\s<>]+?\\.git)', repo_resp.text, re.I)",
+            "explanation": "A second workflow corroborates stable extraction of clone URLs from project page HTML, supporting the same primitive and inclusion of both SSH and HTTP fields when present at the same page boundary."
+          }
+        ]
+      }
+    },
+    {
+      "operation": "ADD",
+      "replacement": {
+        "primitive_id": "gitlab/list_repository_commits_history_page",
+        "method": "list_repository_commits_history_page",
+        "capability": "Open a GitLab repository commits history page for a ref and return typed date-group summaries and visible commit metadata from the current page.",
+        "method_code": "def list_repository_commits_history_page(self, project_path: str, ref_name: str, page_number: int = 1) -> dict:\n    import re\n    from urllib.parse import urlencode\n\n    if project_path.startswith(\"/\"):\n        project_path = project_path[1:]\n\n    params = {}\n    if page_number != 1:\n        params[\"page\"] = page_number\n    query = f\"?{urlencode(params)}\" if params else \"\"\n    url = f\"{self.base_url}/{project_path}/-/commits/{ref_name}{query}\"\n    self.page.goto(url, wait_until=\"domcontentloaded\")\n    body_text = self.page.locator(\"body\").inner_text()\n\n    lines = [line.strip() for line in body_text.splitlines() if line.strip()]\n    date_pattern = re.compile(r\"^\\d{2} [A-Z][a-z]{2}, \\d{4}$\")\n    count_pattern = re.compile(r\"^(\\d+) commit(?:s)?$\")\n    author_pattern = re.compile(r\"^(.*?) authored$\")\n\n    date_groups = []\n    current_group = None\n\n    for line in lines:\n        if date_pattern.match(line):\n            current_group = {\n                \"date_label\": line,\n                \"displayed_commit_count\": None,\n                \"commits\": [],\n            }\n            date_groups.append(current_group)\n            continue\n\n        if current_group is None:\n            continue\n\n        count_match = count_pattern.match(line)\n        if count_match and current_group[\"displayed_commit_count\"] is None:\n            current_group[\"displayed_commit_count\"] = int(count_match.group(1))\n            continue\n\n        author_match = author_pattern.match(line)\n        if author_match:\n            author_name = author_match.group(1).strip()\n            current_group[\"commits\"].append({\n                \"author_display_name\": author_name if author_name else None,\n                \"authored_text\": line,\n            })\n\n    return {\n        \"project_path\": project_path,\n        \"ref_name\": ref_name,\n        \"page_number\": page_number,\n        \"commits_page_url\": url,\n        \"date_groups\": date_groups,\n        \"completeness\": \"current_commits_page_only\",\n    }\n",
+        "owns": [
+          "Navigate to a GitLab repository commits history page for a specified project and ref.",
+          "Read the rendered commits history page text from the current page.",
+          "Parse displayed date-group labels and their shown commit counts.",
+          "Parse visible authored metadata entries associated with those date groups.",
+          "Return typed current-page commits-history facts without claiming full repository history completeness."
+        ],
+        "does_not_own": [
+          "Choosing which date group or author is relevant to a task.",
+          "Counting only a chosen author's commits for a task answer.",
+          "Aggregating across multiple history pages unless the caller paginates.",
+          "Inferring repository-wide completeness from a single page."
+        ],
+        "input_contract": {
+          "type": "object",
+          "properties": {
+            "project_path": {
+              "type": "string",
+              "description": "GitLab project path in owner/repository form, with or without a leading slash."
+            },
+            "ref_name": {
+              "type": "string",
+              "description": "Branch, tag, or ref whose commits page should be opened, for example main."
+            },
+            "page_number": {
+              "type": "integer",
+              "required": false,
+              "default": 1,
+              "description": "Commits history page number to open."
+            }
+          },
+          "required": [
+            "project_path",
+            "ref_name"
+          ]
+        },
+        "output_contract": {
+          "type": "object",
+          "properties": {
+            "project_path": {
+              "type": "string"
+            },
+            "ref_name": {
+              "type": "string"
+            },
+            "page_number": {
+              "type": "integer"
+            },
+            "commits_page_url": {
+              "type": "string"
+            },
+            "date_groups": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "date_label": {
+                    "type": "string",
+                    "description": "Displayed GitLab date group label, for example 05 Mar, 2023."
+                  },
+                  "displayed_commit_count": {
+                    "type": "integer",
+                    "required": false,
+                    "description": "Displayed number of commits in that date group on the page."
+                  },
+                  "commits": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "author_display_name": {
+                          "type": "string",
+                          "required": false,
+                          "description": "Visible author identity when shown in the grouped commits text."
+                        },
+                        "authored_text": {
+                          "type": "string",
+                          "required": false,
+                          "description": "Visible authored metadata snippet, for example Kilian Valkhof authored."
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "completeness": {
+              "type": "string",
+              "enum": [
+                "current_commits_page_only"
+              ]
+            }
+          }
+        },
+        "requires": [
+          "authenticated_gitlab_browser_session",
+          "self.base_url"
+        ],
+        "provides": [
+          "gitlab_repository_commits_history_page"
+        ],
+        "supported_patterns": [
+          "UI"
+        ],
+        "source_evidence": [
+          {
+            "workflow_id": "task132_t322",
+            "template_id": "322",
+            "code_quote": "TARGET = BASE + '/a11yproject/a11yproject.com/-/commits/main' ... await page.goto(TARGET, wait_until='domcontentloaded') ... body = await page.locator('body').inner_text() ... m = re.search(r'05 Mar, 2023\\s+(\\d+) commit(?:s)?\\s+([^\\n]+)\\s+Kilian Valkhof authored', body, re.S)",
+            "explanation": "Generalized the workflow's commits-page inspection into a current-page parser for displayed date groups, displayed group commit counts, and visible authored metadata. Removed the task-specific hard-coded date, author, and final counting logic while preserving the demonstrated UI acquisition boundary."
+          }
+        ]
+      }
+    },
+    {
+      "operation": "ADD",
+      "replacement": {
+        "primitive_id": "gitlab/list_dashboard_issues",
+        "method": "list_dashboard_issues",
+        "capability": "Open the GitLab dashboard issues page with supported query parameters and return typed issue link summaries from the current results page.",
+        "method_code": "def list_dashboard_issues(self, assignee_username: str, state: str, search_query: str, sort: str, page_number: int = 1) -> dict:\n    import re\n    from urllib.parse import urlencode\n\n    params = {\n        \"assignee_username\": assignee_username,\n        \"state\": state,\n        \"search\": search_query,\n        \"sort\": sort,\n        \"page\": page_number,\n    }\n    url = f\"{self.base_url}/dashboard/issues?{urlencode(params)}\"\n    self.page.goto(url, wait_until=\"domcontentloaded\")\n\n    links = self.page.locator('a[href*=\"/-/issues/\"]')\n    count = links.count()\n    issues = []\n    seen = set()\n\n    for i in range(count):\n        link = links.nth(i)\n        title_text = (link.inner_text() or \"\").strip()\n        href = link.get_attribute(\"href\")\n        if not href:\n            continue\n        issue_url = href if href.startswith(\"http://\") or href.startswith(\"https://\") else f\"{self.base_url}{href if href.startswith('/') else '/' + href}\"\n        if issue_url in seen:\n            continue\n        seen.add(issue_url)\n\n        iid_match = re.search(r'/-/issues/(\\d+)', href)\n        issue_iid = iid_match.group(1) if iid_match else None\n\n        issues.append({\n            \"title_text\": title_text,\n            \"issue_url\": issue_url,\n            \"issue_iid\": issue_iid,\n            \"order_index\": len(issues),\n        })\n\n    return {\n        \"issues\": issues,\n        \"sort\": sort,\n        \"page_number\": page_number,\n        \"applied_filters\": {\n            \"assignee_username\": assignee_username,\n            \"state\": state,\n            \"search_query\": search_query,\n        },\n        \"is_complete_page\": False,\n    }\n",
+        "owns": [
+          "Navigate to the GitLab dashboard issues results page.",
+          "Apply demonstrated query parameters for assignee username, issue state, free-text search, sort order, and page number.",
+          "Parse issue links from the rendered current results page into typed issue summary records.",
+          "Preserve displayed result ordering for the current page."
+        ],
+        "does_not_own": [
+          "Choosing task-specific relevance rules such as combining multiple keywords into a semantic match.",
+          "Selecting only the first issue as the task answer.",
+          "Determining corpus-wide completeness across more dashboard pages.",
+          "Formatting a boolean or any other final answer."
+        ],
+        "input_contract": {
+          "type": "object",
+          "properties": {
+            "assignee_username": {
+              "type": "string",
+              "description": "GitLab username used in the assignee filter."
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "all",
+                "opened",
+                "closed"
+              ],
+              "description": "Issue state filter as represented in the dashboard query string."
+            },
+            "search_query": {
+              "type": "string",
+              "description": "Free-text search term sent in the dashboard issues query."
+            },
+            "sort": {
+              "type": "string",
+              "description": "Sort mode from the dashboard query string, for example updated_desc."
+            },
+            "page_number": {
+              "type": "integer",
+              "required": false,
+              "default": 1,
+              "description": "Dashboard issues results page number."
+            }
+          },
+          "required": [
+            "assignee_username",
+            "state",
+            "search_query",
+            "sort"
+          ]
+        },
+        "output_contract": {
+          "type": "object",
+          "properties": {
+            "issues": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "title_text": {
+                    "type": "string",
+                    "required": false
+                  },
+                  "issue_url": {
+                    "type": "string"
+                  },
+                  "issue_iid": {
+                    "type": "string",
+                    "required": false
+                  },
+                  "order_index": {
+                    "type": "integer"
+                  }
+                }
+              }
+            },
+            "sort": {
+              "type": "string"
+            },
+            "page_number": {
+              "type": "integer"
+            },
+            "applied_filters": {
+              "type": "object",
+              "properties": {
+                "assignee_username": {
+                  "type": "string"
+                },
+                "state": {
+                  "type": "string"
+                },
+                "search_query": {
+                  "type": "string"
+                }
+              }
+            },
+            "is_complete_page": {
+              "type": "boolean",
+              "description": "False unless pagination has been explicitly exhausted; this primitive parses only the fetched dashboard page."
+            }
+          }
+        },
+        "requires": [
+          "authenticated_gitlab_browser_session",
+          "self.base_url"
+        ],
+        "provides": [
+          "gitlab_dashboard_issue_results_page"
+        ],
+        "supported_patterns": [
+          "UI"
+        ],
+        "source_evidence": [
+          {
+            "workflow_id": "task176_t310",
+            "template_id": "310",
+            "code_quote": "issues_url = BASE + '/dashboard/issues?assignee_username=byteblaze&state=all&search=theme&sort=updated_desc' ... issue_links = await page.locator('a').evaluate_all(\"els => els.map(e => ({text:(e.innerText||e.textContent||'').replace(/\\\\s+/g,' ').trim(), href:e.href})).filter(x => x.text && x.href.includes('/-/issues/'))\")",
+            "explanation": "Generalized the workflow's dashboard-issues retrieval into a current-page listing primitive with parameterized assignee, state, search, sort, and page number. Excluded the workflow's task-specific theme/editor filtering and single-result selection while preserving the demonstrated issue-link acquisition boundary."
+          }
+        ]
+      }
+    },
+    {
+      "operation": "ADD",
+      "replacement": {
+        "primitive_id": "gitlab/search_project_links",
+        "method": "search_project_links",
+        "capability": "Submit a GitLab project search and return typed project link candidates parsed from the current search results page.",
+        "method_code": "def search_project_links(self, query: str, page_number: int = 1) -> dict:\n    import re\n    from urllib.parse import urlencode\n\n    params = {\n        \"scope\": \"projects\",\n        \"search\": query,\n        \"page\": page_number,\n    }\n    url = f\"{self.base_url}/search?{urlencode(params)}\"\n    self.page.goto(url, wait_until=\"domcontentloaded\")\n\n    anchors = self.page.locator('a[href]')\n    count = anchors.count()\n    results = []\n    seen = set()\n\n    for i in range(count):\n        anchor = anchors.nth(i)\n        href = anchor.get_attribute(\"href\")\n        text = (anchor.inner_text() or \"\").strip()\n        if not href:\n            continue\n        if \"/-/\" in href or href.startswith(\"#\"):\n            continue\n\n        normalized_href = href if href.startswith(\"http://\") or href.startswith(\"https://\") else f\"{self.base_url}{href if href.startswith('/') else '/' + href}\"\n        path = href\n        if href.startswith(\"http://\") or href.startswith(\"https://\"):\n            path_match = re.match(r'^https?://[^/]+(/[^?#]*)', href)\n            path = path_match.group(1) if path_match else href\n        path = path.split(\"?\")[0].split(\"#\")[0]\n\n        if not re.match(r'^/[^/]+/[^/]+/?$', path):\n            continue\n        if normalized_href in seen:\n            continue\n        seen.add(normalized_href)\n\n        results.append({\n            \"project_path\": path.rstrip(\"/\"),\n            \"project_url\": normalized_href,\n            \"display_text\": text,\n            \"order_index\": len(results),\n        })\n\n    return {\n        \"query\": query,\n        \"page_number\": page_number,\n        \"results\": results,\n        \"is_complete_page\": False,\n    }\n",
+        "owns": [
+          "Submit a GitLab project search request using the projects scope.",
+          "Parse candidate project links from the current search results page.",
+          "Return typed project link candidates with project path, resolved URL, and visible link text.",
+          "Preserve current-page discovery order without claiming full multi-page completeness."
+        ],
+        "does_not_own": [
+          "Choosing which of multiple matching projects is the correct task target.",
+          "Ranking or semantically filtering results beyond the search query itself.",
+          "Opening a project page for clone URL or other detail extraction.",
+          "Claiming all project results are captured across additional pages."
+        ],
+        "input_contract": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "Project search text to submit to GitLab project search."
+            },
+            "page_number": {
+              "type": "integer",
+              "required": false,
+              "default": 1,
+              "description": "Search results page number."
+            }
+          },
+          "required": [
+            "query"
+          ]
+        },
+        "output_contract": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string"
+            },
+            "page_number": {
+              "type": "integer"
+            },
+            "results": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "project_path": {
+                    "type": "string",
+                    "description": "Repository path as linked in search results, for example /group/project."
+                  },
+                  "project_url": {
+                    "type": "string",
+                    "description": "Absolute URL to the project page."
+                  },
+                  "display_text": {
+                    "type": "string",
+                    "required": false,
+                    "description": "Visible anchor text for the candidate project link."
+                  },
+                  "order_index": {
+                    "type": "integer"
+                  }
+                }
+              }
+            },
+            "is_complete_page": {
+              "type": "boolean",
+              "description": "False unless pagination has been explicitly exhausted; this primitive parses only one fetched search results page."
+            }
+          }
+        },
+        "requires": [
+          "authenticated_gitlab_browser_session",
+          "self.base_url"
+        ],
+        "provides": [
+          "gitlab_project_search_link_candidates"
+        ],
+        "supported_patterns": [
+          "UI"
+        ],
+        "source_evidence": [
+          {
+            "workflow_id": "task293_t329",
+            "template_id": "329",
+            "code_quote": "search_url = urljoin(BASE, '/search?scope=projects&search=' + quote(TARGET_NAME))\nsearch_resp = session.get(search_url, timeout=20)\nlinks = re.findall(r'<a\\b[^>]*href=[\"\\']([^\"\\']*)[\"\\'][^>]*>(.*?)</a>', search_resp.text, re.I|re.S)\nfor href, inner in links:\n    txt = html.unescape(' '.join(re.sub(r'<.*?>', ' ', inner, flags=re.S).split()))",
+            "explanation": "Generalized the workflow's project-search HTML parsing into a narrower current-page project-link candidate primitive. Kept only stable typed link facts demonstrated by the evidence and avoided overclaiming reliable full result semantics or completeness."
+          },
+          {
+            "workflow_id": "task295_t329",
+            "template_id": "329",
+            "code_quote": "search_html = opener.open(BASE + '/search?scope=projects&search=metaseq').read().decode('utf-8', 'ignore')\npath_match = re.search(r'href=\\\"(/root/metaseq)\\\"', search_html)\nproject_path = path_match.group(1)",
+            "explanation": "A second workflow corroborates that GitLab project search results expose project links in search-page HTML, supporting a current-page project-link parsing primitive with parameterized query input."
+          }
+        ]
+      }
+    }
+  ],
+  "workflow_attribution": [
+    {
+      "workflow_id": "task174_t310",
+      "decision": "CONTRIBUTED",
+      "operation_indices": [
+        5
+      ]
+    },
+    {
+      "workflow_id": "task175_t310",
+      "decision": "CONTRIBUTED",
+      "operation_indices": [
+        0,
+        1,
+        2
+      ]
+    },
+    {
+      "workflow_id": "task132_t322",
+      "decision": "CONTRIBUTED",
+      "operation_indices": [
+        7
+      ]
+    },
+    {
+      "workflow_id": "task176_t310",
+      "decision": "CONTRIBUTED",
+      "operation_indices": [
+        8
+      ]
+    },
+    {
+      "workflow_id": "task295_t329",
+      "decision": "CONTRIBUTED",
+      "operation_indices": [
+        6,
+        9
+      ]
+    },
+    {
+      "workflow_id": "task305_t321",
+      "decision": "SKIP",
+      "reason": "Its extracted candidate is better covered by the API-based commit listing primitive supported by task133_t322 evidence; this workflow's HTML counting logic does not add required new primitive evidence without overfitting task-specific aggregation."
+    },
+    {
+      "workflow_id": "task293_t329",
+      "decision": "CONTRIBUTED",
+      "operation_indices": [
+        6,
+        9
+      ]
+    },
+    {
+      "workflow_id": "task133_t322",
+      "decision": "CONTRIBUTED",
+      "operation_indices": [
+        3,
+        4
+      ]
+    }
+  ],
+  "candidate_attribution": [
+    {
+      "candidate_id": "task174_t310::search_issues",
+      "decision": "ADD",
+      "operation_index": 5
+    },
+    {
+      "candidate_id": "task174_t310::get_issue_detail",
+      "decision": "COVERED",
+      "target_id": "gitlab/get_issue_details",
+      "reason": "Covered by the added issue detail API primitive, which returns stable typed issue state and metadata for the same issue-detail capability without exposing raw page text."
+    },
+    {
+      "candidate_id": "task175_t310::list_membership_projects",
+      "decision": "ADD",
+      "operation_index": 0
+    },
+    {
+      "candidate_id": "task175_t310::list_project_issues",
+      "decision": "ADD",
+      "operation_index": 1
+    },
+    {
+      "candidate_id": "task175_t310::get_issue_details",
+      "decision": "ADD",
+      "operation_index": 2
+    },
+    {
+      "candidate_id": "task132_t322::list_repository_commits_by_date_page",
+      "decision": "ADD",
+      "operation_index": 7
+    },
+    {
+      "candidate_id": "task176_t310::list_dashboard_issues",
+      "decision": "ADD",
+      "operation_index": 8
+    },
+    {
+      "candidate_id": "task176_t310::get_issue_detail_status",
+      "decision": "COVERED",
+      "target_id": "gitlab/get_issue_details",
+      "reason": "Covered by the added issue detail API primitive, which returns stable typed issue state and metadata for the same capability."
+    },
+    {
+      "candidate_id": "task295_t329::search_projects_by_name",
+      "decision": "COVERED",
+      "target_id": "gitlab/search_project_links",
+      "reason": "Covered by the added narrower current-page project-search-links primitive, which is supported by the search HTML evidence without overclaiming fully structured general project results."
+    },
+    {
+      "candidate_id": "task295_t329::get_project_clone_urls",
+      "decision": "ADD",
+      "operation_index": 6
+    },
+    {
+      "candidate_id": "task305_t321::list_repository_commits",
+      "decision": "COVERED",
+      "target_id": "gitlab/list_repository_commits",
+      "reason": "Covered by the added repository commits API primitive, which preserves a richer and more stable typed commit schema than the HTML listing parser; no new operation is added from this candidate because task133_t322 provides the supporting evidence for that primitive."
+    },
+    {
+      "candidate_id": "task293_t329::search_projects",
+      "decision": "ADD",
+      "operation_index": 9
+    },
+    {
+      "candidate_id": "task293_t329::get_project_clone_urls",
+      "decision": "COVERED",
+      "target_id": "gitlab/get_project_clone_urls",
+      "reason": "Same capability as the added project clone URL extraction primitive; corroborating evidence from a second workflow."
+    },
+    {
+      "candidate_id": "task133_t322::get_project_by_path",
+      "decision": "ADD",
+      "operation_index": 3
+    },
+    {
+      "candidate_id": "task133_t322::list_repository_commits",
+      "decision": "ADD",
+      "operation_index": 4
+    }
+  ]
+}

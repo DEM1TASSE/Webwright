@@ -1,0 +1,736 @@
+{
+  "operations": [
+    {
+      "operation": "ADD",
+      "replacement": {
+        "primitive_id": "map/search_places",
+        "method": "search_places",
+        "capability": "Search the map site's configured Nominatim geocoding service with a free-text query and return ordered typed place candidates.",
+        "method_code": "def search_places(self, query: str, limit: int = 10, response_format: str = \"jsonv2\"):\n    import json\n    import urllib.parse\n    import urllib.request\n\n    if not isinstance(query, str) or not query.strip():\n        raise ValueError(\"query is required\")\n    if not isinstance(limit, int) or limit <= 0:\n        raise ValueError(\"limit must be a positive integer\")\n    if not isinstance(response_format, str) or not response_format.strip():\n        raise ValueError(\"response_format is required\")\n\n    base_url = \"http://18.208.187.221:8085/search\"\n    params = {\n        \"q\": query,\n        \"format\": response_format,\n        \"limit\": limit,\n    }\n    url = base_url + \"?\" + urllib.parse.urlencode(params)\n\n    with urllib.request.urlopen(url, timeout=30) as response:\n        payload = json.loads(response.read().decode(\"utf-8\"))\n\n    candidates = []\n    for item in payload:\n        lat_value = item.get(\"lat\")\n        lon_value = item.get(\"lon\")\n        candidates.append({\n            \"place_id\": item.get(\"place_id\"),\n            \"osm_type\": item.get(\"osm_type\"),\n            \"osm_id\": item.get(\"osm_id\"),\n            \"display_name\": item.get(\"display_name\"),\n            \"latitude\": float(lat_value) if lat_value is not None else None,\n            \"longitude\": float(lon_value) if lon_value is not None else None,\n            \"category\": item.get(\"category\") or item.get(\"class\"),\n            \"type\": item.get(\"type\"),\n            \"importance\": item.get(\"importance\"),\n            \"boundingbox\": item.get(\"boundingbox\"),\n        })\n\n    return {\n        \"query\": query,\n        \"limit_requested\": limit,\n        \"response_format\": response_format,\n        \"candidates\": candidates,\n        \"result_count\": len(candidates),\n        \"is_complete\": False,\n    }\n",
+        "owns": [
+          "Constructing requests to the site's configured Nominatim /search endpoint",
+          "Sending free-text geocoding queries with caller-specified limit and response format",
+          "Parsing JSON geocoding responses into typed ordered place candidate records",
+          "Preserving stable place identity, display, classification, bounding-box, and coordinate fields returned by the service",
+          "Returning explicit non-exhaustive completeness metadata for ranked limited results"
+        ],
+        "does_not_own": [
+          "Choosing which candidate best matches a user task",
+          "Task-specific query rewriting or synonym selection",
+          "Computing distances, proximity, or routing",
+          "Applying business-specific filters such as nearest Walmart or restaurant",
+          "Formatting final user-facing answers"
+        ],
+        "input_contract": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "Free-text place, address, or business query to geocode."
+            },
+            "limit": {
+              "type": "integer",
+              "description": "Maximum number of candidates to request from the site geocoder.",
+              "default": 10
+            },
+            "response_format": {
+              "type": "string",
+              "description": "Nominatim response format parameter.",
+              "default": "jsonv2"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        },
+        "output_contract": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string"
+            },
+            "limit_requested": {
+              "type": "integer"
+            },
+            "response_format": {
+              "type": "string"
+            },
+            "candidates": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "place_id": {
+                    "type": [
+                      "integer",
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "osm_type": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "osm_id": {
+                    "type": [
+                      "integer",
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "display_name": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "latitude": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "longitude": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "category": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "type": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "importance": {
+                    "type": [
+                      "number",
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "boundingbox": {
+                    "type": [
+                      "array",
+                      "null"
+                    ],
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "display_name",
+                  "latitude",
+                  "longitude"
+                ]
+              }
+            },
+            "result_count": {
+              "type": "integer"
+            },
+            "is_complete": {
+              "type": "boolean",
+              "description": "False because returned candidates are only the service-ranked subset up to the requested limit."
+            }
+          },
+          "required": [
+            "query",
+            "limit_requested",
+            "response_format",
+            "candidates",
+            "result_count",
+            "is_complete"
+          ]
+        },
+        "requires": [],
+        "provides": [
+          "map.place_candidates"
+        ],
+        "supported_patterns": [
+          "Geocode one free-text place query to ordered candidates",
+          "Resolve addresses, landmarks, and businesses through the site's configured Nominatim backend",
+          "Retrieve multiple candidates for downstream workflow-side disambiguation"
+        ],
+        "source_evidence": [
+          {
+            "workflow_id": "task154_t36",
+            "template_id": "36",
+            "code_quote": "with urllib.request.urlopen(base_nom + urllib.parse.quote(queries['origin_resolved_query']), timeout=30) as r:\n    origin_results = json.load(r)\nwith urllib.request.urlopen(base_nom + urllib.parse.quote(queries['destination_query']), timeout=30) as r:\n    dest_results = json.load(r)\n...\n'evidence.json' writes full 'origin_result' and 'destination_result' objects",
+            "explanation": "Generalized the site's Nominatim-backed text search into a parameterized primitive that returns ordered candidates rather than selecting the first result for a specific route task."
+          },
+          {
+            "workflow_id": "task37_t77",
+            "template_id": "77",
+            "code_quote": "origin_url = base_n + 'search?format=jsonv2&limit=5&q=' + urllib.parse.quote(origin_query)\norigin_results = fetch_json(origin_url)\n...\ndest_url = base_n + 'search?format=jsonv2&limit=5&q=' + urllib.parse.quote(dest_query)\ndest_results = fetch_json(dest_url)",
+            "explanation": "Confirms stable use of the same search endpoint with explicit jsonv2 format and caller-controlled limit."
+          },
+          {
+            "workflow_id": "task75_t65",
+            "template_id": "65",
+            "code_quote": "def geocode(name):\n    url = NOMINATIM_URL + \"search?format=jsonv2&limit=3&q=\" + urllib.parse.quote(name)\n    data = fetch_json(url)\n    ...\n    row = data[0]\n    return {\n        \"name\": name,\n        \"display_name\": row.get(\"display_name\"),\n        \"lat\": float(row[\"lat\"]),\n        \"lon\": float(row[\"lon\"]),\n        \"type\": row.get(\"type\"),\n    }",
+            "explanation": "Shows stable typed fields at the acquisition boundary, supporting preservation of display name, coordinates, and type in the generalized candidate schema."
+          },
+          {
+            "workflow_id": "task155_t36",
+            "template_id": "36",
+            "code_quote": "o = requests.get(NOMINATIM_URL, params={'q': ORIGIN, 'format': 'json'}, timeout=30).json()[0]\nd = requests.get(NOMINATIM_URL, params={'q': DEST, 'format': 'json'}, timeout=30).json()[0]",
+            "explanation": "Confirms the same site-configured backend is used with a different response format; generalized by parameterizing format and returning all candidates instead of the task's chosen first result."
+          },
+          {
+            "workflow_id": "task58_t69",
+            "template_id": "69",
+            "code_quote": "hunt_url = NOMINATIM + \"search?\" + urlencode({\"q\": \"Hunt Library Pittsburgh\", \"format\": \"jsonv2\", \"limit\": 1})\nhunt = get_json(hunt_url)[0]\n...\n\"OSM type/id: {hunt.get('osm_type')} / {hunt.get('osm_id')}\"",
+            "explanation": "Adds evidence for stable identity fields such as osm_type and osm_id in returned place records."
+          },
+          {
+            "workflow_id": "task39_t77",
+            "template_id": "77",
+            "code_quote": "origin_results = get_json(BASE_GEO + \"search?\" + urllib.parse.urlencode({\"q\": origin_q, \"format\": \"jsonv2\", \"limit\": 5}))\n...\ndest_results = get_json(BASE_GEO + \"search?\" + urllib.parse.urlencode({\"q\": dest_q, \"format\": \"jsonv2\", \"limit\": 10}))",
+            "explanation": "Shows the primitive should support varying limits and generic free-text place/business queries."
+          },
+          {
+            "workflow_id": "task59_t69",
+            "template_id": "69",
+            "code_quote": "hunt_url = SITE_NOMINATIM + 'search?' + urlencode({'format': 'jsonv2', 'limit': 8, 'q': 'Hunt Library Pittsburgh'})\nhunt_results = http_get_json(hunt_url)\nhunt = hunt_results[0]",
+            "explanation": "Even though the workflow later mixes in external enumeration, it still demonstrates the same admitted-site Nominatim search operation for a reference location, supporting this primitive's site-native acquisition core."
+          }
+        ]
+      }
+    },
+    {
+      "operation": "ADD",
+      "replacement": {
+        "primitive_id": "map/get_driving_route",
+        "method": "get_driving_route",
+        "capability": "Request a driving route from the site's OSRM service for an ordered waypoint sequence and return typed route summaries and waypoint metadata.",
+        "method_code": "def get_driving_route(self, waypoints: list, overview=False, steps: bool = True, geometries: str = \"polyline\", alternatives: bool = False):\n    import json\n    import urllib.parse\n    import urllib.request\n\n    if not isinstance(waypoints, list) or len(waypoints) < 2:\n        raise ValueError(\"at least two waypoints are required\")\n\n    encoded_points = []\n    for waypoint in waypoints:\n        if \"longitude\" not in waypoint or \"latitude\" not in waypoint:\n            raise ValueError(\"each waypoint must include latitude and longitude\")\n        encoded_points.append(f\"{waypoint['longitude']},{waypoint['latitude']}\")\n\n    coords = \";\".join(encoded_points)\n    base_url = \"http://18.208.187.221:5000/route/v1/driving/\" + coords\n    params = {\n        \"overview\": str(overview).lower() if isinstance(overview, bool) else overview,\n        \"steps\": str(steps).lower(),\n        \"geometries\": geometries,\n        \"alternatives\": str(alternatives).lower(),\n    }\n    url = base_url + \"?\" + urllib.parse.urlencode(params)\n\n    with urllib.request.urlopen(url, timeout=30) as response:\n        payload = json.loads(response.read().decode(\"utf-8\"))\n\n    routes = []\n    for route in payload.get(\"routes\", []):\n        routes.append({\n            \"duration_seconds\": route.get(\"duration\"),\n            \"distance_meters\": route.get(\"distance\"),\n            \"weight\": route.get(\"weight\"),\n            \"weight_name\": route.get(\"weight_name\"),\n            \"geometry\": route.get(\"geometry\"),\n            \"legs\": route.get(\"legs\"),\n        })\n\n    returned_waypoints = []\n    for waypoint in payload.get(\"waypoints\", []):\n        location = waypoint.get(\"location\") or [None, None]\n        returned_waypoints.append({\n            \"name\": waypoint.get(\"name\"),\n            \"longitude\": location[0],\n            \"latitude\": location[1],\n            \"distance_meters\": waypoint.get(\"distance\"),\n        })\n\n    return {\n        \"code\": payload.get(\"code\"),\n        \"routes\": routes,\n        \"waypoints\": returned_waypoints,\n        \"route_count\": len(routes),\n        \"request_waypoint_count\": len(waypoints),\n    }\n",
+        "owns": [
+          "Constructing OSRM driving route requests from ordered coordinates",
+          "Calling the site's OSRM /route/v1/driving endpoint with supported request options",
+          "Parsing route-level summary metrics returned by OSRM",
+          "Preserving returned route order and top-level response code",
+          "Parsing waypoint metadata returned by the service"
+        ],
+        "does_not_own": [
+          "Geocoding place names into coordinates",
+          "Choosing waypoint order to optimize a task",
+          "Applying thresholds such as within one hour",
+          "Formatting durations into HH:MM:SS strings",
+          "Selecting among multiple candidate destinations or routes for task-specific reasoning"
+        ],
+        "input_contract": {
+          "type": "object",
+          "properties": {
+            "waypoints": {
+              "type": "array",
+              "description": "Ordered route waypoints.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "latitude": {
+                    "type": "number"
+                  },
+                  "longitude": {
+                    "type": "number"
+                  },
+                  "label": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "latitude",
+                  "longitude"
+                ]
+              },
+              "minItems": 2
+            },
+            "overview": {
+              "type": [
+                "boolean",
+                "string"
+              ],
+              "default": false,
+              "description": "OSRM overview parameter."
+            },
+            "steps": {
+              "type": "boolean",
+              "default": true,
+              "description": "Whether to request turn-by-turn steps."
+            },
+            "geometries": {
+              "type": "string",
+              "default": "polyline",
+              "description": "Requested route geometry encoding."
+            },
+            "alternatives": {
+              "type": "boolean",
+              "default": false,
+              "description": "Whether to request alternative routes."
+            }
+          },
+          "required": [
+            "waypoints"
+          ]
+        },
+        "output_contract": {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "routes": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "duration_seconds": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "distance_meters": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "weight": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "weight_name": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "geometry": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "legs": {
+                    "type": [
+                      "array",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "duration_seconds",
+                  "distance_meters"
+                ]
+              }
+            },
+            "waypoints": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "longitude": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "latitude": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "distance_meters": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "longitude",
+                  "latitude"
+                ]
+              }
+            },
+            "route_count": {
+              "type": "integer"
+            },
+            "request_waypoint_count": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "code",
+            "routes",
+            "waypoints",
+            "route_count",
+            "request_waypoint_count"
+          ]
+        },
+        "requires": [
+          "map coordinates for each waypoint"
+        ],
+        "provides": [
+          "map.driving_route_summary"
+        ],
+        "supported_patterns": [
+          "Get a driving route between an origin and destination",
+          "Get a driving route through multiple ordered waypoints",
+          "Retrieve duration and distance for workflow-side comparison of candidate orders",
+          "Preserve optional geometry and leg data when requested by the service"
+        ],
+        "source_evidence": [
+          {
+            "workflow_id": "task154_t36",
+            "template_id": "36",
+            "code_quote": "coords = f\"{origin['lon']},{origin['lat']};{dest['lon']},{dest['lat']}\"\nroute_url = base_osrm + coords + '?overview=false&steps=true&geometries=polyline'\nwith urllib.request.urlopen(route_url, timeout=30) as r:\n    route = json.load(r)\n...\nseconds = route['routes'][0]['duration']",
+            "explanation": "Generalized the two-point driving request into a waypoint-sequence primitive while preserving route duration and distance summaries exposed by OSRM."
+          },
+          {
+            "workflow_id": "task37_t77",
+            "template_id": "77",
+            "code_quote": "osrm_url = f'http://18.208.187.221:5000/route/v1/driving/{orig_lon},{orig_lat};{dest_lon},{dest_lat}?steps=false&overview=false&alternatives=false'\nroute = fetch_json(osrm_url)\nduration_seconds = route['routes'][0]['duration']\ndistance_meters = route['routes'][0]['distance']",
+            "explanation": "Adds evidence for supported request options including steps=false and alternatives=false and confirms stable duration/distance outputs."
+          },
+          {
+            "workflow_id": "task75_t65",
+            "template_id": "65",
+            "code_quote": "encoded = \";\".join(f\"{coord_map[name]['lon']},{coord_map[name]['lat']}\" for name in order)\nurl = OSRM_BASE + encoded + \"?overview=false&steps=true\"\n...\nreturn {\n    \"order\": order,\n    \"duration\": route0[\"duration\"],\n    \"distance\": route0[\"distance\"],\n    \"url\": url,\n}",
+            "explanation": "Demonstrates that the same OSRM endpoint supports more than two ordered waypoints, so the primitive should accept an ordered waypoint list rather than only origin/destination."
+          },
+          {
+            "workflow_id": "task155_t36",
+            "template_id": "36",
+            "code_quote": "route = requests.get(OSRM_BASE + coords, params={'overview': 'false', 'geometries': 'polyline', 'steps': 'true'}, timeout=30).json()\nduration_seconds = route['routes'][0]['duration']\n...\nroute['routes'][0]['distance']",
+            "explanation": "Confirms the geometries parameter and driving summary fields at the acquisition boundary."
+          },
+          {
+            "workflow_id": "task39_t77",
+            "template_id": "77",
+            "code_quote": "route_url = BASE_OSRM + \"5000/route/v1/driving/\" + coords + \"?\" + urllib.parse.urlencode({\"overview\": \"false\", \"geometries\": \"polyline\", \"steps\": \"true\"})\nroute = get_json(route_url)\nduration = route[\"routes\"][0][\"duration\"]\ndistance = route[\"routes\"][0][\"distance\"]",
+            "explanation": "Confirms stable OSRM driving usage across workflows and supports exposing routes as typed summaries rather than workflow-specific boolean reasoning."
+          }
+        ]
+      }
+    },
+    {
+      "operation": "ADD",
+      "replacement": {
+        "primitive_id": "map/search_local_geocoder_results",
+        "method": "search_local_geocoder_results",
+        "capability": "Submit a query to the map site's session-backed local geocoder endpoint and parse typed place results from the returned HTML snippet.",
+        "method_code": "def search_local_geocoder_results(self, query: str, minlon: float, minlat: float, maxlon: float, maxlat: float, zoom: int):\n    import html\n    import re\n    from urllib.parse import urlsplit\n\n    if not isinstance(query, str) or not query.strip():\n        raise ValueError(\"query is required\")\n\n    current_url = self.page.url or \"\"\n    if current_url:\n        parts = urlsplit(current_url)\n        base_url = f\"{parts.scheme}://{parts.netloc}\"\n    else:\n        base_url = \"http://ec2-18-223-172-69.us-east-2.compute.amazonaws.com:3000\"\n\n    self.page.goto(base_url + \"/search\")\n    search_html = self.page.content()\n\n    csrf_param_match = re.search(r'<meta name=\"csrf-param\" content=\"([^\"]+)\"', search_html)\n    csrf_token_match = re.search(r'<meta name=\"csrf-token\" content=\"([^\"]+)\"', search_html)\n    if not csrf_param_match or not csrf_token_match:\n        raise RuntimeError(\"CSRF metadata not found on search page\")\n\n    csrf_param = csrf_param_match.group(1)\n    csrf_token = csrf_token_match.group(1)\n\n    response = self.page.request.post(\n        base_url + \"/geocoder/search_osm_nominatim\",\n        form={\n            \"query\": query,\n            \"zoom\": str(zoom),\n            \"minlon\": str(minlon),\n            \"minlat\": str(minlat),\n            \"maxlon\": str(maxlon),\n            \"maxlat\": str(maxlat),\n            csrf_param: csrf_token,\n        },\n        headers={\n            \"X-Requested-With\": \"XMLHttpRequest\",\n            \"Referer\": self.page.url,\n        },\n    )\n    snippet = response.text()\n\n    records = []\n    pattern = re.compile(r'<a class=\"set_position\"[^>]*data-lat=\"([^\"]+)\"[^>]*data-lon=\"([^\"]+)\"[^>]*data-prefix=\"([^\"]*)\"[^>]*data-name=\"([^\"]+)\"')\n    for match in pattern.finditer(snippet):\n        records.append({\n            \"name\": html.unescape(match.group(4)),\n            \"category\": html.unescape(match.group(3)) or None,\n            \"latitude\": float(match.group(1)),\n            \"longitude\": float(match.group(2)),\n        })\n\n    return {\n        \"query\": query,\n        \"viewport\": {\n            \"minlon\": minlon,\n            \"minlat\": minlat,\n            \"maxlon\": maxlon,\n            \"maxlat\": maxlat,\n            \"zoom\": zoom,\n        },\n        \"records\": records,\n        \"result_count\": len(records),\n        \"is_complete\": False,\n    }\n",
+        "owns": [
+          "Initializing the site search workflow needed for session and CSRF state",
+          "Extracting CSRF metadata from the site's search page",
+          "Submitting a POST request to /geocoder/search_osm_nominatim with viewport bounds and query",
+          "Parsing structured place attributes embedded in returned HTML anchors",
+          "Returning typed local-search result records with names, category labels, and coordinates"
+        ],
+        "does_not_own": [
+          "Choosing which search terms to try for a task",
+          "Filtering results by city or interpreting categories subjectively",
+          "Computing distances or selecting the closest result",
+          "Aggregating across multiple independent queries",
+          "Formatting final user responses"
+        ],
+        "input_contract": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "Text query to send to the site's local geocoder endpoint."
+            },
+            "minlon": {
+              "type": "number"
+            },
+            "minlat": {
+              "type": "number"
+            },
+            "maxlon": {
+              "type": "number"
+            },
+            "maxlat": {
+              "type": "number"
+            },
+            "zoom": {
+              "type": "integer",
+              "description": "Viewport zoom level submitted with the request."
+            }
+          },
+          "required": [
+            "query",
+            "minlon",
+            "minlat",
+            "maxlon",
+            "maxlat",
+            "zoom"
+          ]
+        },
+        "output_contract": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string"
+            },
+            "viewport": {
+              "type": "object",
+              "properties": {
+                "minlon": {
+                  "type": "number"
+                },
+                "minlat": {
+                  "type": "number"
+                },
+                "maxlon": {
+                  "type": "number"
+                },
+                "maxlat": {
+                  "type": "number"
+                },
+                "zoom": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "minlon",
+                "minlat",
+                "maxlon",
+                "maxlat",
+                "zoom"
+              ]
+            },
+            "records": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "category": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "latitude": {
+                    "type": "number"
+                  },
+                  "longitude": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "name",
+                  "latitude",
+                  "longitude"
+                ]
+              }
+            },
+            "result_count": {
+              "type": "integer"
+            },
+            "is_complete": {
+              "type": "boolean",
+              "description": "False because the snippet does not expose exhaustive-completeness guarantees."
+            }
+          },
+          "required": [
+            "query",
+            "viewport",
+            "records",
+            "result_count",
+            "is_complete"
+          ]
+        },
+        "requires": [
+          "self.page can access the map site domain and use Playwright request context"
+        ],
+        "provides": [
+          "map.local_geocoder_results"
+        ],
+        "supported_patterns": [
+          "Search the site's session-backed local geocoder within a viewport",
+          "Obtain typed nearby place candidates from HTML snippet responses",
+          "Use the CSRF-protected AJAX geocoder workflow exposed by the site"
+        ],
+        "source_evidence": [
+          {
+            "workflow_id": "task58_t69",
+            "template_id": "69",
+            "code_quote": "search_page = session.get(BASE + \"/search\", params={\"query\": \"Hunt Library Pittsburgh\"}, timeout=30)\ncsrf_param = re.search(r'<meta name=\"csrf-param\" content=\"([^\"]+)\"', search_page.text).group(1)\ncsrf_token = re.search(r'<meta name=\"csrf-token\" content=\"([^\"]+)\"', search_page.text).group(1)\n...\nresp = session.post(\n    BASE + \"/geocoder/search_osm_nominatim\",\n    data=dict(common, query=q),\n    headers={\"Referer\": search_page.url, \"X-Requested-With\": \"XMLHttpRequest\"},\n    timeout=30,\n)\nfor m in re.finditer(r'<a class=\"set_position\"[^>]*data-lat=\"([^\"]+)\"[^>]*data-lon=\"([^\"]+)\"[^>]*data-prefix=\"([^\"]*)\"[^>]*data-name=\"([^\"]+)\"', resp.text):",
+            "explanation": "Generalized the workflow's task-specific nearby-cafe search into a reusable site local-geocoder primitive that owns session setup, CSRF handling, POST submission, and typed parsing of HTML-embedded result attributes."
+          }
+        ]
+      }
+    }
+  ],
+  "workflow_attribution": [
+    {
+      "workflow_id": "task154_t36",
+      "decision": "CONTRIBUTED",
+      "operation_indices": [
+        0,
+        1
+      ]
+    },
+    {
+      "workflow_id": "task248_t46",
+      "decision": "SKIP",
+      "reason": "Workflow does not demonstrate a reusable admitted-site capability; it uses an external Photon API for the actual coordinate retrieval and only fetches the site HTML superficially."
+    },
+    {
+      "workflow_id": "task59_t69",
+      "decision": "CONTRIBUTED",
+      "operation_indices": [
+        0
+      ]
+    },
+    {
+      "workflow_id": "task37_t77",
+      "decision": "CONTRIBUTED",
+      "operation_indices": [
+        0,
+        1
+      ]
+    },
+    {
+      "workflow_id": "task75_t65",
+      "decision": "CONTRIBUTED",
+      "operation_indices": [
+        0,
+        1
+      ]
+    },
+    {
+      "workflow_id": "task155_t36",
+      "decision": "CONTRIBUTED",
+      "operation_indices": [
+        0,
+        1
+      ]
+    },
+    {
+      "workflow_id": "task58_t69",
+      "decision": "CONTRIBUTED",
+      "operation_indices": [
+        0,
+        2
+      ]
+    },
+    {
+      "workflow_id": "task39_t77",
+      "decision": "CONTRIBUTED",
+      "operation_indices": [
+        0,
+        1
+      ]
+    }
+  ],
+  "candidate_attribution": [
+    {
+      "candidate_id": "task154_t36::geocode_place_query",
+      "decision": "ADD",
+      "operation_index": 0
+    },
+    {
+      "candidate_id": "task154_t36::get_driving_route",
+      "decision": "ADD",
+      "operation_index": 1
+    },
+    {
+      "candidate_id": "task59_t69::search_places_by_text",
+      "decision": "COVERED",
+      "target_id": "map/search_places",
+      "reason": "The reusable admitted-site core is the site-native Nominatim search call; this is covered by the generalized search_places primitive even though the workflow later mixes in external candidate enumeration."
+    },
+    {
+      "candidate_id": "task59_t69::filter_place_search_results_by_type",
+      "decision": "REJECT",
+      "target_id": null,
+      "reason": "Filtering acquired records by type is workflow-level post-processing, not a site-owned primitive boundary."
+    },
+    {
+      "candidate_id": "task37_t77::geocode_place_query",
+      "decision": "COVERED",
+      "target_id": "map/search_places",
+      "reason": "Covered by the generalized site Nominatim place-search primitive."
+    },
+    {
+      "candidate_id": "task37_t77::get_driving_route_summary",
+      "decision": "COVERED",
+      "target_id": "map/get_driving_route",
+      "reason": "Covered by the generalized OSRM driving-route primitive with stable route summary outputs."
+    },
+    {
+      "candidate_id": "task75_t65::geocode_place_names",
+      "decision": "COVERED",
+      "target_id": "map/search_places",
+      "reason": "Batch geocoding is composition over repeated single-query place search and does not require a separate public primitive."
+    },
+    {
+      "candidate_id": "task75_t65::get_driving_route",
+      "decision": "COVERED",
+      "target_id": "map/get_driving_route",
+      "reason": "Covered by the waypoint-sequence OSRM driving-route primitive."
+    },
+    {
+      "candidate_id": "task155_t36::geocode_place_query",
+      "decision": "COVERED",
+      "target_id": "map/search_places",
+      "reason": "Covered by the generalized Nominatim place-search primitive."
+    },
+    {
+      "candidate_id": "task155_t36::get_driving_route",
+      "decision": "COVERED",
+      "target_id": "map/get_driving_route",
+      "reason": "Covered by the generalized OSRM driving-route primitive."
+    },
+    {
+      "candidate_id": "task58_t69::search_map_local_geocoder_results",
+      "decision": "ADD",
+      "operation_index": 2
+    },
+    {
+      "candidate_id": "task58_t69::geocode_map_place_with_nominatim",
+      "decision": "COVERED",
+      "target_id": "map/search_places",
+      "reason": "Covered by the generalized site Nominatim place-search primitive."
+    },
+    {
+      "candidate_id": "task39_t77::search_places_by_text",
+      "decision": "COVERED",
+      "target_id": "map/search_places",
+      "reason": "Covered by the generalized site geocoding search primitive."
+    },
+    {
+      "candidate_id": "task39_t77::get_driving_route",
+      "decision": "COVERED",
+      "target_id": "map/get_driving_route",
+      "reason": "Covered by the generalized OSRM driving-route primitive."
+    }
+  ]
+}

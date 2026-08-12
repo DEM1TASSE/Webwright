@@ -1,0 +1,1088 @@
+[
+  {
+    "primitive_id": "shopping_admin/get_product_review_detail",
+    "method": "get_product_review_detail",
+    "capability": "Open a shopping admin product review detail page by review ID and extract stable typed review facts displayed on that page, including reviewer fields, product name, selected rating, linked customer edit URL, and any displayed customer email.",
+    "method_code": "async def get_product_review_detail(self, review_id: int) -> dict:\n    import re\n    from urllib.parse import urljoin\n\n    if review_id < 1:\n        raise ValueError(\"review_id must be >= 1\")\n\n    await self.page.goto(f\"/admin/review/product/edit/id/{review_id}/\", wait_until=\"domcontentloaded\")\n    await self.page.wait_for_load_state(\"networkidle\")\n\n    async def _first_input_value(selectors):\n        for selector in selectors:\n            locator = self.page.locator(selector)\n            if await locator.count():\n                try:\n                    value = (await locator.first.input_value()).strip()\n                    if value:\n                        return value\n                except Exception:\n                    pass\n        return None\n\n    async def _first_text(selectors):\n        for selector in selectors:\n            locator = self.page.locator(selector)\n            if await locator.count():\n                try:\n                    value = (await locator.first.inner_text()).strip()\n                    if value:\n                        return value\n                except Exception:\n                    pass\n        return None\n\n    review_url = self.page.url\n    nickname = await _first_input_value([\"#nickname\", 'input[name=\"nickname\"]'])\n    title = await _first_input_value([\"#title\", 'input[name=\"title\"]'])\n    detail_text = await _first_input_value([\"#detail\", 'textarea[name=\"detail\"]'])\n    product_name = await _first_text([\"#product_name\", 'a[href*=\"/catalog/product/edit/id/\"]'])\n\n    rating = None\n    checked_rating = self.page.locator('input[type=\"radio\"][name^=\"ratings\"]:checked').first\n    if await checked_rating.count():\n        rating_id = await checked_rating.get_attribute(\"id\")\n        if rating_id:\n            match = re.search(r\"Rating_(\\d+)\", rating_id)\n            if match:\n                rating = int(match.group(1))\n\n    customer_edit_url = None\n    customer_link = self.page.locator('a[href*=\"/admin/customer/index/edit/id/\"]').first\n    if await customer_link.count():\n        href = await customer_link.get_attribute(\"href\")\n        if href:\n            customer_edit_url = urljoin(review_url, href)\n\n    body_text = await self.page.locator(\"body\").inner_text()\n    displayed_customer_email = None\n    email_match = re.search(r\"([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,})\", body_text)\n    if email_match:\n        displayed_customer_email = email_match.group(1)\n\n    return {\n        \"review_id\": review_id,\n        \"review_url\": review_url,\n        \"product_name\": product_name,\n        \"nickname\": nickname,\n        \"title\": title,\n        \"detail_text\": detail_text,\n        \"rating\": rating,\n        \"customer_edit_url\": customer_edit_url,\n        \"displayed_customer_email\": displayed_customer_email,\n    }\n",
+    "owns": [
+      "Navigate to the admin review detail/edit page for a supplied review ID",
+      "Extract stable review-detail fields shown on the page, including nickname, title, review body text, product name, and selected rating",
+      "Extract linked admin customer edit URL when present on the review detail page",
+      "Extract displayed customer email when present on the review detail page",
+      "Return typed objective facts from the review-detail acquisition boundary"
+    ],
+    "does_not_own": [
+      "Logging into the admin site",
+      "Discovering which review to inspect",
+      "Ranking or classifying review sentiment such as deciding which review is 'most unhappy'",
+      "Opening the linked customer page",
+      "Counting, aggregating, or formatting final answers"
+    ],
+    "input_contract": {
+      "type": "object",
+      "properties": {
+        "review_id": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Admin review identifier used in /admin/review/product/edit/id/{review_id}/."
+        }
+      },
+      "required": [
+        "review_id"
+      ]
+    },
+    "output_contract": {
+      "type": "object",
+      "properties": {
+        "review_id": {
+          "type": "integer",
+          "description": "Admin review identifier that was opened."
+        },
+        "review_url": {
+          "type": "string",
+          "description": "Resolved admin review detail URL that was opened."
+        },
+        "product_name": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Reviewed product name shown on the detail page when present."
+        },
+        "nickname": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Reviewer nickname from the form when present."
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Review summary/title from the form when present."
+        },
+        "detail_text": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Full review body/detail text from the form when present."
+        },
+        "rating": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "enum": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            null
+          ],
+          "description": "Numeric value of the checked rating input when detectable."
+        },
+        "customer_edit_url": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Linked admin customer edit URL when present on the page."
+        },
+        "displayed_customer_email": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Email address displayed on the review detail page when present."
+        }
+      },
+      "required": [
+        "review_id",
+        "review_url",
+        "product_name",
+        "nickname",
+        "title",
+        "detail_text",
+        "rating",
+        "customer_edit_url",
+        "displayed_customer_email"
+      ]
+    },
+    "requires": [
+      "Authenticated shopping_admin admin browser session"
+    ],
+    "provides": [
+      "Structured product review detail facts from the shopping admin review detail page"
+    ],
+    "supported_patterns": [
+      "Fetch review details by review ID",
+      "Read nickname/title/body/rating for later workflow-side filtering or ranking",
+      "Extract linked customer edit URL when present",
+      "Extract displayed customer email when present on the review detail page"
+    ],
+    "source_evidence": [
+      {
+        "workflow_id": "task244_t244",
+        "template_id": "244",
+        "code_quote": "review351_html=opener.open(Request(f'{BASE}/admin/review/product/edit/id/351/', headers=HEADERS), timeout=30).read().decode('utf-8','ignore')\nreview351_plain=plain(review351_html)\ncustomer_link=re.search(r'(http://[^\"\\']+/admin/customer/index/edit/id/\\d+/)', review351_html).group(1)\nemail=re.search(r'([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,})', review351_plain).group(1)",
+        "explanation": "Generalized opening a concrete review detail page into a parameterized read operation that returns objective fields exposed there, including linked customer URL and displayed email when present.",
+        "evidence_match_mode": "exact"
+      },
+      {
+        "workflow_id": "task112_t245",
+        "template_id": "245",
+        "code_quote": "await page.goto(f'{BASE}/admin/review/product/edit/id/{rid}/', wait_until='domcontentloaded')\nchecked = await page.evaluate(\"\"\"\n() => Array.from(document.querySelectorAll('input[type=radio]'))\n    .filter(r => r.checked)\n    .map(r => ({id:r.id||'', name:r.name||'', value:r.value||''}))\n\"\"\")\nnick = await page.locator('input[name=\"nickname\"]').input_value()",
+        "explanation": "Generalized extraction of nickname and selected rating from the review edit page into stable typed fields.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      },
+      {
+        "workflow_id": "task246_t244",
+        "template_id": "244",
+        "code_quote": "nickname = await page.locator('#nickname').input_value()\ntitle = await page.locator('#title').input_value()\ndetail = await page.locator('#detail').input_value()\nproduct = (await page.locator('#product_name').inner_text()).strip()\nchecked = await page.locator('input[type=\"radio\"][name^=\"ratings\"]:checked').get_attribute('id')",
+        "explanation": "Confirmed the same review-detail boundary exposes title, body text, product name, and rating; these are included losslessly in the returned record.",
+        "evidence_match_mode": "exact"
+      },
+      {
+        "workflow_id": "task243_t244",
+        "template_id": "244",
+        "code_quote": "await page.goto(f'{BASE}/admin/review/product/edit/id/353/', wait_until='domcontentloaded')\nreview_text = await page.get_by_role('textbox', name='Review *', exact=True).input_value()\nnickname = await page.get_by_role('textbox', name='Nickname *').input_value()\nsummary = await page.get_by_role('textbox', name='Summary of Review *', exact=True).input_value()\nproduct_name = await page.get_by_role('link', name='Circe Hooded Ice Fleece').inner_text()",
+        "explanation": "Additional evidence that the review detail page consistently exposes review text, nickname, summary/title, and product name across products.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    ]
+  },
+  {
+    "primitive_id": "shopping_admin/search_product_reviews",
+    "method": "search_product_reviews",
+    "capability": "Search the shopping admin product reviews grid using built-in detail and/or product filters and return typed visible-page review row records plus grid-reported total-match metadata.",
+    "method_code": "async def search_product_reviews(self, detail_query: str | None = None, product_name_query: str | None = None, page_number: int = 1) -> dict:\n    import re\n    from urllib.parse import urljoin\n\n    if detail_query is None and product_name_query is None:\n        raise ValueError(\"Provide at least one filter: detail_query or product_name_query.\")\n    if page_number < 1:\n        raise ValueError(\"page_number must be >= 1\")\n\n    await self.page.goto('/admin/review/product/index/', wait_until='domcontentloaded')\n    await self.page.wait_for_load_state('networkidle')\n\n    if detail_query is not None:\n        detail_input = self.page.locator('#reviewGrid_filter_detail')\n        if not await detail_input.count():\n            raise RuntimeError('Review detail filter input not found.')\n        await detail_input.fill(detail_query)\n\n    if product_name_query is not None:\n        product_input = self.page.locator('#reviewGrid_filter_name')\n        if not await product_input.count():\n            raise RuntimeError('Product filter input not found.')\n        await product_input.fill(product_name_query)\n\n    await self.page.get_by_role('button', name='Search').click()\n    await self.page.wait_for_load_state('networkidle')\n\n    if page_number > 1:\n        pager_link = self.page.locator(f'a[href*=\"page/{page_number}\"]').first\n        if not await pager_link.count():\n            raise RuntimeError(f'Requested page_number {page_number} is not available from the current result set.')\n        await pager_link.click()\n        await self.page.wait_for_load_state('networkidle')\n\n    body_text = await self.page.locator('body').inner_text()\n    total_match = re.search(r'(\\d+)\\s+records found', body_text)\n    reported_total_matches = int(total_match.group(1)) if total_match else None\n\n    table_rows = self.page.locator('#reviewGrid_table tbody tr')\n    row_count = await table_rows.count()\n    records = []\n\n    for i in range(row_count):\n        row = table_rows.nth(i)\n        row_text_raw = await row.inner_text()\n        row_text = ' | '.join(part.strip() for part in row_text_raw.splitlines() if part.strip())\n\n        edit_url = None\n        review_id = None\n        edit_link = row.locator('a[href*=\"/admin/review/product/edit/id/\"]').first\n        if await edit_link.count():\n            href = await edit_link.get_attribute('href')\n            if href:\n                edit_url = urljoin(self.page.url, href)\n                id_match = re.search(r'/admin/review/product/edit/id/(\\d+)/', edit_url)\n                if id_match:\n                    review_id = int(id_match.group(1))\n\n        records.append({\n            \"review_id\": review_id,\n            \"edit_url\": edit_url,\n            \"row_text\": row_text,\n        })\n\n    is_complete = False\n    if reported_total_matches is not None and reported_total_matches <= len(records) and page_number == 1:\n        is_complete = True\n\n    return {\n        \"detail_query\": detail_query,\n        \"product_name_query\": product_name_query,\n        \"reported_total_matches\": reported_total_matches,\n        \"page_number\": page_number,\n        \"is_complete\": is_complete,\n        \"records\": records,\n    }\n",
+    "owns": [
+      "Navigate to the admin product reviews grid",
+      "Apply built-in review detail and/or product-name filters demonstrated by the site UI",
+      "Submit the search and optionally inspect a requested result page",
+      "Parse visible review grid rows into typed records with stable row-level facts supported by evidence, including review identity via edit URL and review ID when present",
+      "Return the grid-reported total matching-record count and visible-page completeness metadata"
+    ],
+    "does_not_own": [
+      "Logging into the admin site",
+      "Choosing business-specific search terms",
+      "Opening each review detail page for deeper verification",
+      "Counting records for final answers",
+      "Sentiment ranking, thresholding, or other subjective task logic"
+    ],
+    "input_contract": {
+      "type": "object",
+      "properties": {
+        "detail_query": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Text entered into the grid's Review/detail filter."
+        },
+        "product_name_query": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Text entered into the grid's Product filter."
+        },
+        "page_number": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Results page number to inspect when pagination is available."
+        }
+      },
+      "anyOf": [
+        {
+          "required": [
+            "detail_query"
+          ]
+        },
+        {
+          "required": [
+            "product_name_query"
+          ]
+        }
+      ]
+    },
+    "output_contract": {
+      "type": "object",
+      "properties": {
+        "detail_query": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "product_name_query": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reported_total_matches": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Total records found as reported by the grid after filtering."
+        },
+        "page_number": {
+          "type": "integer",
+          "description": "Results page inspected."
+        },
+        "is_complete": {
+          "type": "boolean",
+          "description": "True only when the visible records are known to cover the entire filtered result set; otherwise false."
+        },
+        "records": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "review_id": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "Review identifier parsed from the row edit URL when present."
+              },
+              "edit_url": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Admin review edit URL for the row when present."
+              },
+              "row_text": {
+                "type": "string",
+                "description": "Normalized visible text content of the full grid row."
+              }
+            },
+            "required": [
+              "review_id",
+              "edit_url",
+              "row_text"
+            ]
+          }
+        }
+      },
+      "required": [
+        "detail_query",
+        "product_name_query",
+        "reported_total_matches",
+        "page_number",
+        "is_complete",
+        "records"
+      ]
+    },
+    "requires": [
+      "Authenticated shopping_admin admin browser session"
+    ],
+    "provides": [
+      "Visible-page product review grid search results with reported total-match metadata"
+    ],
+    "supported_patterns": [
+      "Search reviews by review-detail text",
+      "Search reviews by product-name text",
+      "Inspect current-page review grid rows before workflow-side follow-up",
+      "Return reported total count without claiming full pagination traversal"
+    ],
+    "source_evidence": [
+      {
+        "workflow_id": "task11_t288",
+        "template_id": "288",
+        "code_quote": "await page.locator('#reviewGrid_filter_detail').fill(TERM)\nawait page.get_by_role('button', name='Search').click()\nbody = await page.locator('body').inner_text()\nmatch = re.search(r'(\\d+)\\s+records found', body)\nrows = await page.locator('#reviewGrid_table tbody tr').count()\nfor i in range(rows):\n    row = page.locator('#reviewGrid_table tbody tr').nth(i)\n    row_text = (await row.inner_text()).replace('\\n', ' | ')\n    href = await row.locator('a', has_text='Edit').get_attribute('href')",
+        "explanation": "Generalized the built-in review-detail search and visible grid-row parsing into a reusable search primitive that returns typed row identity fields plus the grid-reported total.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      },
+      {
+        "workflow_id": "task14_t288",
+        "template_id": "288",
+        "code_quote": "await page.locator('#reviewGrid_filter_detail').fill('not useful')\nawait page.get_by_role('button', name='Search').click()\nm = re.search(r'(\\d+) records found', body)",
+        "explanation": "Confirmed that the same detail filter supports arbitrary query text and exposes a stable reported match count.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      },
+      {
+        "workflow_id": "task112_t245",
+        "template_id": "245",
+        "code_quote": "await page.goto(f'{BASE}/admin/review/product/index/', wait_until='domcontentloaded')\nbody = await page.locator('body').inner_text()\nids = sorted(set(int(m.group(1)) for m in re.finditer(r'\\n\\s*(\\d+)\\s+Apr .*?Circe Hooded Ice Fleece', body, re.S)))",
+        "explanation": "Corroborated that visible review-grid content contains review identifiers in the current-page listing, supporting row identity extraction.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      },
+      {
+        "workflow_id": "task246_t244",
+        "template_id": "244",
+        "code_quote": "await page.fill('#reviewGrid_filter_name', 'Chloe')\nawait page.get_by_role('button', name='Search').click()\nrows = await page.locator('tbody tr').evaluate_all('''els => els.map(e => (e.innerText||e.textContent||'').trim()).filter(t => t.includes('Chloe Compete Tank'))''')",
+        "explanation": "Added support for the Product column filter because evidence shows the reviews grid supports product-name searching through a stable control.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    ]
+  },
+  {
+    "primitive_id": "shopping_admin/get_customer_detail_from_admin_url",
+    "method": "get_customer_detail_from_admin_url",
+    "capability": "Open a shopping admin customer edit page from a provided admin URL and extract the displayed customer email.",
+    "method_code": "async def get_customer_detail_from_admin_url(self, customer_edit_url: str) -> dict:\n    import re\n\n    if not customer_edit_url:\n        raise ValueError('customer_edit_url is required.')\n\n    await self.page.goto(customer_edit_url, wait_until='domcontentloaded')\n    await self.page.wait_for_load_state('networkidle')\n\n    current_url = self.page.url\n    body_text = await self.page.locator('body').inner_text()\n\n    email = None\n    email_match = re.search(r'([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,})', body_text)\n    if email_match:\n        email = email_match.group(1)\n\n    return {\n        'customer_edit_url': current_url,\n        'email': email,\n    }\n",
+    "owns": [
+      "Open a provided admin customer edit URL in an authenticated session",
+      "Parse the customer detail page for displayed email",
+      "Return typed facts from the customer-detail acquisition boundary supported by evidence"
+    ],
+    "does_not_own": [
+      "Logging into the admin site",
+      "Discovering the customer URL from unrelated pages",
+      "Searching the customer grid",
+      "Inferring unsupported customer profile fields",
+      "Mutating customer records"
+    ],
+    "input_contract": {
+      "type": "object",
+      "properties": {
+        "customer_edit_url": {
+          "type": "string",
+          "description": "Absolute or relative admin customer edit URL."
+        }
+      },
+      "required": [
+        "customer_edit_url"
+      ]
+    },
+    "output_contract": {
+      "type": "object",
+      "properties": {
+        "customer_edit_url": {
+          "type": "string",
+          "description": "Resolved admin customer edit URL that was opened."
+        },
+        "email": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Displayed customer email address when present."
+        }
+      },
+      "required": [
+        "customer_edit_url",
+        "email"
+      ]
+    },
+    "requires": [
+      "Authenticated shopping_admin admin browser session"
+    ],
+    "provides": [
+      "Displayed customer email from a customer edit page"
+    ],
+    "supported_patterns": [
+      "Verify customer email from a linked customer edit page"
+    ],
+    "source_evidence": [
+      {
+        "workflow_id": "task244_t244",
+        "template_id": "244",
+        "code_quote": "cust_html=opener.open(Request(customer_link, headers=HEADERS), timeout=30).read().decode('utf-8','ignore')\ncust_plain=plain(cust_html)\nemail2=re.search(r'([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,})', cust_plain).group(1)",
+        "explanation": "Generalized opening a linked customer edit page and extracting the displayed email into a reusable primitive keyed by customer edit URL. The output is limited to the typed fact directly supported by evidence.",
+        "evidence_match_mode": "exact"
+      }
+    ]
+  },
+  {
+    "primitive_id": "shopping_admin/get_sales_orders_report_rows",
+    "method": "get_sales_orders_report_rows",
+    "capability": "Retrieve typed rows from the shopping admin Sales Orders report for a specified date range, period granularity, and optional order-status filtering.",
+    "method_code": "async def get_sales_orders_report_rows(self, period_type: str, from_date: str, to_date: str, status_filter_mode: str = 'all', order_status: str | None = None, include_empty_rows: bool = False) -> dict:\n    if status_filter_mode not in ('all', 'specified'):\n        raise ValueError(\"status_filter_mode must be 'all' or 'specified'\")\n    if status_filter_mode == 'specified' and not order_status:\n        raise ValueError('order_status is required when status_filter_mode is specified')\n\n    await self.page.goto('/admin/reports/report_sales/sales/', wait_until='domcontentloaded')\n    await self.page.wait_for_load_state('networkidle')\n\n    await self.page.select_option('#sales_report_period_type', period_type)\n    await self.page.fill('#sales_report_from', from_date)\n    await self.page.fill('#sales_report_to', to_date)\n    await self.page.select_option('#sales_report_show_order_statuses', '1' if status_filter_mode == 'specified' else '0')\n    if status_filter_mode == 'specified' and order_status is not None:\n        await self.page.select_option('#sales_report_order_statuses', label=order_status)\n    await self.page.select_option('#sales_report_show_empty_rows', '0' if include_empty_rows else '1')\n\n    await self.page.click('#filter_form_submit')\n    await self.page.wait_for_load_state('networkidle')\n\n    table_text = await self.page.locator('table').first.inner_text()\n    lines = [line.strip() for line in table_text.splitlines() if line.strip()]\n\n    rows = []\n    for line in lines:\n        parts = [part.strip() for part in line.split('\\t')]\n        if len(parts) < 2:\n            continue\n        if parts[0].lower() == 'period' or parts[0] == 'Total':\n            continue\n        try:\n            orders_count = int(parts[1].replace(',', ''))\n        except Exception:\n            continue\n        rows.append({\n            'period_label': parts[0],\n            'orders_count': orders_count,\n        })\n\n    return {\n        'report_url': self.page.url,\n        'period_type': period_type,\n        'from_date': from_date,\n        'to_date': to_date,\n        'status_filter_mode': status_filter_mode,\n        'order_status': order_status,\n        'include_empty_rows': include_empty_rows,\n        'rows': rows,\n        'completeness': 'report_rows_visible_on_page',\n    }\n",
+    "owns": [
+      "Navigate to the Sales > Orders report page",
+      "Apply stable report form controls for period type, date range, order-status filtering, and empty-row inclusion",
+      "Submit the report and parse the rendered table into typed rows",
+      "Return objective report row fields actually exposed by the report table"
+    ],
+    "does_not_own": [
+      "Logging into the admin site",
+      "Choosing task-specific date ranges or statuses",
+      "Mapping month numbers to month names for final answer formatting",
+      "Aggregating, ranking, or limiting rows beyond the requested report filters"
+    ],
+    "input_contract": {
+      "type": "object",
+      "properties": {
+        "period_type": {
+          "type": "string",
+          "enum": [
+            "day",
+            "month",
+            "year"
+          ],
+          "description": "Sales report period granularity."
+        },
+        "from_date": {
+          "type": "string",
+          "description": "Start date entered into the report form, e.g. '1/1/2022'."
+        },
+        "to_date": {
+          "type": "string",
+          "description": "End date entered into the report form, e.g. '11/30/2022'."
+        },
+        "status_filter_mode": {
+          "type": "string",
+          "enum": [
+            "all",
+            "specified"
+          ],
+          "description": "Whether to include all order statuses or filter to one specified visible order status label."
+        },
+        "order_status": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Visible order status label to select when status_filter_mode is 'specified'."
+        },
+        "include_empty_rows": {
+          "type": "boolean",
+          "description": "Whether to include empty rows in the report. This maps to the site's show-empty-rows control, whose demonstrated form values are inverted relative to the boolean meaning."
+        }
+      },
+      "required": [
+        "period_type",
+        "from_date",
+        "to_date"
+      ]
+    },
+    "output_contract": {
+      "type": "object",
+      "properties": {
+        "report_url": {
+          "type": "string",
+          "description": "URL of the report results page after submission."
+        },
+        "period_type": {
+          "type": "string"
+        },
+        "from_date": {
+          "type": "string"
+        },
+        "to_date": {
+          "type": "string"
+        },
+        "status_filter_mode": {
+          "type": "string",
+          "enum": [
+            "all",
+            "specified"
+          ]
+        },
+        "order_status": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "include_empty_rows": {
+          "type": "boolean"
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "period_label": {
+                "type": "string",
+                "description": "Period value as displayed in the report table, e.g. '1/2022'."
+              },
+              "orders_count": {
+                "type": "integer",
+                "description": "Order count shown in the row."
+              }
+            },
+            "required": [
+              "period_label",
+              "orders_count"
+            ]
+          }
+        },
+        "completeness": {
+          "type": "string",
+          "enum": [
+            "report_rows_visible_on_page"
+          ]
+        }
+      },
+      "required": [
+        "report_url",
+        "period_type",
+        "from_date",
+        "to_date",
+        "status_filter_mode",
+        "order_status",
+        "include_empty_rows",
+        "rows",
+        "completeness"
+      ]
+    },
+    "requires": [
+      "Authenticated shopping_admin admin browser session"
+    ],
+    "provides": [
+      "Typed Sales Orders report rows for the requested filters"
+    ],
+    "supported_patterns": [
+      "Read monthly order-count rows for a date range",
+      "Read report rows filtered to a specified order status",
+      "Return visible report rows without workflow-side reformatting"
+    ],
+    "source_evidence": [
+      {
+        "workflow_id": "task110_t270",
+        "template_id": "270",
+        "code_quote": "await page.goto(BASE + '/admin/reports/report_sales/sales/', wait_until='domcontentloaded')\nawait page.select_option('#sales_report_period_type', 'month')\nawait page.fill('#sales_report_from', '1/1/2022')\nawait page.fill('#sales_report_to', '11/30/2022')\nawait page.select_option('#sales_report_show_order_statuses', '1')\nawait page.select_option('#sales_report_order_statuses', label='Complete')\nawait page.select_option('#sales_report_show_empty_rows', '1')\nawait page.click('#filter_form_submit')\ntable_text = await page.locator('table').first.inner_text()",
+        "explanation": "Generalized the hard-coded Sales Orders report configuration and table parsing into a parameterized primitive that returns displayed period labels and order counts. The public boolean uses the semantic meaning include_empty_rows while the implementation preserves the site's demonstrated inverted control values.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    ]
+  },
+  {
+    "primitive_id": "shopping_admin/get_bestsellers_report_csv",
+    "method": "get_bestsellers_report_csv",
+    "capability": "Retrieve typed bestseller report rows from the shopping admin bestsellers report export for a specified date range and period grouping.",
+    "method_code": "async def get_bestsellers_report_csv(self, period_type: str, from_date: str, to_date: str, show_empty_rows: int = 0) -> dict:\n    import base64\n    import csv\n    import io\n    import re\n    from html import unescape\n    from urllib.parse import urlencode, urljoin\n\n    if show_empty_rows not in (0, 1):\n        raise ValueError('show_empty_rows must be 0 or 1')\n\n    params = urlencode({\n        'period_type': period_type,\n        'from': from_date,\n        'to': to_date,\n        'show_empty_rows': show_empty_rows,\n    })\n    encoded = base64.b64encode(params.encode()).decode().replace('+', '-').replace('/', '_')\n    report_url = f'/admin/reports/report_sales/bestsellers/filter/{encoded}/'\n\n    await self.page.goto(report_url, wait_until='domcontentloaded')\n    await self.page.wait_for_load_state('networkidle')\n\n    html = await self.page.content()\n    match = re.search(r'<option value=\"([^\"]*exportBestsellersCsv[^\"]*)\"', html)\n    if not match:\n        raise RuntimeError('Could not find bestseller export CSV URL on report page.')\n    export_csv_url = urljoin(self.page.url, unescape(match.group(1)))\n\n    response = await self.page.context.request.get(export_csv_url)\n    csv_text = await response.text()\n\n    reader = csv.reader(io.StringIO(csv_text))\n    all_rows = list(reader)\n    column_headers = all_rows[0] if all_rows else []\n    rows = []\n    for row in all_rows[1:]:\n        if len(row) < 4:\n            continue\n        try:\n            order_quantity = float(row[3])\n        except Exception:\n            continue\n        rows.append({\n            'interval': row[0].strip(),\n            'product_name': row[1].strip(),\n            'price': row[2].strip(),\n            'order_quantity': order_quantity,\n        })\n\n    return {\n        'report_url': self.page.url,\n        'export_csv_url': export_csv_url,\n        'column_headers': column_headers,\n        'rows': rows,\n        'completeness': {\n            'source': 'bestsellers_csv_export',\n            'filtered_report': True,\n            'export_based': True,\n        },\n    }\n",
+    "owns": [
+      "Open the Magento bestsellers report for a caller-specified filter set",
+      "Construct the encoded filter URL for the report",
+      "Extract the export CSV endpoint from the filtered report page",
+      "Download and parse the CSV export into typed bestseller rows",
+      "Return export-based completeness metadata"
+    ],
+    "does_not_own": [
+      "Logging into the admin site",
+      "Aggregating rows to find top sellers",
+      "Resolving brands from product names",
+      "Ranking or tie-breaking products",
+      "Any heuristic inference beyond exported row fields"
+    ],
+    "input_contract": {
+      "type": "object",
+      "properties": {
+        "period_type": {
+          "type": "string",
+          "enum": [
+            "day",
+            "month",
+            "year",
+            "quarter"
+          ],
+          "description": "Report grouping period."
+        },
+        "from_date": {
+          "type": "string",
+          "description": "Report start date in the format accepted by the report filter URL, e.g. 'Jan 1, 2022'."
+        },
+        "to_date": {
+          "type": "string",
+          "description": "Report end date in the format accepted by the report filter URL, e.g. 'Mar 31, 2022'."
+        },
+        "show_empty_rows": {
+          "type": "integer",
+          "enum": [
+            0,
+            1
+          ],
+          "description": "Whether the report filter should include empty rows."
+        }
+      },
+      "required": [
+        "period_type",
+        "from_date",
+        "to_date"
+      ]
+    },
+    "output_contract": {
+      "type": "object",
+      "properties": {
+        "report_url": {
+          "type": "string",
+          "description": "Filtered bestseller report URL that was opened."
+        },
+        "export_csv_url": {
+          "type": "string",
+          "description": "CSV export URL discovered on the report page."
+        },
+        "column_headers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Header row from the exported CSV."
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "interval": {
+                "type": "string",
+                "description": "Report interval label from the CSV."
+              },
+              "product_name": {
+                "type": "string",
+                "description": "Product name from the CSV."
+              },
+              "price": {
+                "type": "string",
+                "description": "Price field as exported by the CSV."
+              },
+              "order_quantity": {
+                "type": "number",
+                "description": "Order quantity parsed from the CSV row."
+              }
+            },
+            "required": [
+              "interval",
+              "product_name",
+              "price",
+              "order_quantity"
+            ]
+          }
+        },
+        "completeness": {
+          "type": "object",
+          "properties": {
+            "source": {
+              "type": "string"
+            },
+            "filtered_report": {
+              "type": "boolean"
+            },
+            "export_based": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "source",
+            "filtered_report",
+            "export_based"
+          ]
+        }
+      },
+      "required": [
+        "report_url",
+        "export_csv_url",
+        "column_headers",
+        "rows",
+        "completeness"
+      ]
+    },
+    "requires": [
+      "Authenticated shopping_admin admin browser session"
+    ],
+    "provides": [
+      "Typed bestseller report export rows for a requested filter set"
+    ],
+    "supported_patterns": [
+      "Read bestseller CSV export rows for a date range",
+      "Use quarter grouping when supported by the report",
+      "Return exported product rows for workflow-side aggregation"
+    ],
+    "source_evidence": [
+      {
+        "workflow_id": "task1_t279",
+        "template_id": "279",
+        "code_quote": "params='period_type=quarter&from=Jan+1%2C+2022&to=Mar+31%2C+2022&show_empty_rows=0'\nenc=m64(params)\nreport_url=BEST+'filter/'+enc+'/'\npage=s.get(report_url, timeout=30).text\nfor row in csv.reader(io.StringIO(s.get(html.unescape(re.search(r'<option value=\"([^\"]*exportBestsellersCsv[^\"]*)\"', page).group(1)), timeout=30).text)):\n    rows.append(row)",
+        "explanation": "Generalized the hard-coded bestseller report filter URL construction, export URL extraction, and CSV parsing into a parameterized primitive returning typed export rows.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    ]
+  },
+  {
+    "primitive_id": "shopping_admin/list_sales_orders_from_grid",
+    "method": "list_sales_orders_from_grid",
+    "capability": "Retrieve typed sales order records from the shopping admin sales order grid with optional status filtering, pagination, and stable grid-exposed order metadata.",
+    "method_code": "async def list_sales_orders_from_grid(self, status: str | None = None, page_number: int = 1, page_size: int = 200) -> dict:\n    import json\n    import re\n    from urllib.parse import urlencode, urljoin\n\n    if page_number < 1:\n        raise ValueError(\"page_number must be >= 1\")\n    if page_size < 1:\n        raise ValueError(\"page_size must be >= 1\")\n\n    await self.page.goto('/admin/sales/order/', wait_until='domcontentloaded')\n    await self.page.wait_for_load_state('networkidle')\n\n    params = {\n        'namespace': 'sales_order_grid',\n        'paging[pageSize]': str(page_size),\n        'paging[current]': str(page_number),\n        'isAjax': 'true',\n    }\n    if status is not None:\n        params['filters[status]'] = status\n\n    render_url = '/admin/mui/index/render/?' + urlencode(params)\n    response = await self.page.context.request.get(\n        urljoin(self.page.url, render_url),\n        headers={\n            'X-Requested-With': 'XMLHttpRequest',\n            'Referer': urljoin(self.page.url, '/admin/sales/order/'),\n        },\n    )\n    if not response.ok:\n        raise RuntimeError(f'Failed to fetch sales order grid: HTTP {response.status}')\n\n    raw_text = await response.text()\n    content_type = (response.headers.get('content-type') or '').lower()\n\n    payload = None\n    if 'application/json' in content_type:\n        parsed = json.loads(raw_text)\n        if isinstance(parsed, dict) and 'items' in parsed:\n            payload = parsed\n        else:\n            raise RuntimeError('Unexpected JSON payload for sales order grid.')\n    else:\n        script_match = re.search(r'<script type=\"text/x-magento-init\">(.*?)</script>', raw_text, re.S)\n        if script_match:\n            app = json.loads(script_match.group(1))['*']['Magento_Ui/js/core/app']\n            payload = app['components']['sales_order_grid']['children']['sales_order_grid_data_source']['config']['data']\n        else:\n            marker = '\"sales_order_grid_data_source\":'\n            start = raw_text.find(marker)\n            if start == -1:\n                raise RuntimeError('Could not locate sales order grid payload in response.')\n            idx = start + len(marker)\n            while idx < len(raw_text) and raw_text[idx].isspace():\n                idx += 1\n            if idx >= len(raw_text) or raw_text[idx] != '{':\n                raise RuntimeError('Embedded sales order grid payload did not start with an object.')\n            depth = 0\n            end = None\n            for pos in range(idx, len(raw_text)):\n                ch = raw_text[pos]\n                if ch == '{':\n                    depth += 1\n                elif ch == '}':\n                    depth -= 1\n                    if depth == 0:\n                        end = pos + 1\n                        break\n            if end is None:\n                raise RuntimeError('Could not parse embedded sales order grid payload.')\n            payload = json.loads(raw_text[idx:end])['config']['data']\n\n    items = payload.get('items', [])\n    total_records = payload.get('totalRecords')\n    orders = []\n    for item in items:\n        actions = item.get('actions') or {}\n        view = actions.get('view') or {}\n        href = view.get('href')\n        orders.append({\n            'entity_id': str(item.get('entity_id')) if item.get('entity_id') is not None else None,\n            'increment_id': str(item.get('increment_id')) if item.get('increment_id') is not None else None,\n            'created_at': item.get('created_at'),\n            'status': item.get('status'),\n            'billing_name': item.get('billing_name'),\n            'view_url': urljoin(self.page.url, href) if href else None,\n        })\n\n    is_complete_page = False\n    if isinstance(total_records, int) and page_number == 1 and total_records <= len(orders):\n        is_complete_page = True\n\n    return {\n        'orders': orders,\n        'page_number': page_number,\n        'page_size': page_size,\n        'total_records': total_records,\n        'is_complete_page': is_complete_page,\n        'status': status,\n    }\n",
+    "owns": [
+      "Navigate to the shopping admin sales order area as needed to establish the grid context",
+      "Issue authenticated requests to the Magento sales order grid endpoint",
+      "Apply optional server-side status filtering via grid parameters",
+      "Apply requested page_number and page_size to the grid request",
+      "Parse Magento sales order grid payloads returned either as JSON, embedded x-magento-init HTML, or embedded sales_order_grid_data_source HTML",
+      "Return typed order records with stable identifiers, timestamps, status, billing name, and detail URL when present",
+      "Return page-level pagination metadata exposed by the grid including total_records"
+    ],
+    "does_not_own": [
+      "Logging into the admin site",
+      "Selecting the latest or otherwise task-relevant order",
+      "Aggregating orders by month or customer",
+      "Counting cancellations or ranking customers",
+      "Opening order detail pages",
+      "Formatting final task answers"
+    ],
+    "input_contract": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Optional order status filter passed to the sales order grid, for example 'complete' or 'canceled'."
+        },
+        "page_number": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "1-based sales order grid results page to request.",
+          "default": 1
+        },
+        "page_size": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of grid rows to request.",
+          "default": 200
+        }
+      },
+      "required": []
+    },
+    "output_contract": {
+      "type": "object",
+      "properties": {
+        "orders": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "entity_id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Internal admin order entity identifier from the grid item."
+              },
+              "increment_id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Displayed order number from the grid item."
+              },
+              "created_at": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Order creation timestamp from the grid payload."
+              },
+              "status": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Order status from the grid payload."
+              },
+              "billing_name": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Billing customer name from the grid payload when present."
+              },
+              "view_url": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Resolved admin order detail URL from the grid item when present."
+              }
+            },
+            "required": [
+              "entity_id",
+              "increment_id",
+              "created_at",
+              "status",
+              "billing_name",
+              "view_url"
+            ]
+          }
+        },
+        "page_number": {
+          "type": "integer"
+        },
+        "page_size": {
+          "type": "integer"
+        },
+        "total_records": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Total matching records reported by the grid payload when available."
+        },
+        "is_complete_page": {
+          "type": "boolean",
+          "description": "True only when the returned first page is known to include the full filtered result set based on total_records."
+        },
+        "status": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "orders",
+        "page_number",
+        "page_size",
+        "total_records",
+        "is_complete_page",
+        "status"
+      ]
+    },
+    "requires": [
+      "Authenticated shopping_admin admin browser session"
+    ],
+    "provides": [
+      "Typed sales order grid records with stable page metadata"
+    ],
+    "supported_patterns": [
+      "List orders filtered by status from the sales order grid",
+      "Inspect one page of orders using returned created_at timestamps in workflow logic",
+      "Obtain total matching record count reported by the grid",
+      "Retrieve order detail URLs for later workflow-side follow-up"
+    ],
+    "source_evidence": [
+      {
+        "workflow_id": "task107_t270",
+        "template_id": "270",
+        "code_quote": "url = BASE + '/admin/sales/order/index/?namespace=sales_order_grid&paging%5BpageSize%5D=200&paging%5Bcurrent%5D=1&filters%5Bstatus%5D=complete' ... obj = json.loads(body[start + len('\"sales_order_grid_data_source\":'):end]) ... items = obj['config']['data']['items'] ... obj['config']['data'].get('totalRecords')",
+        "explanation": "Generalized direct retrieval of the sales order grid data source from HTML into a parameterized listing primitive with status filter, paging inputs, typed order records, and total_records metadata.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      },
+      {
+        "workflow_id": "task204_t366",
+        "template_id": "366",
+        "code_quote": "render = session.post(BASE + \"/admin/mui/index/render/\", data={\"namespace\": \"sales_order_grid\", \"form_key\": page_fk, \"isAjax\": \"true\", \"filters[status]\": \"complete\", \"paging[pageSize]\": \"200\"}, ...)\n...\ndata = obj[\"components\"][\"sales_order_grid\"][\"children\"][\"sales_order_grid_data_source\"][\"config\"][\"data\"]\nitems = data[\"items\"]\ntotal = data[\"totalRecords\"]",
+        "explanation": "Confirmed the same stable capability through the Magento UI render endpoint, including typed order records and totalRecords.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      },
+      {
+        "workflow_id": "task290_t234",
+        "template_id": "234",
+        "code_quote": "ORDER_GRID = BASE + \"/mui/index/render/?namespace=sales_order_grid&filters%5Bplaceholder%5D=true&search=&keywordUpdated=false&paging%5BpageSize%5D=200&paging%5Bcurrent%5D={page}&sorting%5Bfield%5D=created_at&sorting%5Bdirection%5D=desc&isAjax=true\" ... page1 = await fetch_grid(reqctx, 1) ... return await resp.json()",
+        "explanation": "Confirmed paginated authenticated access to the same sales order grid JSON endpoint with page_number as a stable input.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    ]
+  },
+  {
+    "primitive_id": "shopping_admin/get_order_detail_items",
+    "method": "get_order_detail_items",
+    "capability": "Open a shopping admin order detail page and extract objective order metadata together with typed line-item records and displayed money strings from each item block.",
+    "method_code": "async def get_order_detail_items(self, order_url: str) -> dict:\n    import re\n    from urllib.parse import urljoin\n\n    if not order_url:\n        raise ValueError('order_url is required')\n\n    await self.page.goto(order_url, wait_until='domcontentloaded')\n    await self.page.wait_for_load_state('networkidle')\n\n    def _strip_tags(text: str) -> str:\n        text = re.sub(r'<br\\s*/?>', ' ', text, flags=re.I)\n        text = re.sub(r'<.*?>', ' ', text, flags=re.S)\n        text = text.replace('&nbsp;', ' ').replace('&amp;', '&')\n        return ' '.join(text.split())\n\n    html = await self.page.content()\n\n    title_match = re.search(r'<title>(.*?)</title>', html, re.S | re.I)\n    order_title = _strip_tags(title_match.group(1)) if title_match else None\n\n    date_match = re.search(r'Order Date</th>\\s*<td[^>]*>\\s*(.*?)\\s*</td>', html, re.S | re.I)\n    order_date = _strip_tags(date_match.group(1)) if date_match else None\n\n    status_match = re.search(r'Order Status</th>\\s*<td[^>]*>\\s*(.*?)\\s*</td>', html, re.S | re.I)\n    order_status = _strip_tags(status_match.group(1)) if status_match else None\n\n    items = []\n    for block in re.findall(r'<tbody[^>]*>(.*?)</tbody>', html, re.S | re.I):\n        if 'id=\"order_item_' not in block:\n            continue\n        name_match = re.search(r'<div[^>]*class=\"product-title\"[^>]*>(.*?)</div>', block, re.S | re.I)\n        if not name_match:\n            continue\n        name = _strip_tags(name_match.group(1))\n        displayed_money_amounts = re.findall(r'\\$\\d+[\\d,]*\\.\\d{2}', _strip_tags(block))\n        items.append({\n            'name': name,\n            'displayed_money_amounts': displayed_money_amounts,\n        })\n\n    return {\n        'order_url': urljoin(self.page.url, self.page.url),\n        'order': {\n            'title': order_title,\n            'order_date': order_date,\n            'order_status': order_status,\n        },\n        'items': items,\n    }\n",
+    "owns": [
+      "Navigate to an authenticated admin order detail page by URL",
+      "Parse stable order-level fields displayed on the page such as title, order date, and order status",
+      "Identify line-item tbody blocks corresponding to order items",
+      "Extract product name from each line-item block",
+      "Extract displayed money strings from each item block without overcommitting to a heuristic semantic interpretation",
+      "Return typed order metadata and line-item records rather than raw HTML"
+    ],
+    "does_not_own": [
+      "Selecting which order to inspect",
+      "Verifying business rules like requiring Complete status",
+      "Sorting items by price",
+      "Inferring which displayed currency amount corresponds to a canonical business field",
+      "Formatting final answer"
+    ],
+    "input_contract": {
+      "type": "object",
+      "properties": {
+        "order_url": {
+          "type": "string",
+          "description": "Admin order detail page URL to fetch and parse."
+        }
+      },
+      "required": [
+        "order_url"
+      ]
+    },
+    "output_contract": {
+      "type": "object",
+      "properties": {
+        "order_url": {
+          "type": "string",
+          "description": "Resolved admin order detail URL that was opened."
+        },
+        "order": {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Page title text for the order detail."
+            },
+            "order_date": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Displayed order date text from the detail page."
+            },
+            "order_status": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Displayed order status text from the detail page."
+            }
+          },
+          "required": [
+            "title",
+            "order_date",
+            "order_status"
+          ]
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Product name shown in the line item."
+              },
+              "displayed_money_amounts": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Currency amounts found in the rendered item block, preserved in page order."
+              }
+            },
+            "required": [
+              "name",
+              "displayed_money_amounts"
+            ]
+          },
+          "description": "Parsed product line items from the order detail page."
+        }
+      },
+      "required": [
+        "order_url",
+        "order",
+        "items"
+      ]
+    },
+    "requires": [
+      "Authenticated shopping_admin admin browser session"
+    ],
+    "provides": [
+      "Typed order detail metadata and item-block facts from an admin order detail page"
+    ],
+    "supported_patterns": [
+      "Read order status and date from an order detail page",
+      "List product names from order items",
+      "Let workflows choose how to interpret displayed money amounts",
+      "Support downstream workflow-side sorting or selection"
+    ],
+    "source_evidence": [
+      {
+        "workflow_id": "task204_t366",
+        "template_id": "366",
+        "code_quote": "detail = session.get(order_url)\n...\ndate_m = re.search(r\"Order Date</th>\\s*<td[^>]*>\\s*(.*?)\\s*</td>\", order_html, re.S)\nstatus_m = re.search(r\"Order Status</th>\\s*<td[^>]*>\\s*(.*?)\\s*</td>\", order_html, re.S)\n...\nfor block in re.findall(r\"<tbody[^>]*>(.*?)</tbody>\", order_html, re.S):\n    if 'id=\"order_item_' not in block:\n        continue\n    title_m = re.search(r'<div[^>]*class=\"product-title\"[^>]*>(.*?)</div>', block, re.S)\n    ...\n    nums = re.findall(r\"\\$\\d+[\\d,]*\\.\\d{2}\", strip_tags(block))",
+        "explanation": "The workflow supports a reusable order-detail acquisition boundary: fetch an order detail page, parse displayed order metadata, locate item blocks, extract item names, and preserve the money strings objectively shown in each block. The task's heuristic choice of one specific price value was intentionally narrowed out of the primitive.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    ]
+  },
+  {
+    "primitive_id": "shopping_admin/get_order_detail_skus",
+    "method": "get_order_detail_skus",
+    "capability": "Open a shopping admin order detail page by order ID and extract typed SKU occurrences shown on the rendered page.",
+    "method_code": "async def get_order_detail_skus(self, order_id: str) -> dict:\n    import re\n\n    if not order_id:\n        raise ValueError('order_id is required')\n\n    await self.page.goto(f'/admin/sales/order/view/order_id/{order_id}/', wait_until='domcontentloaded')\n    await self.page.wait_for_load_state('networkidle')\n\n    body_text = await self.page.locator('body').inner_text()\n    sku_matches = re.findall(r'SKU:\\s*([^\\n\\r]+)', body_text)\n    skus = [{'sku': sku.strip()} for sku in sku_matches if sku.strip()]\n\n    return {\n        'order_id': str(order_id),\n        'order_url': self.page.url,\n        'skus': skus,\n        'is_complete': True,\n    }\n",
+    "owns": [
+      "Navigate to an admin order detail page by order_id",
+      "Read rendered page text from the order detail page",
+      "Parse SKU occurrences from the rendered page into typed SKU records preserving page order",
+      "Return typed SKU facts rather than raw page text"
+    ],
+    "does_not_own": [
+      "Determining which order_id should be inspected",
+      "Inferring customer importance or cancellation history",
+      "Returning raw body text instead of parsed SKU data",
+      "Mutating the order"
+    ],
+    "input_contract": {
+      "type": "object",
+      "properties": {
+        "order_id": {
+          "type": "string",
+          "description": "Admin entity_id of the order to inspect."
+        }
+      },
+      "required": [
+        "order_id"
+      ]
+    },
+    "output_contract": {
+      "type": "object",
+      "properties": {
+        "order_id": {
+          "type": "string"
+        },
+        "order_url": {
+          "type": "string",
+          "description": "Resolved admin order detail URL that was opened."
+        },
+        "skus": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "sku": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "sku"
+            ]
+          }
+        },
+        "is_complete": {
+          "type": "boolean",
+          "description": "True when all SKU occurrences visible on the acquired order detail page were parsed from rendered page text."
+        }
+      },
+      "required": [
+        "order_id",
+        "order_url",
+        "skus",
+        "is_complete"
+      ]
+    },
+    "requires": [
+      "Authenticated shopping_admin admin browser session"
+    ],
+    "provides": [
+      "Typed SKU occurrences from an admin order detail page"
+    ],
+    "supported_patterns": [
+      "List all SKU occurrences from a chosen order detail page",
+      "Use workflow logic to deduplicate or compare SKUs",
+      "Inspect the selected order's rendered SKU entries without exposing raw page text"
+    ],
+    "source_evidence": [
+      {
+        "workflow_id": "task290_t234",
+        "template_id": "234",
+        "code_quote": "await page.goto(f\"{BASE}/sales/order/view/order_id/{order_id}/\", wait_until=\"networkidle\")\nbody_text = await page.locator(\"body\").inner_text()\nsku_matches = re.findall(r\"SKU:\\s*([^\\n\\r]+)\", body_text)\nfinal_skus = sku_matches",
+        "explanation": "The workflow demonstrates a reusable site-specific capability: open an order detail page for a supplied order_id and parse the rendered SKU entries into typed values. The task-specific choice of which order to inspect is separate.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    ]
+  }
+]

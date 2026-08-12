@@ -91,10 +91,11 @@ def main():
             rows.append({"partition": "t2", "arm": "primitive", "site": site,
                          "template_id": template_id, "task_id": task_id,
                          "decision": "error", "error": str(error)})
-        Path(args.output).parent.mkdir(parents=True, exist_ok=True)
-        Path(args.output).write_text(json.dumps(rows, ensure_ascii=False, indent=2) + "\n")
         print(json.dumps(rows[-2:], ensure_ascii=False), flush=True)
 
+    Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+    Path(args.output).write_text(
+        json.dumps(rows, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     counts = Counter((row["partition"], row["arm"], row["decision"]) for row in rows)
     print(json.dumps({"records": len(rows), "counts": {"/".join(k): v for k, v in counts.items()}},
                      ensure_ascii=False))

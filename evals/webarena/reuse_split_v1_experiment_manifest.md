@@ -3,7 +3,7 @@
 ## Frozen inputs
 
 - Split: `reuse_split_v1.json`
-- Split SHA-256: `0e7a377b8acc1c31c4b79d2c48c9af0e7c1b42922c3d2b5da28d6bd936ff1ca3`
+- Split SHA-256: `01e77eb3b16ce9e75a5aab57a1e25ae80e16e54f7ce23c6cef3ce30b2f58f4f1`
 - Model config: `model_gateway_54.yaml`
 - Model-config SHA-256: `085881eaea759618d1096406e5c633b88d799af0c47608e304c70235080b2e86`
 - Evaluator commit: `6473f72db5dcefc97b5725b59e734504edc28a21`
@@ -34,7 +34,7 @@
 ## Pre-evaluation retrieve-only correction
 
 The legacy sampler filtered only on evaluator class. A semantic audit before formal evaluation
-excluded TRAIN task 792 and T2 tasks 805, 807, 783, 723, 726, 491, and 790. Their intents are
+excluded TRAIN task 792 and T2 tasks 805, 807, 783, 789, 723, 726, 491, and 790. Their intents are
 state-changing and/or their expected result encodes an unavailable action rather than retrieval.
 The task 792 attempt remains in the raw TRAIN log but was incorrect and never entered either
-library. The formal eligible counts are TRAIN 120, T1 70, and T2 60.
+library. The formal eligible counts are TRAIN 120, T1 70, and T2 59.

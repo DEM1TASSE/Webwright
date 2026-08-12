@@ -1,0 +1,3425 @@
+[
+  {
+    "attempt": 1,
+    "proposal": {
+      "operations": [
+        {
+          "operation": "ADD",
+          "replacement": {
+            "primitive_id": "gitlab/list_project_issues",
+            "method": "list_project_issues",
+            "capability": "List issues for a GitLab project via the GitLab issues API, with server-side ordering and pagination, and return typed issue records.",
+            "method_code": "def list_project_issues(self, base_url: str, username: str, password: str, project: str | int, scope: str = \"all\", order_by: str = \"updated_at\", sort: str = \"desc\", per_page: int = 100, page_number: int = 1) -> dict:\n    import requests\n    from urllib.parse import quote\n\n    session = requests.Session()\n    sign_in = session.get(f\"{base_url}/users/sign_in\", timeout=30)\n    sign_in.raise_for_status()\n\n    import re\n    m = re.search(r'name=\"authenticity_token\" value=\"([^\"]+)\"', sign_in.text)\n    if not m:\n        raise RuntimeError(\"Could not find authenticity token on GitLab sign-in page\")\n\n    login_resp = session.post(\n        f\"{base_url}/users/sign_in\",\n        data={\n            \"authenticity_token\": m.group(1),\n            \"user[login]\": username,\n            \"user[password]\": password,\n            \"user[remember_me]\": \"0\",\n        },\n        timeout=30,\n        allow_redirects=True,\n    )\n    login_resp.raise_for_status()\n\n    project_identifier = str(project)\n    if isinstance(project, str) and \"/\" in project:\n        project_identifier = quote(project, safe=\"\")\n\n    response = session.get(\n        f\"{base_url}/api/v4/projects/{project_identifier}/issues\",\n        params={\n            \"scope\": scope,\n            \"order_by\": order_by,\n            \"sort\": sort,\n            \"per_page\": per_page,\n            \"page\": page_number,\n        },\n        timeout=30,\n    )\n    response.raise_for_status()\n    data = response.json()\n    if not isinstance(data, list):\n        raise RuntimeError(\"Unexpected GitLab issues API response\")\n\n    issues = []\n    for item in data:\n        issues.append({\n            \"project_id\": item.get(\"project_id\"),\n            \"project_path_with_namespace\": project if isinstance(project, str) else None,\n            \"id\": item.get(\"id\"),\n            \"iid\": item.get(\"iid\"),\n            \"title\": item.get(\"title\"),\n            \"description\": item.get(\"description\"),\n            \"state\": item.get(\"state\"),\n            \"created_at\": item.get(\"created_at\"),\n            \"updated_at\": item.get(\"updated_at\"),\n            \"closed_at\": item.get(\"closed_at\"),\n            \"web_url\": item.get(\"web_url\"),\n        })\n\n    next_page = response.headers.get(\"X-Next-Page\")\n    total = response.headers.get(\"X-Total\")\n    total_pages = response.headers.get(\"X-Total-Pages\")\n\n    return {\n        \"issues\": issues,\n        \"page_number\": page_number,\n        \"per_page\": per_page,\n        \"order_by\": order_by,\n        \"sort\": sort,\n        \"next_page_number\": int(next_page) if next_page else None,\n        \"has_next_page\": bool(next_page),\n        \"total\": int(total) if total and total.isdigit() else None,\n        \"total_pages\": int(total_pages) if total_pages and total_pages.isdigit() else None,\n    }\n",
+            "owns": [
+              "Authenticate to GitLab before API use.",
+              "Call the GitLab issues endpoint for a specific project.",
+              "Accept a numeric project id or path_with_namespace as the project identifier.",
+              "Support scope, order_by, sort, per_page, and page_number inputs.",
+              "Return typed issue records with stable identity, title, state, timestamps, and canonical web URL.",
+              "Return pagination metadata explicitly supplied by GitLab response headers when present."
+            ],
+            "does_not_own": [
+              "Searching across multiple projects for a title substring.",
+              "Selecting the latest matching issue across projects.",
+              "Deriving a boolean answer from issue state.",
+              "Workflow-level filtering, ranking, aggregation, or stop conditions beyond server-provided ordering."
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "base_url": {
+                  "type": "string"
+                },
+                "username": {
+                  "type": "string"
+                },
+                "password": {
+                  "type": "string"
+                },
+                "project": {
+                  "oneOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "string",
+                      "description": "GitLab numeric project id or path_with_namespace."
+                    }
+                  ]
+                },
+                "scope": {
+                  "type": "string",
+                  "default": "all"
+                },
+                "order_by": {
+                  "type": "string",
+                  "default": "updated_at"
+                },
+                "sort": {
+                  "type": "string",
+                  "default": "desc"
+                },
+                "per_page": {
+                  "type": "integer",
+                  "default": 100
+                },
+                "page_number": {
+                  "type": "integer",
+                  "default": 1
+                }
+              },
+              "required": [
+                "base_url",
+                "username",
+                "password",
+                "project"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "issues": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "project_id": {
+                        "type": [
+                          "integer",
+                          "null"
+                        ]
+                      },
+                      "project_path_with_namespace": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "id": {
+                        "type": [
+                          "integer",
+                          "null"
+                        ]
+                      },
+                      "iid": {
+                        "type": [
+                          "integer",
+                          "null"
+                        ]
+                      },
+                      "title": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "description": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "state": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "created_at": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "updated_at": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "closed_at": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "web_url": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "iid",
+                      "title"
+                    ]
+                  }
+                },
+                "page_number": {
+                  "type": "integer"
+                },
+                "per_page": {
+                  "type": "integer"
+                },
+                "order_by": {
+                  "type": "string"
+                },
+                "sort": {
+                  "type": "string"
+                },
+                "next_page_number": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "has_next_page": {
+                  "type": "boolean"
+                },
+                "total": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "total_pages": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "issues",
+                "page_number",
+                "per_page",
+                "order_by",
+                "sort",
+                "has_next_page"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "gitlab_authenticated_session"
+            ],
+            "supported_patterns": [
+              "API issue listing for one project",
+              "Server-side updated_at ordering",
+              "Paginated issue retrieval"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task175_t310",
+                "template_id": "310",
+                "code_quote": "issues = s.get(BASE + f'/api/v4/projects/{pid}/issues?scope=all&per_page=100&order_by=updated_at&sort=desc', timeout=30).json()",
+                "explanation": "Generalized the per-project issues API call by parameterizing project, scope, ordering, sorting, and pagination while preserving typed issue records and API-backed ordering semantics."
+              },
+              {
+                "workflow_id": "task175_t310",
+                "template_id": "310",
+                "code_quote": "matching.append({'project': p['path_with_namespace'], 'iid': iss.get('iid'), 'title': title, 'state': iss.get('state'), 'updated_at': iss.get('updated_at'), 'web_url': iss.get('web_url')})",
+                "explanation": "Preserved stable issue metadata demonstrated at the acquisition boundary and expanded to include additional stable timestamps and identifiers typically returned by the same response."
+              }
+            ]
+          }
+        },
+        {
+          "operation": "ADD",
+          "replacement": {
+            "primitive_id": "gitlab/get_issue_details",
+            "method": "get_issue_details",
+            "capability": "Fetch detailed metadata for a GitLab issue in a specified project by issue IID.",
+            "method_code": "def get_issue_details(self, base_url: str, username: str, password: str, project: str | int, issue_iid: int) -> dict:\n    import requests\n    import re\n    from urllib.parse import quote\n\n    session = requests.Session()\n    sign_in = session.get(f\"{base_url}/users/sign_in\", timeout=30)\n    sign_in.raise_for_status()\n    m = re.search(r'name=\"authenticity_token\" value=\"([^\"]+)\"', sign_in.text)\n    if not m:\n        raise RuntimeError(\"Could not find authenticity token on GitLab sign-in page\")\n\n    login_resp = session.post(\n        f\"{base_url}/users/sign_in\",\n        data={\n            \"authenticity_token\": m.group(1),\n            \"user[login]\": username,\n            \"user[password]\": password,\n            \"user[remember_me]\": \"0\",\n        },\n        timeout=30,\n        allow_redirects=True,\n    )\n    login_resp.raise_for_status()\n\n    project_identifier = str(project)\n    if isinstance(project, str) and \"/\" in project:\n        project_identifier = quote(project, safe=\"\")\n\n    response = session.get(\n        f\"{base_url}/api/v4/projects/{project_identifier}/issues/{issue_iid}\",\n        timeout=30,\n    )\n    response.raise_for_status()\n    item = response.json()\n\n    return {\n        \"project\": project,\n        \"project_id\": item.get(\"project_id\"),\n        \"id\": item.get(\"id\"),\n        \"iid\": item.get(\"iid\"),\n        \"title\": item.get(\"title\"),\n        \"description\": item.get(\"description\"),\n        \"state\": item.get(\"state\"),\n        \"created_at\": item.get(\"created_at\"),\n        \"updated_at\": item.get(\"updated_at\"),\n        \"closed_at\": item.get(\"closed_at\"),\n        \"web_url\": item.get(\"web_url\"),\n    }\n",
+            "owns": [
+              "Authenticate to GitLab before API use.",
+              "Call the GitLab issue detail endpoint for a project and issue IID.",
+              "Accept either numeric project id or path_with_namespace.",
+              "Return typed issue detail fields including stable identity, timestamps, state, and canonical URL."
+            ],
+            "does_not_own": [
+              "Finding which issue to inspect.",
+              "Cross-project search.",
+              "Title filtering.",
+              "Converting status into a task-specific boolean answer."
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "base_url": {
+                  "type": "string"
+                },
+                "username": {
+                  "type": "string"
+                },
+                "password": {
+                  "type": "string"
+                },
+                "project": {
+                  "oneOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                },
+                "issue_iid": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "base_url",
+                "username",
+                "password",
+                "project",
+                "issue_iid"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "project": {
+                  "oneOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                },
+                "project_id": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "id": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "iid": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "title": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "description": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "state": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "created_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "updated_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "closed_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "web_url": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "iid",
+                "title"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "gitlab_issue_detail"
+            ],
+            "supported_patterns": [
+              "API issue detail lookup by project and IID"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task175_t310",
+                "template_id": "310",
+                "code_quote": "project_enc = quote(latest['project'], safe='')\ndetail = s.get(BASE + f\"/api/v4/projects/{project_enc}/issues/{latest['iid']}\", timeout=30).json()",
+                "explanation": "Generalized the issue-detail API lookup by parameterizing project and issue IID."
+              },
+              {
+                "workflow_id": "task175_t310",
+                "template_id": "310",
+                "code_quote": "state = detail.get('state', latest['state'])",
+                "explanation": "The workflow uses the detail response for authoritative issue state; the primitive preserves that state along with other stable issue fields available in the same response."
+              }
+            ]
+          }
+        },
+        {
+          "operation": "ADD",
+          "replacement": {
+            "primitive_id": "gitlab/get_project_clone_urls",
+            "method": "get_project_clone_urls",
+            "capability": "Open a GitLab project page and extract clone URL information exposed in the project page HTML.",
+            "method_code": "def get_project_clone_urls(self, base_url: str, username: str, password: str, project_path: str) -> dict:\n    import requests\n    import re\n    import html as html_lib\n\n    session = requests.Session()\n    sign_in = session.get(f\"{base_url}/users/sign_in\", timeout=30)\n    sign_in.raise_for_status()\n\n    m = re.search(r'name=[\"\\']authenticity_token[\"\\'][^>]*value=[\"\\']([^\"\\']+)', sign_in.text, re.I | re.S)\n    if not m:\n        m = re.search(r'value=[\"\\']([^\"\\']+)[\"\\'][^>]*name=[\"\\']authenticity_token[\"\\']', sign_in.text, re.I | re.S)\n    if not m:\n        raise RuntimeError(\"Could not find authenticity token on GitLab sign-in page\")\n\n    login_resp = session.post(\n        f\"{base_url}/users/sign_in\",\n        data={\n            \"authenticity_token\": html_lib.unescape(m.group(1)),\n            \"user[login]\": username,\n            \"user[password]\": password,\n            \"user[remember_me]\": \"0\",\n        },\n        timeout=30,\n        allow_redirects=True,\n        headers={\"Referer\": f\"{base_url}/users/sign_in\"},\n    )\n    login_resp.raise_for_status()\n\n    project_url = f\"{base_url}{project_path}\"\n    response = session.get(project_url, timeout=30)\n    response.raise_for_status()\n    page_html = response.text\n\n    ssh_clone_url = None\n    http_clone_url = None\n\n    ssh_match = re.search(r'name=[\"\\']ssh_project_clone[\"\\'][^>]*value=[\"\\']([^\"\\']+)', page_html, re.I | re.S)\n    if not ssh_match:\n        ssh_match = re.search(r'Clone with SSH.*?value=[\"\\']([^\"\\']+)[\"\\']', page_html, re.I | re.S)\n    if not ssh_match:\n        ssh_match = re.search(r'(git@[^\"\\'\\s<>]+?\\.git)', page_html, re.I)\n    if ssh_match:\n        ssh_clone_url = html_lib.unescape(ssh_match.group(1))\n\n    http_match = re.search(r'name=[\"\\']http_project_clone[\"\\'][^>]*value=[\"\\']([^\"\\']+)', page_html, re.I | re.S)\n    if http_match:\n        http_clone_url = html_lib.unescape(http_match.group(1))\n\n    return {\n        \"project_path\": project_path,\n        \"project_url\": response.url,\n        \"ssh_clone_url\": ssh_clone_url,\n        \"http_clone_url\": http_clone_url,\n    }\n",
+            "owns": [
+              "Authenticate to GitLab before accessing project pages when required.",
+              "Fetch a GitLab project page by project path.",
+              "Parse clone URL values exposed in project page HTML.",
+              "Return SSH clone URL when present.",
+              "Return HTTP clone URL when present from the same acquisition boundary.",
+              "Preserve project path and resolved project URL context."
+            ],
+            "does_not_own": [
+              "Searching for which project to inspect.",
+              "Selecting a project based on task intent.",
+              "Performing a git clone.",
+              "Returning only one protocol when the caller may want richer clone metadata."
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "base_url": {
+                  "type": "string"
+                },
+                "username": {
+                  "type": "string"
+                },
+                "password": {
+                  "type": "string"
+                },
+                "project_path": {
+                  "type": "string",
+                  "description": "GitLab project path beginning with /, e.g. /group/project"
+                }
+              },
+              "required": [
+                "base_url",
+                "username",
+                "password",
+                "project_path"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "project_path": {
+                  "type": "string"
+                },
+                "project_url": {
+                  "type": "string"
+                },
+                "ssh_clone_url": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "http_clone_url": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "project_path",
+                "project_url",
+                "ssh_clone_url",
+                "http_clone_url"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "gitlab_project_clone_urls"
+            ],
+            "supported_patterns": [
+              "Project page clone URL extraction",
+              "SSH clone URL retrieval",
+              "HTML parsing of clone controls"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task295_t329",
+                "template_id": "329",
+                "code_quote": "project_html = opener.open(BASE + project_path).read().decode('utf-8', 'ignore')\nclone_with_ssh = re.search(r'Clone with SSH.*?value=\\\"([^\\\"]+)\\\"', project_html, re.S | re.I)",
+                "explanation": "Generalized the project-page HTML extraction of clone data from a hard-coded repository to any provided project path."
+              },
+              {
+                "workflow_id": "task293_t329",
+                "template_id": "329",
+                "code_quote": "ssh_match = re.search(r'name=[\"\\']ssh_project_clone[\"\\'][^>]*value=[\"\\']([^\"\\']+)', repo_resp.text, re.I|re.S)\nif not ssh_match:\n    ssh_match = re.search(r'(git@[^\"\\'\\s<>]+?\\.git)', repo_resp.text, re.I)",
+                "explanation": "A second workflow confirms the stable SSH clone value pattern on GitLab project pages and supports a more robust generalized parser."
+              }
+            ]
+          }
+        },
+        {
+          "operation": "ADD",
+          "replacement": {
+            "primitive_id": "gitlab/resolve_project_by_namespace",
+            "method": "resolve_project_by_namespace",
+            "capability": "Look up a GitLab project by full path_with_namespace and return stable project identity metadata from the projects API.",
+            "method_code": "def resolve_project_by_namespace(self, base_url: str, username: str, password: str, project_path_with_namespace: str) -> dict:\n    import requests\n    import re\n    from urllib.parse import quote\n\n    session = requests.Session()\n    sign_in = session.get(f\"{base_url}/users/sign_in\", timeout=30)\n    sign_in.raise_for_status()\n    m = re.search(r'name=\"authenticity_token\" value=\"([^\"]+)\"', sign_in.text)\n    if not m:\n        raise RuntimeError(\"Could not find authenticity token on GitLab sign-in page\")\n\n    login_resp = session.post(\n        f\"{base_url}/users/sign_in\",\n        data={\n            \"authenticity_token\": m.group(1),\n            \"user[login]\": username,\n            \"user[password]\": password,\n            \"user[remember_me]\": \"0\",\n        },\n        timeout=30,\n        allow_redirects=True,\n    )\n    login_resp.raise_for_status()\n\n    response = session.get(\n        f\"{base_url}/api/v4/projects/{quote(project_path_with_namespace, safe='')}\",\n        timeout=30,\n    )\n    response.raise_for_status()\n    project = response.json()\n\n    return {\n        \"id\": project.get(\"id\"),\n        \"name\": project.get(\"name\"),\n        \"path\": project.get(\"path\"),\n        \"path_with_namespace\": project.get(\"path_with_namespace\"),\n        \"web_url\": project.get(\"web_url\"),\n        \"default_branch\": project.get(\"default_branch\"),\n    }\n",
+            "owns": [
+              "Authenticate to GitLab before API use.",
+              "URL-encode a full project path_with_namespace for the projects API.",
+              "Fetch and parse the JSON project record.",
+              "Return stable project identity and canonical metadata exposed by the response."
+            ],
+            "does_not_own": [
+              "Choosing which repository to inspect.",
+              "Commit retrieval or filtering.",
+              "Task-level validation beyond returning the fetched project record."
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "base_url": {
+                  "type": "string"
+                },
+                "username": {
+                  "type": "string"
+                },
+                "password": {
+                  "type": "string"
+                },
+                "project_path_with_namespace": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "base_url",
+                "username",
+                "password",
+                "project_path_with_namespace"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "path": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "path_with_namespace": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "web_url": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "default_branch": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "path_with_namespace"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "gitlab_project_identity"
+            ],
+            "supported_patterns": [
+              "Project resolution by namespace path",
+              "Projects API lookup"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task133_t322",
+                "template_id": "322",
+                "code_quote": "url, headers, body = fetch(base + '/api/v4/projects/' + urllib.parse.quote('a11yproject/a11yproject.com', safe=''))\nproject = json.loads(body.decode('utf-8', 'ignore'))",
+                "explanation": "Generalized the hard-coded projects API lookup into a reusable namespace-resolution primitive."
+              }
+            ]
+          }
+        },
+        {
+          "operation": "ADD",
+          "replacement": {
+            "primitive_id": "gitlab/list_repository_commits_in_time_range",
+            "method": "list_repository_commits_in_time_range",
+            "capability": "Retrieve repository commits from the GitLab commits API for a project, ref, and caller-specified time window, returning typed commit records and pagination metadata.",
+            "method_code": "def list_repository_commits_in_time_range(self, base_url: str, username: str, password: str, project_id: int, ref_name: str, since: str, until: str, per_page: int = 100, page_number: int = 1) -> dict:\n    import requests\n    import re\n\n    session = requests.Session()\n    sign_in = session.get(f\"{base_url}/users/sign_in\", timeout=30)\n    sign_in.raise_for_status()\n    m = re.search(r'name=\"authenticity_token\" value=\"([^\"]+)\"', sign_in.text)\n    if not m:\n        raise RuntimeError(\"Could not find authenticity token on GitLab sign-in page\")\n\n    login_resp = session.post(\n        f\"{base_url}/users/sign_in\",\n        data={\n            \"authenticity_token\": m.group(1),\n            \"user[login]\": username,\n            \"user[password]\": password,\n            \"user[remember_me]\": \"0\",\n        },\n        timeout=30,\n        allow_redirects=True,\n    )\n    login_resp.raise_for_status()\n\n    response = session.get(\n        f\"{base_url}/api/v4/projects/{project_id}/repository/commits\",\n        params={\n            \"ref_name\": ref_name,\n            \"since\": since,\n            \"until\": until,\n            \"per_page\": per_page,\n            \"page\": page_number,\n        },\n        timeout=30,\n    )\n    response.raise_for_status()\n    data = response.json()\n    if not isinstance(data, list):\n        raise RuntimeError(\"Unexpected GitLab commits API response\")\n\n    commits = []\n    for c in data:\n        commits.append({\n            \"id\": c.get(\"id\"),\n            \"short_id\": c.get(\"short_id\"),\n            \"title\": c.get(\"title\"),\n            \"message\": c.get(\"message\"),\n            \"author_name\": c.get(\"author_name\"),\n            \"author_email\": c.get(\"author_email\"),\n            \"authored_date\": c.get(\"authored_date\"),\n            \"committer_name\": c.get(\"committer_name\"),\n            \"committer_email\": c.get(\"committer_email\"),\n            \"committed_date\": c.get(\"committed_date\"),\n            \"created_at\": c.get(\"created_at\"),\n            \"web_url\": c.get(\"web_url\"),\n        })\n\n    next_page = response.headers.get(\"X-Next-Page\")\n    total = response.headers.get(\"X-Total\")\n    total_pages = response.headers.get(\"X-Total-Pages\")\n\n    return {\n        \"commits\": commits,\n        \"page_number\": page_number,\n        \"per_page\": per_page,\n        \"next_page_number\": int(next_page) if next_page else None,\n        \"has_next_page\": bool(next_page),\n        \"total\": int(total) if total and total.isdigit() else None,\n        \"total_pages\": int(total_pages) if total_pages and total_pages.isdigit() else None,\n    }\n",
+            "owns": [
+              "Authenticate to GitLab before API use.",
+              "Construct the repository commits API request for a given project id.",
+              "Accept ref selection and since/until bounds as inputs.",
+              "Return typed commit records with stable identity, author, timestamps, message/title, and web URL.",
+              "Return pagination metadata explicitly supplied by GitLab when present."
+            ],
+            "does_not_own": [
+              "Resolving project path to project id.",
+              "Choosing the date window for a task.",
+              "Filtering commits to a specific author.",
+              "Counting or summarizing commits for the final answer."
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "base_url": {
+                  "type": "string"
+                },
+                "username": {
+                  "type": "string"
+                },
+                "password": {
+                  "type": "string"
+                },
+                "project_id": {
+                  "type": "integer"
+                },
+                "ref_name": {
+                  "type": "string"
+                },
+                "since": {
+                  "type": "string"
+                },
+                "until": {
+                  "type": "string"
+                },
+                "per_page": {
+                  "type": "integer",
+                  "default": 100
+                },
+                "page_number": {
+                  "type": "integer",
+                  "default": 1
+                }
+              },
+              "required": [
+                "base_url",
+                "username",
+                "password",
+                "project_id",
+                "ref_name",
+                "since",
+                "until"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "commits": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "short_id": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "title": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "message": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "author_name": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "author_email": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "authored_date": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "committer_name": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "committer_email": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "committed_date": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "created_at": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "web_url": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "short_id",
+                      "title"
+                    ]
+                  }
+                },
+                "page_number": {
+                  "type": "integer"
+                },
+                "per_page": {
+                  "type": "integer"
+                },
+                "next_page_number": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "has_next_page": {
+                  "type": "boolean"
+                },
+                "total": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "total_pages": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "commits",
+                "page_number",
+                "per_page",
+                "has_next_page"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "gitlab_repository_commits_page"
+            ],
+            "supported_patterns": [
+              "Commits API listing by project id",
+              "Time-bounded commit retrieval",
+              "Paginated commit retrieval"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task133_t322",
+                "template_id": "322",
+                "code_quote": "api_url = base + f'/api/v4/projects/{project_id}/repository/commits?ref_name=main&since=2023-03-02T00:00:00Z&until=2023-03-02T23:59:59Z&per_page=100'",
+                "explanation": "Generalized the commits API request by parameterizing project id, ref, time window, and pagination controls."
+              },
+              {
+                "workflow_id": "task133_t322",
+                "template_id": "322",
+                "code_quote": "for c in commits:\n    author = c.get('author_name', '')\n    authored = c.get('authored_date', '')\n    ... c.get('short_id') ... c.get('title') ... c.get('web_url')",
+                "explanation": "Preserved stable commit fields demonstrated directly in the workflow's API response handling."
+              }
+            ]
+          }
+        }
+      ],
+      "workflow_attribution": [
+        {
+          "workflow_id": "task174_t310",
+          "decision": "SKIP",
+          "reason": "Only proposed UI search-result extraction and fallback link scraping candidates. These have weak stable semantics, omit robust typed issue identity, and are superseded by stronger API-backed issue primitives from other workflows."
+        },
+        {
+          "workflow_id": "task175_t310",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0,
+            1
+          ]
+        },
+        {
+          "workflow_id": "task132_t322",
+          "decision": "SKIP",
+          "reason": "Proposed a UI regex-based commit activity parser over rendered page text. Evidence is too brittle and task-shaped compared with stronger API commit-listing evidence from another workflow."
+        },
+        {
+          "workflow_id": "task176_t310",
+          "decision": "SKIP",
+          "reason": "Dashboard issue listing and issue-status UI parsing are task-shaped UI heuristics and are superseded by stronger API-backed issue listing/detail primitives."
+        },
+        {
+          "workflow_id": "task295_t329",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            2
+          ]
+        },
+        {
+          "workflow_id": "task305_t321",
+          "decision": "SKIP",
+          "reason": "Proposed count-oriented commit-page parsing from HTML. Boundary is weaker than the commits API primitive and the workflow's main logic is counting/filtering owned by workflows."
+        },
+        {
+          "workflow_id": "task293_t329",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            2
+          ]
+        },
+        {
+          "workflow_id": "task133_t322",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            3,
+            4
+          ]
+        }
+      ],
+      "candidate_attribution": [
+        {
+          "candidate_id": "task174_t310::search_issues",
+          "decision": "REJECT",
+          "target_id": null,
+          "reason": "Boundary/evidence defect: candidate relies on brittle UI card/fallback link scraping, returns partial visible-page/fallback semantics, and lacks strong stable issue identity compared with API-backed issue primitives."
+        },
+        {
+          "candidate_id": "task175_t310::list_project_issues",
+          "decision": "ADD",
+          "operation_index": 0
+        },
+        {
+          "candidate_id": "task175_t310::get_issue_details",
+          "decision": "ADD",
+          "operation_index": 1
+        },
+        {
+          "candidate_id": "task132_t322::get_gitlab_repository_commit_activity_by_date",
+          "decision": "REJECT",
+          "target_id": null,
+          "reason": "Boundary/evidence defect: regex over rendered commits page text is brittle and task-shaped; evidence does not support a stable typed page parser as proposed."
+        },
+        {
+          "candidate_id": "task176_t310::list_dashboard_issues",
+          "decision": "REJECT",
+          "target_id": null,
+          "reason": "Boundary/evidence defect: dashboard link scraping returns weak UI-derived records and is superseded by stronger issue API evidence for stable issue retrieval."
+        },
+        {
+          "candidate_id": "task176_t310::get_issue_detail_status",
+          "decision": "REJECT",
+          "target_id": null,
+          "reason": "Boundary/evidence defect: detail-status parsing is based on body-text/action heuristics rather than stable typed acquisition; API issue detail provides stronger objective status semantics."
+        },
+        {
+          "candidate_id": "task295_t329::search_projects_by_name",
+          "decision": "COVERED",
+          "target_id": "gitlab/get_project_clone_urls",
+          "reason": "The user batch only supports a stronger reusable primitive for clone URL extraction; this search candidate is not needed because no accepted primitive in this batch depends on project search, and its evidence is weaker than direct project-page acquisition."
+        },
+        {
+          "candidate_id": "task295_t329::get_project_clone_urls",
+          "decision": "ADD",
+          "operation_index": 2
+        },
+        {
+          "candidate_id": "task305_t321::list_repository_commits",
+          "decision": "REJECT",
+          "target_id": null,
+          "reason": "Boundary/evidence defect: HTML parsing from the commits page is brittle and the proposed use is tightly coupled to downstream counting/filtering. API-based commit listing provides stronger stable semantics."
+        },
+        {
+          "candidate_id": "task293_t329::authenticate_gitlab_session",
+          "decision": "REJECT",
+          "target_id": null,
+          "reason": "Boundary defect: generic authentication/session establishment is not a standalone site-output primitive; authentication should be owned internally by concrete acquisition primitives."
+        },
+        {
+          "candidate_id": "task293_t329::search_gitlab_projects",
+          "decision": "REJECT",
+          "target_id": null,
+          "reason": "Boundary/evidence defect: HTML anchor scraping of search results yields weak records and is not needed for accepted primitives in this batch."
+        },
+        {
+          "candidate_id": "task293_t329::get_gitlab_repository_clone_urls",
+          "decision": "ADD",
+          "operation_index": 2
+        },
+        {
+          "candidate_id": "task133_t322::resolve_project_by_namespace",
+          "decision": "ADD",
+          "operation_index": 3
+        },
+        {
+          "candidate_id": "task133_t322::list_repository_commits_in_time_range",
+          "decision": "ADD",
+          "operation_index": 4
+        }
+      ]
+    },
+    "quality_verdicts": null,
+    "errors": [
+      "operations[0]: source_evidence may cite each workflow at most once",
+      "operations[1]: source_evidence may cite each workflow at most once",
+      "operations[4]: source_evidence may cite each workflow at most once"
+    ]
+  },
+  {
+    "attempt": 2,
+    "proposal": {
+      "operations": [
+        {
+          "operation": "ADD",
+          "replacement": {
+            "primitive_id": "gitlab/list_project_issues",
+            "method": "list_project_issues",
+            "capability": "List issues for a GitLab project via the GitLab issues API, with server-side ordering and pagination, and return typed issue records.",
+            "method_code": "def list_project_issues(self, base_url: str, username: str, password: str, project: str | int, scope: str = \"all\", order_by: str = \"updated_at\", sort: str = \"desc\", per_page: int = 100, page_number: int = 1) -> dict:\n    import re\n    import requests\n    from urllib.parse import quote\n\n    session = requests.Session()\n    sign_in = session.get(f\"{base_url}/users/sign_in\", timeout=30)\n    sign_in.raise_for_status()\n    m = re.search(r'name=\"authenticity_token\" value=\"([^\"]+)\"', sign_in.text)\n    if not m:\n        raise RuntimeError(\"Could not find authenticity token on GitLab sign-in page\")\n\n    login_resp = session.post(\n        f\"{base_url}/users/sign_in\",\n        data={\n            \"authenticity_token\": m.group(1),\n            \"user[login]\": username,\n            \"user[password]\": password,\n            \"user[remember_me]\": \"0\",\n        },\n        timeout=30,\n        allow_redirects=True,\n    )\n    login_resp.raise_for_status()\n\n    project_identifier = str(project)\n    if isinstance(project, str) and \"/\" in project:\n        project_identifier = quote(project, safe=\"\")\n\n    response = session.get(\n        f\"{base_url}/api/v4/projects/{project_identifier}/issues\",\n        params={\n            \"scope\": scope,\n            \"order_by\": order_by,\n            \"sort\": sort,\n            \"per_page\": per_page,\n            \"page\": page_number,\n        },\n        timeout=30,\n    )\n    response.raise_for_status()\n    data = response.json()\n    if not isinstance(data, list):\n        raise RuntimeError(\"Unexpected GitLab issues API response\")\n\n    issues = []\n    for item in data:\n        issues.append({\n            \"id\": item.get(\"id\"),\n            \"project_id\": item.get(\"project_id\"),\n            \"iid\": item.get(\"iid\"),\n            \"title\": item.get(\"title\"),\n            \"state\": item.get(\"state\"),\n            \"created_at\": item.get(\"created_at\"),\n            \"updated_at\": item.get(\"updated_at\"),\n            \"closed_at\": item.get(\"closed_at\"),\n            \"web_url\": item.get(\"web_url\"),\n        })\n\n    next_page = response.headers.get(\"X-Next-Page\")\n    total = response.headers.get(\"X-Total\")\n    total_pages = response.headers.get(\"X-Total-Pages\")\n\n    return {\n        \"issues\": issues,\n        \"page_number\": page_number,\n        \"per_page\": per_page,\n        \"order_by\": order_by,\n        \"sort\": sort,\n        \"next_page_number\": int(next_page) if next_page and next_page.isdigit() else None,\n        \"has_next_page\": bool(next_page),\n        \"total\": int(total) if total and total.isdigit() else None,\n        \"total_pages\": int(total_pages) if total_pages and total_pages.isdigit() else None,\n    }\n",
+            "owns": [
+              "Authenticate to GitLab before API use.",
+              "Call the GitLab issues endpoint for a specific project.",
+              "Accept a numeric project id or path_with_namespace as the project identifier.",
+              "Support scope, order_by, sort, per_page, and page_number inputs.",
+              "Return typed issue records with stable identity, title, state, timestamps, and canonical web URL.",
+              "Return pagination metadata explicitly supplied by GitLab response headers when present."
+            ],
+            "does_not_own": [
+              "Searching across multiple projects for a title substring.",
+              "Selecting the latest matching issue across projects.",
+              "Deriving a boolean answer from issue state.",
+              "Workflow-level filtering, ranking, aggregation, or stop conditions beyond server-provided ordering."
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "base_url": {
+                  "type": "string"
+                },
+                "username": {
+                  "type": "string"
+                },
+                "password": {
+                  "type": "string"
+                },
+                "project": {
+                  "oneOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "string",
+                      "description": "GitLab numeric project id or path_with_namespace."
+                    }
+                  ]
+                },
+                "scope": {
+                  "type": "string",
+                  "default": "all"
+                },
+                "order_by": {
+                  "type": "string",
+                  "default": "updated_at"
+                },
+                "sort": {
+                  "type": "string",
+                  "default": "desc"
+                },
+                "per_page": {
+                  "type": "integer",
+                  "default": 100
+                },
+                "page_number": {
+                  "type": "integer",
+                  "default": 1
+                }
+              },
+              "required": [
+                "base_url",
+                "username",
+                "password",
+                "project"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "issues": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": [
+                          "integer",
+                          "null"
+                        ]
+                      },
+                      "project_id": {
+                        "type": [
+                          "integer",
+                          "null"
+                        ]
+                      },
+                      "iid": {
+                        "type": [
+                          "integer",
+                          "null"
+                        ]
+                      },
+                      "title": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "state": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "created_at": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "updated_at": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "closed_at": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "web_url": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "project_id",
+                      "iid",
+                      "title",
+                      "state",
+                      "created_at",
+                      "updated_at",
+                      "closed_at",
+                      "web_url"
+                    ]
+                  }
+                },
+                "page_number": {
+                  "type": "integer"
+                },
+                "per_page": {
+                  "type": "integer"
+                },
+                "order_by": {
+                  "type": "string"
+                },
+                "sort": {
+                  "type": "string"
+                },
+                "next_page_number": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "has_next_page": {
+                  "type": "boolean"
+                },
+                "total": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "total_pages": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "issues",
+                "page_number",
+                "per_page",
+                "order_by",
+                "sort",
+                "next_page_number",
+                "has_next_page",
+                "total",
+                "total_pages"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "gitlab_project_issues_page"
+            ],
+            "supported_patterns": [
+              "API issue listing for one project",
+              "Server-side issue ordering",
+              "Paginated issue retrieval"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task175_t310",
+                "template_id": "310",
+                "code_quote": "issues = s.get(BASE + f'/api/v4/projects/{pid}/issues?scope=all&per_page=100&order_by=updated_at&sort=desc', timeout=30).json() ... matching.append({'project': p['path_with_namespace'], 'iid': iss.get('iid'), 'title': title, 'state': iss.get('state'), 'updated_at': iss.get('updated_at'), 'web_url': iss.get('web_url')})",
+                "explanation": "Generalized the per-project issues API call by parameterizing project, scope, ordering, sorting, and pagination while preserving stable issue fields explicitly used at acquisition time: iid, title, state, updated_at, and web_url. Added id/project_id/created_at/closed_at because they are stable issue facts from the same GitLab API boundary."
+              }
+            ]
+          }
+        },
+        {
+          "operation": "ADD",
+          "replacement": {
+            "primitive_id": "gitlab/get_issue_details",
+            "method": "get_issue_details",
+            "capability": "Fetch detailed metadata for a GitLab issue in a specified project by issue IID.",
+            "method_code": "def get_issue_details(self, base_url: str, username: str, password: str, project: str | int, issue_iid: int) -> dict:\n    import re\n    import requests\n    from urllib.parse import quote\n\n    session = requests.Session()\n    sign_in = session.get(f\"{base_url}/users/sign_in\", timeout=30)\n    sign_in.raise_for_status()\n    m = re.search(r'name=\"authenticity_token\" value=\"([^\"]+)\"', sign_in.text)\n    if not m:\n        raise RuntimeError(\"Could not find authenticity token on GitLab sign-in page\")\n\n    login_resp = session.post(\n        f\"{base_url}/users/sign_in\",\n        data={\n            \"authenticity_token\": m.group(1),\n            \"user[login]\": username,\n            \"user[password]\": password,\n            \"user[remember_me]\": \"0\",\n        },\n        timeout=30,\n        allow_redirects=True,\n    )\n    login_resp.raise_for_status()\n\n    project_identifier = str(project)\n    if isinstance(project, str) and \"/\" in project:\n        project_identifier = quote(project, safe=\"\")\n\n    response = session.get(\n        f\"{base_url}/api/v4/projects/{project_identifier}/issues/{issue_iid}\",\n        timeout=30,\n    )\n    response.raise_for_status()\n    item = response.json()\n\n    return {\n        \"id\": item.get(\"id\"),\n        \"project_id\": item.get(\"project_id\"),\n        \"iid\": item.get(\"iid\"),\n        \"title\": item.get(\"title\"),\n        \"state\": item.get(\"state\"),\n        \"created_at\": item.get(\"created_at\"),\n        \"updated_at\": item.get(\"updated_at\"),\n        \"closed_at\": item.get(\"closed_at\"),\n        \"web_url\": item.get(\"web_url\"),\n    }\n",
+            "owns": [
+              "Authenticate to GitLab before API use.",
+              "Call the GitLab issue detail endpoint for a project and issue IID.",
+              "Accept either numeric project id or path_with_namespace.",
+              "Return typed issue detail fields including stable identity, timestamps, state, and canonical URL."
+            ],
+            "does_not_own": [
+              "Finding which issue to inspect.",
+              "Cross-project search.",
+              "Title filtering.",
+              "Converting status into a task-specific boolean answer."
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "base_url": {
+                  "type": "string"
+                },
+                "username": {
+                  "type": "string"
+                },
+                "password": {
+                  "type": "string"
+                },
+                "project": {
+                  "oneOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                },
+                "issue_iid": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "base_url",
+                "username",
+                "password",
+                "project",
+                "issue_iid"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "project_id": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "iid": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "title": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "state": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "created_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "updated_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "closed_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "web_url": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "project_id",
+                "iid",
+                "title",
+                "state",
+                "created_at",
+                "updated_at",
+                "closed_at",
+                "web_url"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "gitlab_issue_detail"
+            ],
+            "supported_patterns": [
+              "API issue detail lookup by project and IID"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task175_t310",
+                "template_id": "310",
+                "code_quote": "project_enc = quote(latest['project'], safe='')\ndetail = s.get(BASE + f\"/api/v4/projects/{project_enc}/issues/{latest['iid']}\", timeout=30).json()\nstate = detail.get('state', latest['state'])",
+                "explanation": "Generalized the issue-detail API lookup by parameterizing project and issue IID. Preserved stable issue facts demonstrated by the workflow at this boundary, especially state, updated_at, title, and web_url, and included additional stable identity/timestamp fields available from the same issue-detail response."
+              }
+            ]
+          }
+        },
+        {
+          "operation": "ADD",
+          "replacement": {
+            "primitive_id": "gitlab/get_project_clone_urls",
+            "method": "get_project_clone_urls",
+            "capability": "Open a GitLab project page and extract clone URL information exposed in the project page HTML.",
+            "method_code": "def get_project_clone_urls(self, base_url: str, username: str, password: str, project_path: str) -> dict:\n    import re\n    import html as html_lib\n    import requests\n\n    session = requests.Session()\n    sign_in = session.get(f\"{base_url}/users/sign_in\", timeout=30)\n    sign_in.raise_for_status()\n\n    m = re.search(r'name=[\"\\']authenticity_token[\"\\'][^>]*value=[\"\\']([^\"\\']+)', sign_in.text, re.I | re.S)\n    if not m:\n        m = re.search(r'value=[\"\\']([^\"\\']+)[\"\\'][^>]*name=[\"\\']authenticity_token[\"\\']', sign_in.text, re.I | re.S)\n    if not m:\n        raise RuntimeError(\"Could not find authenticity token on GitLab sign-in page\")\n\n    login_resp = session.post(\n        f\"{base_url}/users/sign_in\",\n        data={\n            \"authenticity_token\": html_lib.unescape(m.group(1)),\n            \"user[login]\": username,\n            \"user[password]\": password,\n            \"user[remember_me]\": \"0\",\n        },\n        timeout=30,\n        allow_redirects=True,\n        headers={\"Referer\": f\"{base_url}/users/sign_in\"},\n    )\n    login_resp.raise_for_status()\n\n    response = session.get(f\"{base_url}{project_path}\", timeout=30)\n    response.raise_for_status()\n    page_html = response.text\n\n    ssh_clone_url = None\n    http_clone_url = None\n\n    ssh_match = re.search(r'name=[\"\\']ssh_project_clone[\"\\'][^>]*value=[\"\\']([^\"\\']+)', page_html, re.I | re.S)\n    if not ssh_match:\n        ssh_match = re.search(r'Clone with SSH.*?value=[\"\\']([^\"\\']+)[\"\\']', page_html, re.I | re.S)\n    if not ssh_match:\n        ssh_match = re.search(r'(git@[^\"\\'\\s<>]+?\\.git)', page_html, re.I)\n    if ssh_match:\n        ssh_clone_url = html_lib.unescape(ssh_match.group(1))\n\n    http_match = re.search(r'name=[\"\\']http_project_clone[\"\\'][^>]*value=[\"\\']([^\"\\']+)', page_html, re.I | re.S)\n    if http_match:\n        http_clone_url = html_lib.unescape(http_match.group(1))\n\n    return {\n        \"project_path\": project_path,\n        \"project_url\": response.url,\n        \"ssh_clone_url\": ssh_clone_url,\n        \"http_clone_url\": http_clone_url,\n    }\n",
+            "owns": [
+              "Authenticate to GitLab before accessing project pages when required.",
+              "Fetch a GitLab project page by project path.",
+              "Parse clone URL values exposed in project page HTML.",
+              "Return SSH clone URL when present.",
+              "Return HTTP clone URL when present from the same acquisition boundary.",
+              "Preserve project path and resolved project URL context."
+            ],
+            "does_not_own": [
+              "Searching for which project to inspect.",
+              "Selecting a project based on task intent.",
+              "Performing a git clone.",
+              "Returning only one protocol when the caller may want richer clone metadata."
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "base_url": {
+                  "type": "string"
+                },
+                "username": {
+                  "type": "string"
+                },
+                "password": {
+                  "type": "string"
+                },
+                "project_path": {
+                  "type": "string",
+                  "description": "GitLab project path beginning with /, e.g. /group/project"
+                }
+              },
+              "required": [
+                "base_url",
+                "username",
+                "password",
+                "project_path"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "project_path": {
+                  "type": "string"
+                },
+                "project_url": {
+                  "type": "string"
+                },
+                "ssh_clone_url": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "http_clone_url": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "project_path",
+                "project_url",
+                "ssh_clone_url",
+                "http_clone_url"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "gitlab_project_clone_urls"
+            ],
+            "supported_patterns": [
+              "Project page clone URL extraction",
+              "SSH clone URL retrieval",
+              "HTML parsing of clone controls"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task295_t329",
+                "template_id": "329",
+                "code_quote": "project_html = opener.open(BASE + project_path).read().decode('utf-8', 'ignore')\nclone_with_ssh = re.search(r'Clone with SSH.*?value=\\\"([^\\\"]+)\\\"', project_html, re.S | re.I)",
+                "explanation": "Generalized the project-page HTML extraction of clone data from a hard-coded repository to any provided project path, preserving the stable SSH clone value exposed on the project page."
+              },
+              {
+                "workflow_id": "task293_t329",
+                "template_id": "329",
+                "code_quote": "ssh_match = re.search(r'name=[\"\\']ssh_project_clone[\"\\'][^>]*value=[\"\\']([^\"\\']+)', repo_resp.text, re.I|re.S)\nif not ssh_match:\n    ssh_match = re.search(r'value=[\"\\'](ssh://git@[^\"\\']+?\\.git)[\"\\']', repo_resp.text, re.I|re.S)\nif not ssh_match:\n    ssh_match = re.search(r'(git@[^\"\\'\\s<>]+?\\.git)', repo_resp.text, re.I)",
+                "explanation": "A second workflow confirms stable clone-url patterns on GitLab repository pages and supports a more robust generalized parser that can return SSH and HTTP clone URLs from the same page boundary."
+              }
+            ]
+          }
+        },
+        {
+          "operation": "ADD",
+          "replacement": {
+            "primitive_id": "gitlab/resolve_project_by_namespace",
+            "method": "resolve_project_by_namespace",
+            "capability": "Look up a GitLab project by full path_with_namespace and return stable project identity metadata from the projects API.",
+            "method_code": "def resolve_project_by_namespace(self, base_url: str, username: str, password: str, project_path_with_namespace: str) -> dict:\n    import re\n    import requests\n    from urllib.parse import quote\n\n    session = requests.Session()\n    sign_in = session.get(f\"{base_url}/users/sign_in\", timeout=30)\n    sign_in.raise_for_status()\n    m = re.search(r'name=\"authenticity_token\" value=\"([^\"]+)\"', sign_in.text)\n    if not m:\n        raise RuntimeError(\"Could not find authenticity token on GitLab sign-in page\")\n\n    login_resp = session.post(\n        f\"{base_url}/users/sign_in\",\n        data={\n            \"authenticity_token\": m.group(1),\n            \"user[login]\": username,\n            \"user[password]\": password,\n            \"user[remember_me]\": \"0\",\n        },\n        timeout=30,\n        allow_redirects=True,\n    )\n    login_resp.raise_for_status()\n\n    response = session.get(\n        f\"{base_url}/api/v4/projects/{quote(project_path_with_namespace, safe='')}\",\n        timeout=30,\n    )\n    response.raise_for_status()\n    project = response.json()\n\n    return {\n        \"id\": project.get(\"id\"),\n        \"name\": project.get(\"name\"),\n        \"path\": project.get(\"path\"),\n        \"path_with_namespace\": project.get(\"path_with_namespace\"),\n        \"web_url\": project.get(\"web_url\"),\n        \"default_branch\": project.get(\"default_branch\"),\n    }\n",
+            "owns": [
+              "Authenticate to GitLab before API use.",
+              "URL-encode a full project path_with_namespace for the projects API.",
+              "Fetch and parse the JSON project record.",
+              "Return stable project identity and canonical metadata exposed by the response."
+            ],
+            "does_not_own": [
+              "Choosing which repository to inspect.",
+              "Commit retrieval or filtering.",
+              "Task-level validation beyond returning the fetched project record."
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "base_url": {
+                  "type": "string"
+                },
+                "username": {
+                  "type": "string"
+                },
+                "password": {
+                  "type": "string"
+                },
+                "project_path_with_namespace": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "base_url",
+                "username",
+                "password",
+                "project_path_with_namespace"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "path": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "path_with_namespace": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "web_url": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "default_branch": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "path",
+                "path_with_namespace",
+                "web_url",
+                "default_branch"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "gitlab_project_identity"
+            ],
+            "supported_patterns": [
+              "Project resolution by namespace path",
+              "Projects API lookup"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task133_t322",
+                "template_id": "322",
+                "code_quote": "url, headers, body = fetch(base + '/api/v4/projects/' + urllib.parse.quote('a11yproject/a11yproject.com', safe=''))\nproject = json.loads(body.decode('utf-8', 'ignore'))\nif project.get('path_with_namespace') != 'a11yproject/a11yproject.com':\n    raise RuntimeError(f'Unexpected project namespace: {project.get(\"path_with_namespace\")}')\nproject_id = project['id']",
+                "explanation": "Generalized the hard-coded projects API lookup into a reusable namespace-resolution primitive. Preserved stable project facts directly demonstrated by the fetched project record, especially id and path_with_namespace, and included other standard identity metadata available at the same response boundary."
+              }
+            ]
+          }
+        },
+        {
+          "operation": "ADD",
+          "replacement": {
+            "primitive_id": "gitlab/list_repository_commits_in_time_range",
+            "method": "list_repository_commits_in_time_range",
+            "capability": "Retrieve repository commits from the GitLab commits API for a project, ref, and caller-specified time window, returning typed commit records and pagination metadata.",
+            "method_code": "def list_repository_commits_in_time_range(self, base_url: str, username: str, password: str, project_id: int, ref_name: str, since: str, until: str, per_page: int = 100, page_number: int = 1) -> dict:\n    import re\n    import requests\n\n    session = requests.Session()\n    sign_in = session.get(f\"{base_url}/users/sign_in\", timeout=30)\n    sign_in.raise_for_status()\n    m = re.search(r'name=\"authenticity_token\" value=\"([^\"]+)\"', sign_in.text)\n    if not m:\n        raise RuntimeError(\"Could not find authenticity token on GitLab sign-in page\")\n\n    login_resp = session.post(\n        f\"{base_url}/users/sign_in\",\n        data={\n            \"authenticity_token\": m.group(1),\n            \"user[login]\": username,\n            \"user[password]\": password,\n            \"user[remember_me]\": \"0\",\n        },\n        timeout=30,\n        allow_redirects=True,\n    )\n    login_resp.raise_for_status()\n\n    response = session.get(\n        f\"{base_url}/api/v4/projects/{project_id}/repository/commits\",\n        params={\n            \"ref_name\": ref_name,\n            \"since\": since,\n            \"until\": until,\n            \"per_page\": per_page,\n            \"page\": page_number,\n        },\n        timeout=30,\n    )\n    response.raise_for_status()\n    data = response.json()\n    if not isinstance(data, list):\n        raise RuntimeError(\"Unexpected GitLab commits API response\")\n\n    commits = []\n    for c in data:\n        commits.append({\n            \"id\": c.get(\"id\"),\n            \"short_id\": c.get(\"short_id\"),\n            \"title\": c.get(\"title\"),\n            \"message\": c.get(\"message\"),\n            \"author_name\": c.get(\"author_name\"),\n            \"author_email\": c.get(\"author_email\"),\n            \"authored_date\": c.get(\"authored_date\"),\n            \"committer_name\": c.get(\"committer_name\"),\n            \"committer_email\": c.get(\"committer_email\"),\n            \"committed_date\": c.get(\"committed_date\"),\n            \"created_at\": c.get(\"created_at\"),\n            \"web_url\": c.get(\"web_url\"),\n        })\n\n    next_page = response.headers.get(\"X-Next-Page\")\n    total = response.headers.get(\"X-Total\")\n    total_pages = response.headers.get(\"X-Total-Pages\")\n\n    return {\n        \"commits\": commits,\n        \"page_number\": page_number,\n        \"per_page\": per_page,\n        \"next_page_number\": int(next_page) if next_page and next_page.isdigit() else None,\n        \"has_next_page\": bool(next_page),\n        \"total\": int(total) if total and total.isdigit() else None,\n        \"total_pages\": int(total_pages) if total_pages and total_pages.isdigit() else None,\n    }\n",
+            "owns": [
+              "Authenticate to GitLab before API use.",
+              "Construct the repository commits API request for a given project id.",
+              "Accept ref selection and since/until bounds as inputs.",
+              "Return typed commit records with stable identity, author, timestamps, message/title, and web URL.",
+              "Return pagination metadata explicitly supplied by GitLab when present."
+            ],
+            "does_not_own": [
+              "Resolving project path to project id.",
+              "Choosing the date window for a task.",
+              "Filtering commits to a specific author.",
+              "Counting or summarizing commits for the final answer."
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "base_url": {
+                  "type": "string"
+                },
+                "username": {
+                  "type": "string"
+                },
+                "password": {
+                  "type": "string"
+                },
+                "project_id": {
+                  "type": "integer"
+                },
+                "ref_name": {
+                  "type": "string"
+                },
+                "since": {
+                  "type": "string"
+                },
+                "until": {
+                  "type": "string"
+                },
+                "per_page": {
+                  "type": "integer",
+                  "default": 100
+                },
+                "page_number": {
+                  "type": "integer",
+                  "default": 1
+                }
+              },
+              "required": [
+                "base_url",
+                "username",
+                "password",
+                "project_id",
+                "ref_name",
+                "since",
+                "until"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "commits": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "short_id": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "title": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "message": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "author_name": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "author_email": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "authored_date": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "committer_name": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "committer_email": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "committed_date": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "created_at": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "web_url": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "short_id",
+                      "title",
+                      "message",
+                      "author_name",
+                      "author_email",
+                      "authored_date",
+                      "committer_name",
+                      "committer_email",
+                      "committed_date",
+                      "created_at",
+                      "web_url"
+                    ]
+                  }
+                },
+                "page_number": {
+                  "type": "integer"
+                },
+                "per_page": {
+                  "type": "integer"
+                },
+                "next_page_number": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "has_next_page": {
+                  "type": "boolean"
+                },
+                "total": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "total_pages": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "commits",
+                "page_number",
+                "per_page",
+                "next_page_number",
+                "has_next_page",
+                "total",
+                "total_pages"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "gitlab_repository_commits_page"
+            ],
+            "supported_patterns": [
+              "Commits API listing by project id",
+              "Time-bounded commit retrieval",
+              "Paginated commit retrieval"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task133_t322",
+                "template_id": "322",
+                "code_quote": "api_url = base + f'/api/v4/projects/{project_id}/repository/commits?ref_name=main&since=2023-03-02T00:00:00Z&until=2023-03-02T23:59:59Z&per_page=100'\nurl, headers, body = fetch(api_url)\ncommits = json.loads(body.decode('utf-8', 'ignore'))\n...\nfor c in commits:\n    author = c.get('author_name', '')\n    authored = c.get('authored_date', '')\n    ... c.get('short_id') ... c.get('title') ... c.get('web_url')",
+                "explanation": "Generalized the commits API request by parameterizing project id, ref, time window, and pagination controls. Preserved stable commit fields explicitly consumed from the API response and exposed pagination metadata from GitLab response headers when available."
+              }
+            ]
+          }
+        }
+      ],
+      "workflow_attribution": [
+        {
+          "workflow_id": "task174_t310",
+          "decision": "SKIP",
+          "reason": "Only proposed UI search-result extraction and fallback link scraping candidates. These have weak stable semantics, omit robust typed issue identity, and are superseded by stronger API-backed issue primitives from other workflows."
+        },
+        {
+          "workflow_id": "task175_t310",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0,
+            1
+          ]
+        },
+        {
+          "workflow_id": "task132_t322",
+          "decision": "SKIP",
+          "reason": "Proposed a UI regex-based commit activity parser over rendered page text. Evidence is too brittle and task-shaped compared with stronger API commit-listing evidence from another workflow."
+        },
+        {
+          "workflow_id": "task176_t310",
+          "decision": "SKIP",
+          "reason": "Dashboard issue listing and issue-status UI parsing are task-shaped UI heuristics and are superseded by stronger API-backed issue listing/detail primitives."
+        },
+        {
+          "workflow_id": "task295_t329",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            2
+          ]
+        },
+        {
+          "workflow_id": "task305_t321",
+          "decision": "SKIP",
+          "reason": "Proposed count-oriented commit-page parsing from HTML. Boundary is weaker than the commits API primitive and the workflow's main logic is counting/filtering owned by workflows."
+        },
+        {
+          "workflow_id": "task293_t329",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            2
+          ]
+        },
+        {
+          "workflow_id": "task133_t322",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            3,
+            4
+          ]
+        }
+      ],
+      "candidate_attribution": [
+        {
+          "candidate_id": "task174_t310::search_issues",
+          "decision": "REJECT",
+          "target_id": null,
+          "reason": "Boundary/evidence defect: candidate relies on brittle UI card/fallback link scraping, returns partial visible-page/fallback semantics, and lacks strong stable issue identity compared with API-backed issue primitives."
+        },
+        {
+          "candidate_id": "task175_t310::list_project_issues",
+          "decision": "ADD",
+          "operation_index": 0
+        },
+        {
+          "candidate_id": "task175_t310::get_issue_details",
+          "decision": "ADD",
+          "operation_index": 1
+        },
+        {
+          "candidate_id": "task132_t322::get_gitlab_repository_commit_activity_by_date",
+          "decision": "REJECT",
+          "target_id": null,
+          "reason": "Boundary/evidence defect: regex over rendered commits page text is brittle and task-shaped; evidence does not support a stable typed page parser as proposed."
+        },
+        {
+          "candidate_id": "task176_t310::list_dashboard_issues",
+          "decision": "REJECT",
+          "target_id": null,
+          "reason": "Boundary/evidence defect: dashboard link scraping returns weak UI-derived records and is superseded by stronger issue API evidence for stable issue retrieval."
+        },
+        {
+          "candidate_id": "task176_t310::get_issue_detail_status",
+          "decision": "REJECT",
+          "target_id": null,
+          "reason": "Boundary/evidence defect: detail-status parsing is based on body-text/action heuristics rather than stable typed acquisition; API issue detail provides stronger objective status semantics."
+        },
+        {
+          "candidate_id": "task295_t329::search_projects_by_name",
+          "decision": "REJECT",
+          "target_id": null,
+          "reason": "Boundary/evidence defect: HTML search-result scraping is weaker than direct accepted project-page acquisition and is not needed by any accepted primitive in this batch."
+        },
+        {
+          "candidate_id": "task295_t329::get_project_clone_urls",
+          "decision": "ADD",
+          "operation_index": 2
+        },
+        {
+          "candidate_id": "task305_t321::list_repository_commits",
+          "decision": "REJECT",
+          "target_id": null,
+          "reason": "Boundary/evidence defect: HTML parsing from the commits page is brittle and the proposed use is tightly coupled to downstream counting/filtering. API-based commit listing provides stronger stable semantics."
+        },
+        {
+          "candidate_id": "task293_t329::authenticate_gitlab_session",
+          "decision": "REJECT",
+          "target_id": null,
+          "reason": "Boundary defect: generic authentication/session establishment is not a standalone site-output primitive; authentication should be owned internally by concrete acquisition primitives."
+        },
+        {
+          "candidate_id": "task293_t329::search_gitlab_projects",
+          "decision": "REJECT",
+          "target_id": null,
+          "reason": "Boundary/evidence defect: HTML anchor scraping of search results yields weak records and is not needed for accepted primitives in this batch."
+        },
+        {
+          "candidate_id": "task293_t329::get_gitlab_repository_clone_urls",
+          "decision": "ADD",
+          "operation_index": 2
+        },
+        {
+          "candidate_id": "task133_t322::resolve_project_by_namespace",
+          "decision": "ADD",
+          "operation_index": 3
+        },
+        {
+          "candidate_id": "task133_t322::list_repository_commits_in_time_range",
+          "decision": "ADD",
+          "operation_index": 4
+        }
+      ]
+    },
+    "quality_verdicts": {
+      "verdicts": [
+        {
+          "operation_index": 0,
+          "verdict": "PASS",
+          "reason": "Evidence directly supports an authenticated call to GitLab's per-project issues API with scope=all, per_page=100, order_by=updated_at, and sort=desc, and shows typed issue fields including iid, title, state, updated_at, and web_url. The proposed primitive appropriately generalizes project identifier, ordering, and pagination controls without embedding task-specific matching/ranking logic. Output is typed and includes explicit pagination metadata from response headers, satisfying completeness reporting for a page-shaped listing primitive. Added fields id, project_id, created_at, and closed_at are stable objective issue fields from the same API boundary and are not contradictory to the evidence."
+        },
+        {
+          "operation_index": 1,
+          "verdict": "PASS",
+          "reason": "Evidence directly supports fetching issue details from /api/v4/projects/{project}/issues/{iid} after authenticating, with project and issue IID as parameters. The primitive owns only site-specific acquisition/parsing and returns typed issue detail fields. It does not include task-specific issue selection or boolean interpretation. The contract and code are consistent."
+        },
+        {
+          "operation_index": 2,
+          "verdict": "PASS",
+          "reason": "Evidence supports opening a GitLab project page and extracting clone URLs from HTML using stable page patterns, including named ssh_project_clone fields and Clone with SSH/value patterns. Parsing page HTML into typed clone URL records is a valid site-specific acquisition primitive. Returning both SSH and HTTP clone URLs is an acceptable richer typed projection at the same boundary, and project path/url context is preserved. The primitive avoids task-specific project choice or cloning behavior."
+        },
+        {
+          "operation_index": 3,
+          "verdict": "PASS",
+          "reason": "Evidence directly supports resolving a project by URL-encoded path_with_namespace through /api/v4/projects/{encoded_path}, parsing the JSON response, and using stable project identity fields such as id and path_with_namespace. The primitive cleanly isolates site-specific lookup/parsing and returns typed project metadata without task logic. Code and contract agree."
+        },
+        {
+          "operation_index": 4,
+          "verdict": "PASS",
+          "reason": "Evidence directly supports calling the GitLab commits API for a specific project id with ref_name, since, until, and per_page parameters, then reading typed commit fields such as author_name, authored_date, short_id, title, and web_url. The proposal properly generalizes ref and time-window inputs and keeps author filtering/counting out of scope. Output is typed and includes pagination metadata from headers, which is appropriate for a page listing primitive and avoids falsely implying completeness."
+        }
+      ],
+      "rejection_verdicts": [
+        {
+          "candidate_id": "task174_t310::search_issues",
+          "verdict": "PASS",
+          "reason": "Reject is justified. The cited workflow is built around brittle UI search-result scraping with fallback issue-link extraction and explicitly variable completeness modes. Removing task logic does not leave a strong reusable GitLab acquisition core compared with the accepted API-backed issue primitives; the remaining boundary is weak and unstable."
+        },
+        {
+          "candidate_id": "task132_t322::get_gitlab_repository_commit_activity_by_date",
+          "verdict": "FAIL",
+          "reason": "This REJECT should not stand. The evidence demonstrates a narrower reusable GitLab acquisition core: opening a repository commits history page for a project/ref and parsing typed date-group commit groups from page text/DOM. Even if the proposed parser is brittle or over-shaped, it should be regenerated as a narrower ADD/UPDATE rather than rejected outright under the rule against rejecting raw-text/page-parsing candidates when typed facts are supported."
+        },
+        {
+          "candidate_id": "task176_t310::list_dashboard_issues",
+          "verdict": "FAIL",
+          "reason": "This REJECT should not stand. The evidence demonstrates a reusable website acquisition primitive: loading the dashboard issues page with site-native assignee/state/search/sort URL parameters and extracting typed issue links in displayed order. Although weaker than the API and somewhat UI-derived, it is still a valid site-specific acquisition/parsing core and should be narrowed/retained rather than rejected outright."
+        },
+        {
+          "candidate_id": "task176_t310::get_issue_detail_status",
+          "verdict": "FAIL",
+          "reason": "This REJECT should not stand. The evidence supports a narrower primitive to open a GitLab issue page and return typed visible status facts from the page UI. While API detail is stronger, the page-based issue-status acquisition core is still reusable and site-specific; rejection is too strong under the requirement to narrow raw-output or mixed candidates instead of discarding them."
+        },
+        {
+          "candidate_id": "task295_t329::search_projects_by_name",
+          "verdict": "FAIL",
+          "reason": "This REJECT should not stand. The evidence shows a reusable GitLab project-search acquisition core via the site search page and extraction of typed project links/results. Even if completeness is limited and pagination is not shown, the candidate can be narrowed to page-scoped typed results with explicit incompleteness rather than rejected."
+        },
+        {
+          "candidate_id": "task305_t321::list_repository_commits",
+          "verdict": "FAIL",
+          "reason": "This REJECT should not stand. The evidence demonstrates a reusable narrower primitive: listing visible commit records from a repository commits page, optionally with the site-native author query parameter, and returning typed author/timestamp facts from the fetched page. Even if API-based listing is stronger, the HTML-based acquisition core is still reusable and should be narrowed rather than rejected."
+        },
+        {
+          "candidate_id": "task293_t329::authenticate_gitlab_session",
+          "verdict": "PASS",
+          "reason": "Reject is justified. This candidate is generic authentication/session establishment without a typed site record output beyond session state, and the accepted primitives already correctly own authentication internally. As proposed, removing task logic does not yield an appropriate standalone site-output primitive for this batch."
+        },
+        {
+          "candidate_id": "task293_t329::search_gitlab_projects",
+          "verdict": "FAIL",
+          "reason": "This REJECT should not stand. The evidence supports a narrower reusable primitive to fetch GitLab project search results and parse typed project links from HTML. Although result quality/completeness may be limited, that should be expressed in the contract rather than causing outright rejection."
+        }
+      ]
+    },
+    "errors": [
+      "coverage gate rejected dropping task132_t322::get_gitlab_repository_commit_activity_by_date: This REJECT should not stand. The evidence demonstrates a narrower reusable GitLab acquisition core: opening a repository commits history page for a project/ref and parsing typed date-group commit groups from page text/DOM. Even if the proposed parser is brittle or over-shaped, it should be regenerated as a narrower ADD/UPDATE rather than rejected outright under the rule against rejecting raw-text/page-parsing candidates when typed facts are supported.",
+      "coverage gate rejected dropping task176_t310::list_dashboard_issues: This REJECT should not stand. The evidence demonstrates a reusable website acquisition primitive: loading the dashboard issues page with site-native assignee/state/search/sort URL parameters and extracting typed issue links in displayed order. Although weaker than the API and somewhat UI-derived, it is still a valid site-specific acquisition/parsing core and should be narrowed/retained rather than rejected outright.",
+      "coverage gate rejected dropping task176_t310::get_issue_detail_status: This REJECT should not stand. The evidence supports a narrower primitive to open a GitLab issue page and return typed visible status facts from the page UI. While API detail is stronger, the page-based issue-status acquisition core is still reusable and site-specific; rejection is too strong under the requirement to narrow raw-output or mixed candidates instead of discarding them.",
+      "coverage gate rejected dropping task295_t329::search_projects_by_name: This REJECT should not stand. The evidence shows a reusable GitLab project-search acquisition core via the site search page and extraction of typed project links/results. Even if completeness is limited and pagination is not shown, the candidate can be narrowed to page-scoped typed results with explicit incompleteness rather than rejected.",
+      "coverage gate rejected dropping task305_t321::list_repository_commits: This REJECT should not stand. The evidence demonstrates a reusable narrower primitive: listing visible commit records from a repository commits page, optionally with the site-native author query parameter, and returning typed author/timestamp facts from the fetched page. Even if API-based listing is stronger, the HTML-based acquisition core is still reusable and should be narrowed rather than rejected.",
+      "coverage gate rejected dropping task293_t329::search_gitlab_projects: This REJECT should not stand. The evidence supports a narrower reusable primitive to fetch GitLab project search results and parse typed project links from HTML. Although result quality/completeness may be limited, that should be expressed in the contract rather than causing outright rejection."
+    ]
+  },
+  {
+    "attempt": 3,
+    "proposal": {
+      "operations": [
+        {
+          "operation": "ADD",
+          "replacement": {
+            "primitive_id": "gitlab/list_project_issues",
+            "method": "list_project_issues",
+            "capability": "List issues for a GitLab project via the GitLab issues API with server-side ordering and pagination, returning typed issue records and response pagination metadata.",
+            "method_code": "def list_project_issues(self, base_url: str, username: str, password: str, project: str | int, scope: str = \"all\", order_by: str = \"updated_at\", sort: str = \"desc\", per_page: int = 100, page_number: int = 1) -> dict:\n    import re\n    from urllib.parse import quote\n    import requests\n\n    session = requests.Session()\n    sign_in = session.get(f\"{base_url}/users/sign_in\", timeout=30)\n    sign_in.raise_for_status()\n    match = re.search(r'name=\"authenticity_token\" value=\"([^\"]+)\"', sign_in.text)\n    if not match:\n        raise RuntimeError(\"Could not find authenticity token on sign-in page\")\n\n    login_resp = session.post(\n        f\"{base_url}/users/sign_in\",\n        data={\n            \"authenticity_token\": match.group(1),\n            \"user[login]\": username,\n            \"user[password]\": password,\n            \"user[remember_me]\": \"0\",\n        },\n        timeout=30,\n        allow_redirects=True,\n    )\n    login_resp.raise_for_status()\n\n    project_identifier = str(project)\n    if isinstance(project, str) and \"/\" in project:\n        project_identifier = quote(project, safe=\"\")\n\n    response = session.get(\n        f\"{base_url}/api/v4/projects/{project_identifier}/issues\",\n        params={\n            \"scope\": scope,\n            \"order_by\": order_by,\n            \"sort\": sort,\n            \"per_page\": per_page,\n            \"page\": page_number,\n        },\n        timeout=30,\n    )\n    response.raise_for_status()\n    payload = response.json()\n    if not isinstance(payload, list):\n        raise RuntimeError(\"Unexpected issues API response\")\n\n    issues = []\n    for item in payload:\n        issues.append({\n            \"id\": item.get(\"id\"),\n            \"project_id\": item.get(\"project_id\"),\n            \"iid\": item.get(\"iid\"),\n            \"title\": item.get(\"title\"),\n            \"state\": item.get(\"state\"),\n            \"created_at\": item.get(\"created_at\"),\n            \"updated_at\": item.get(\"updated_at\"),\n            \"closed_at\": item.get(\"closed_at\"),\n            \"web_url\": item.get(\"web_url\"),\n        })\n\n    next_page = response.headers.get(\"X-Next-Page\")\n    total = response.headers.get(\"X-Total\")\n    total_pages = response.headers.get(\"X-Total-Pages\")\n\n    return {\n        \"issues\": issues,\n        \"page_number\": page_number,\n        \"per_page\": per_page,\n        \"order_by\": order_by,\n        \"sort\": sort,\n        \"next_page_number\": int(next_page) if next_page and next_page.isdigit() else None,\n        \"has_next_page\": bool(next_page),\n        \"total\": int(total) if total and total.isdigit() else None,\n        \"total_pages\": int(total_pages) if total_pages and total_pages.isdigit() else None,\n    }\n",
+            "owns": [
+              "Authenticate to GitLab before API use.",
+              "Call the GitLab issues endpoint for a specific project.",
+              "Accept either numeric project id or path_with_namespace as the project identifier.",
+              "Support scope, order_by, sort, per_page, and page_number inputs.",
+              "Return typed issue records with stable identity, title, state, timestamps, and canonical web URL.",
+              "Return pagination metadata explicitly supplied by GitLab response headers when present."
+            ],
+            "does_not_own": [
+              "Searching across multiple projects for a title substring.",
+              "Selecting the latest matching issue across projects.",
+              "Deriving a boolean answer from issue state.",
+              "Workflow-level filtering, ranking, aggregation, or stop conditions beyond server-provided ordering."
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "base_url": {
+                  "type": "string"
+                },
+                "username": {
+                  "type": "string"
+                },
+                "password": {
+                  "type": "string"
+                },
+                "project": {
+                  "oneOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "string",
+                      "description": "GitLab numeric project id or path_with_namespace."
+                    }
+                  ]
+                },
+                "scope": {
+                  "type": "string",
+                  "default": "all"
+                },
+                "order_by": {
+                  "type": "string",
+                  "default": "updated_at"
+                },
+                "sort": {
+                  "type": "string",
+                  "default": "desc"
+                },
+                "per_page": {
+                  "type": "integer",
+                  "default": 100
+                },
+                "page_number": {
+                  "type": "integer",
+                  "default": 1
+                }
+              },
+              "required": [
+                "base_url",
+                "username",
+                "password",
+                "project"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "issues": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": [
+                          "integer",
+                          "null"
+                        ]
+                      },
+                      "project_id": {
+                        "type": [
+                          "integer",
+                          "null"
+                        ]
+                      },
+                      "iid": {
+                        "type": [
+                          "integer",
+                          "null"
+                        ]
+                      },
+                      "title": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "state": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "created_at": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "updated_at": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "closed_at": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "web_url": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "project_id",
+                      "iid",
+                      "title",
+                      "state",
+                      "created_at",
+                      "updated_at",
+                      "closed_at",
+                      "web_url"
+                    ]
+                  }
+                },
+                "page_number": {
+                  "type": "integer"
+                },
+                "per_page": {
+                  "type": "integer"
+                },
+                "order_by": {
+                  "type": "string"
+                },
+                "sort": {
+                  "type": "string"
+                },
+                "next_page_number": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "has_next_page": {
+                  "type": "boolean"
+                },
+                "total": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "total_pages": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "issues",
+                "page_number",
+                "per_page",
+                "order_by",
+                "sort",
+                "next_page_number",
+                "has_next_page",
+                "total",
+                "total_pages"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "gitlab_project_issues_page"
+            ],
+            "supported_patterns": [
+              "API issue listing for one project",
+              "Server-side issue ordering",
+              "Paginated issue retrieval"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task175_t310",
+                "template_id": "310",
+                "code_quote": "issues = s.get(BASE + f'/api/v4/projects/{pid}/issues?scope=all&per_page=100&order_by=updated_at&sort=desc', timeout=30).json() ... matching.append({'project': p['path_with_namespace'], 'iid': iss.get('iid'), 'title': title, 'state': iss.get('state'), 'updated_at': iss.get('updated_at'), 'web_url': iss.get('web_url')})",
+                "explanation": "Generalized the per-project issues API call by parameterizing project, scope, ordering, sorting, and pagination while preserving stable issue fields explicitly used at acquisition time: iid, title, state, updated_at, and web_url. Added id/project_id/created_at/closed_at because they are stable issue facts from the same GitLab API boundary."
+              }
+            ]
+          }
+        },
+        {
+          "operation": "ADD",
+          "replacement": {
+            "primitive_id": "gitlab/get_issue_details",
+            "method": "get_issue_details",
+            "capability": "Fetch detailed metadata for a GitLab issue in a specified project by issue IID.",
+            "method_code": "def get_issue_details(self, base_url: str, username: str, password: str, project: str | int, issue_iid: int) -> dict:\n    import re\n    from urllib.parse import quote\n    import requests\n\n    session = requests.Session()\n    sign_in = session.get(f\"{base_url}/users/sign_in\", timeout=30)\n    sign_in.raise_for_status()\n    match = re.search(r'name=\"authenticity_token\" value=\"([^\"]+)\"', sign_in.text)\n    if not match:\n        raise RuntimeError(\"Could not find authenticity token on sign-in page\")\n\n    login_resp = session.post(\n        f\"{base_url}/users/sign_in\",\n        data={\n            \"authenticity_token\": match.group(1),\n            \"user[login]\": username,\n            \"user[password]\": password,\n            \"user[remember_me]\": \"0\",\n        },\n        timeout=30,\n        allow_redirects=True,\n    )\n    login_resp.raise_for_status()\n\n    project_identifier = str(project)\n    if isinstance(project, str) and \"/\" in project:\n        project_identifier = quote(project, safe=\"\")\n\n    response = session.get(\n        f\"{base_url}/api/v4/projects/{project_identifier}/issues/{issue_iid}\",\n        timeout=30,\n    )\n    response.raise_for_status()\n    item = response.json()\n\n    return {\n        \"id\": item.get(\"id\"),\n        \"project_id\": item.get(\"project_id\"),\n        \"iid\": item.get(\"iid\"),\n        \"title\": item.get(\"title\"),\n        \"state\": item.get(\"state\"),\n        \"created_at\": item.get(\"created_at\"),\n        \"updated_at\": item.get(\"updated_at\"),\n        \"closed_at\": item.get(\"closed_at\"),\n        \"web_url\": item.get(\"web_url\"),\n    }\n",
+            "owns": [
+              "Authenticate to GitLab before API use.",
+              "Call the GitLab issue detail endpoint for a project and issue IID.",
+              "Accept either numeric project id or path_with_namespace.",
+              "Return typed issue detail fields including stable identity, timestamps, state, and canonical URL."
+            ],
+            "does_not_own": [
+              "Finding which issue to inspect.",
+              "Cross-project search.",
+              "Title filtering.",
+              "Converting status into a task-specific boolean answer."
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "base_url": {
+                  "type": "string"
+                },
+                "username": {
+                  "type": "string"
+                },
+                "password": {
+                  "type": "string"
+                },
+                "project": {
+                  "oneOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                },
+                "issue_iid": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "base_url",
+                "username",
+                "password",
+                "project",
+                "issue_iid"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "project_id": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "iid": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "title": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "state": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "created_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "updated_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "closed_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "web_url": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "project_id",
+                "iid",
+                "title",
+                "state",
+                "created_at",
+                "updated_at",
+                "closed_at",
+                "web_url"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "gitlab_issue_detail"
+            ],
+            "supported_patterns": [
+              "API issue detail lookup by project and IID"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task175_t310",
+                "template_id": "310",
+                "code_quote": "project_enc = quote(latest['project'], safe='')\ndetail = s.get(BASE + f\"/api/v4/projects/{project_enc}/issues/{latest['iid']}\", timeout=30).json()\nstate = detail.get('state', latest['state'])",
+                "explanation": "Generalized the issue-detail API lookup by parameterizing project and issue IID. Preserved stable issue facts demonstrated by the workflow at this boundary, especially state, updated_at, title, and web_url, and included additional stable identity/timestamp fields available from the same issue-detail response."
+              }
+            ]
+          }
+        },
+        {
+          "operation": "ADD",
+          "replacement": {
+            "primitive_id": "gitlab/get_repository_commit_activity_groups",
+            "method": "get_repository_commit_activity_groups",
+            "capability": "Open a GitLab repository commits history page for a project and ref, and return typed visible date-group commit activity parsed from the rendered page.",
+            "method_code": "def get_repository_commit_activity_groups(self, project_path: str, ref: str, page_number: int = 1) -> dict:\n    import re\n    from urllib.parse import urlencode\n\n    params = {\"page\": page_number} if page_number != 1 else None\n    url = f\"{project_path.rstrip('/')}/-/commits/{ref}\"\n    if params:\n        url = f\"{url}?{urlencode(params)}\"\n\n    self.page.goto(url, wait_until=\"domcontentloaded\")\n    self.page.wait_for_timeout(1500)\n    body_text = self.page.locator(\"body\").inner_text()\n\n    date_matches = list(re.finditer(r'(\\b\\d{2}\\s+[A-Z][a-z]{2},\\s+\\d{4}\\b)\\s+(\\d+)\\s+commit(?:s)?', body_text))\n    entries = []\n    for idx, match in enumerate(date_matches):\n        start = match.start()\n        end = date_matches[idx + 1].start() if idx + 1 < len(date_matches) else len(body_text)\n        section = body_text[start:end]\n        authors = []\n        for author_match in re.finditer(r'\\b([^\\n]+?)\\s+authored\\b', section):\n            author_name = author_match.group(1).strip()\n            if author_name and author_name not in authors:\n                authors.append(author_name)\n        entries.append({\n            \"date_label\": match.group(1),\n            \"commit_count\": int(match.group(2)),\n            \"visible_authors\": [{\"author_name\": name} for name in authors],\n        })\n\n    pager_text = self.page.locator(\"body\").inner_text()\n    has_next_page = bool(re.search(r'\\bNext\\b', pager_text))\n\n    return {\n        \"project_path\": project_path,\n        \"ref\": ref,\n        \"page_number\": page_number,\n        \"entries\": entries,\n        \"is_paginated\": has_next_page,\n        \"next_page_number\": page_number + 1 if has_next_page else None,\n    }\n",
+            "owns": [
+              "Navigate to a GitLab project commits history page for a specified project and ref.",
+              "Parse visible date-grouped commit activity from the rendered commits history page.",
+              "Extract the displayed date label and displayed commit count for each visible date group.",
+              "Extract visible authored entry names appearing within each parsed date group.",
+              "Return page-scoped pagination metadata only for the fetched commits-history page."
+            ],
+            "does_not_own": [
+              "Choosing which author or date to use for a task answer.",
+              "Counting only one contributor's commits for a requested date.",
+              "Aggregating across multiple pages unless the workflow explicitly iterates.",
+              "Interpreting visible group counts beyond the objective page facts returned."
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "project_path": {
+                  "type": "string",
+                  "description": "Absolute or site-relative GitLab project URL/path in owner/repository form."
+                },
+                "ref": {
+                  "type": "string",
+                  "description": "Branch or ref whose commits history page should be inspected, e.g. 'main'."
+                },
+                "page_number": {
+                  "type": "integer",
+                  "description": "Commits history results page number to fetch when supported by the UI.",
+                  "default": 1
+                }
+              },
+              "required": [
+                "project_path",
+                "ref"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "project_path": {
+                  "type": "string"
+                },
+                "ref": {
+                  "type": "string"
+                },
+                "page_number": {
+                  "type": "integer"
+                },
+                "entries": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "date_label": {
+                        "type": "string",
+                        "description": "Displayed date heading for the commit group, e.g. '05 Mar, 2023'."
+                      },
+                      "commit_count": {
+                        "type": "integer",
+                        "description": "Displayed number of commits for that date group."
+                      },
+                      "visible_authors": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "author_name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "author_name"
+                          ]
+                        }
+                      }
+                    },
+                    "required": [
+                      "date_label",
+                      "commit_count",
+                      "visible_authors"
+                    ]
+                  }
+                },
+                "is_paginated": {
+                  "type": "boolean"
+                },
+                "next_page_number": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "project_path",
+                "ref",
+                "page_number",
+                "entries",
+                "is_paginated",
+                "next_page_number"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "gitlab_repository_commit_activity_page"
+            ],
+            "supported_patterns": [
+              "Commits history page parsing by project/ref",
+              "Visible date-group commit activity extraction",
+              "Page-scoped commit activity retrieval"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task132_t322",
+                "template_id": "322",
+                "code_quote": "TARGET = BASE + '/a11yproject/a11yproject.com/-/commits/main' ... await page.goto(TARGET, wait_until='domcontentloaded') ... body = await page.locator('body').inner_text() ... m = re.search(r'05 Mar, 2023\\s+(\\d+) commit(?:s)?\\s+([^\\n]+)\\s+Kilian Valkhof authored', body, re.S)",
+                "explanation": "Generalized the workflow's UI acquisition core from a single hard-coded project/ref/date/author check into a page-scoped parser that returns visible commit date groups with their displayed commit counts and visible authored names. The task-specific selection of March 5, 2023 and Kilian was removed."
+              }
+            ]
+          }
+        },
+        {
+          "operation": "ADD",
+          "replacement": {
+            "primitive_id": "gitlab/list_dashboard_issues",
+            "method": "list_dashboard_issues",
+            "capability": "Load the GitLab dashboard issues page with site-native filters and return typed issue links in displayed order for the fetched page.",
+            "method_code": "def list_dashboard_issues(self, base_url: str, assignee_username: str, state: str, search: str, sort: str) -> dict:\n    from urllib.parse import urlencode\n\n    params = {\n        \"assignee_username\": assignee_username,\n        \"state\": state,\n        \"search\": search,\n        \"sort\": sort,\n    }\n    url = f\"{base_url}/dashboard/issues?{urlencode(params)}\"\n    self.page.goto(url, wait_until=\"domcontentloaded\")\n    self.page.wait_for_timeout(2500)\n\n    issue_links = self.page.locator(\"a\").evaluate_all(\n        \"\"\"\n        els => els\n          .map(e => ({text:(e.innerText||e.textContent||'').replace(/\\\\s+/g,' ').trim(), href:e.href}))\n          .filter(x => x.text && x.href.includes('/-/issues/'))\n        \"\"\"\n    )\n\n    issues = []\n    for item in issue_links:\n        issues.append({\n            \"title_text\": item.get(\"text\", \"\"),\n            \"issue_url\": item.get(\"href\", \"\"),\n        })\n\n    return {\n        \"issues\": issues,\n        \"applied_url\": self.page.url,\n        \"is_ordered_by_sort\": True,\n    }\n",
+            "owns": [
+              "Navigate to the GitLab dashboard issues page.",
+              "Apply assignee, state, search, and sort query parameters in the dashboard issues URL.",
+              "Read issue result links from the rendered page.",
+              "Return typed issue link records in displayed page order.",
+              "Preserve the final applied URL for the fetched filtered results page."
+            ],
+            "does_not_own": [
+              "Deciding which query terms are semantically relevant to a task.",
+              "Choosing the final issue from the returned results.",
+              "Inferring issue state from the issue detail page when not shown in the list.",
+              "Producing a task-level boolean answer."
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "base_url": {
+                  "type": "string",
+                  "description": "GitLab base URL."
+                },
+                "assignee_username": {
+                  "type": "string",
+                  "description": "Username to filter assigned issues by."
+                },
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "opened",
+                    "closed",
+                    "all"
+                  ],
+                  "description": "Issue state filter as supported by the dashboard."
+                },
+                "search": {
+                  "type": "string",
+                  "description": "Free-text issue search query."
+                },
+                "sort": {
+                  "type": "string",
+                  "description": "Dashboard sort key, e.g. updated_desc."
+                }
+              },
+              "required": [
+                "base_url",
+                "assignee_username",
+                "state",
+                "search",
+                "sort"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "issues": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "title_text": {
+                        "type": "string"
+                      },
+                      "issue_url": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "title_text",
+                      "issue_url"
+                    ]
+                  }
+                },
+                "applied_url": {
+                  "type": "string"
+                },
+                "is_ordered_by_sort": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "issues",
+                "applied_url",
+                "is_ordered_by_sort"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "gitlab_dashboard_issue_links_page"
+            ],
+            "supported_patterns": [
+              "Dashboard issues page retrieval",
+              "Site-native assignee/state/search/sort filtering",
+              "Displayed-order issue link extraction"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task176_t310",
+                "template_id": "310",
+                "code_quote": "issues_url = BASE + '/dashboard/issues?assignee_username=byteblaze&state=all&search=theme&sort=updated_desc' ... await page.goto(issues_url, wait_until='domcontentloaded') ... issue_links = await page.locator('a').evaluate_all(\"els => els.map(e => ({text:(e.innerText||e.textContent||'').replace(/\\\\s+/g,' ').trim(), href:e.href})).filter(x => x.text && x.href.includes('/-/issues/'))\")",
+                "explanation": "Generalized the workflow's dashboard issues URL construction and rendered-page issue-link extraction into a reusable page-scoped primitive. Hard-coded assignee, search term, and sort were parameterized, while task-specific selection logic was excluded."
+              }
+            ]
+          }
+        },
+        {
+          "operation": "ADD",
+          "replacement": {
+            "primitive_id": "gitlab/get_issue_detail_status",
+            "method": "get_issue_detail_status",
+            "capability": "Open a GitLab issue detail page and return the normalized visible status parsed from stable issue UI text/actions.",
+            "method_code": "def get_issue_detail_status(self, issue_url: str) -> dict:\n    self.page.goto(issue_url, wait_until=\"domcontentloaded\")\n    self.page.wait_for_timeout(2500)\n    issue_text = self.page.locator(\"body\").inner_text()\n\n    is_closed = \"\\nClosed\\n\" in (\"\\n\" + issue_text + \"\\n\") or \"Reopen issue\" in issue_text\n    is_open = \"\\nOpen\\n\" in (\"\\n\" + issue_text + \"\\n\") or \"Close issue\" in issue_text\n\n    if is_closed:\n        status = \"closed\"\n    elif is_open:\n        status = \"open\"\n    else:\n        status = \"unknown\"\n\n    return {\n        \"issue_url\": self.page.url,\n        \"status\": status,\n    }\n",
+            "owns": [
+              "Navigate to a GitLab issue detail URL.",
+              "Read rendered page text from the issue detail view.",
+              "Parse whether the issue is open or closed from displayed status/action semantics.",
+              "Return the visited issue URL together with normalized status."
+            ],
+            "does_not_own": [
+              "Finding the right issue URL for a task.",
+              "Ranking candidate issues.",
+              "Returning task-specific booleans instead of normalized status.",
+              "Mutating issue state."
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "issue_url": {
+                  "type": "string",
+                  "description": "Absolute URL of the GitLab issue detail page."
+                }
+              },
+              "required": [
+                "issue_url"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "issue_url": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "open",
+                    "closed",
+                    "unknown"
+                  ]
+                }
+              },
+              "required": [
+                "issue_url",
+                "status"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "gitlab_issue_visible_status"
+            ],
+            "supported_patterns": [
+              "Issue detail page status read",
+              "Normalized visible issue status extraction"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task176_t310",
+                "template_id": "310",
+                "code_quote": "await page.goto(latest['href'], wait_until='domcontentloaded') ... issue_text = await page.locator('body').inner_text() ... is_closed = '\\nClosed\\n' in ('\\n' + issue_text + '\\n') or 'Reopen issue' in issue_text ... is_open = '\\nOpen\\n' in ('\\n' + issue_text + '\\n') or 'Close issue' in issue_text",
+                "explanation": "Generalized the workflow's issue page status check into a reusable read-only UI primitive that returns normalized visible status facts. The task-specific boolean conversion was removed."
+              }
+            ]
+          }
+        },
+        {
+          "operation": "ADD",
+          "replacement": {
+            "primitive_id": "gitlab/search_projects_by_name",
+            "method": "search_projects_by_name",
+            "capability": "Search GitLab projects through the website and return typed project links from the fetched search-results page.",
+            "method_code": "def search_projects_by_name(self, base_url: str, query: str) -> dict:\n    from urllib.parse import quote\n    import re\n\n    search_url = f\"{base_url}/search?scope=projects&search={quote(query)}\"\n    self.page.goto(search_url, wait_until=\"domcontentloaded\")\n    self.page.wait_for_timeout(1500)\n\n    links = self.page.locator(\"a\").evaluate_all(\n        \"\"\"\n        els => els.map(e => ({\n            text: (e.innerText || e.textContent || '').replace(/\\s+/g, ' ').trim(),\n            href: e.getAttribute('href') || ''\n        }))\n        \"\"\"\n    )\n\n    results = []\n    seen = set()\n    for item in links:\n        href = item.get(\"href\", \"\")\n        text = item.get(\"text\", \"\")\n        if not href or href.startswith(\"http\"):\n            continue\n        if href.startswith(\"/\") and href.count(\"/\") >= 2 and \"/-/\" not in href and not href.startswith(\"/search\") and not href.startswith(\"/users\"):\n            project_path = href\n            key = (project_path, text)\n            if key in seen:\n                continue\n            seen.add(key)\n            results.append({\n                \"project_path\": project_path,\n                \"project_url\": f\"{base_url}{project_path}\",\n                \"label\": text,\n            })\n\n    return {\n        \"search_url\": search_url,\n        \"results\": results,\n        \"page_number\": None,\n        \"is_complete_page\": True,\n    }\n",
+            "owns": [
+              "Construct the GitLab project search URL from a query string.",
+              "Fetch the project search results page.",
+              "Parse project result links from the returned HTML.",
+              "Return typed project records with stable identity fields exposed by the results page.",
+              "Indicate the search URL used for acquisition."
+            ],
+            "does_not_own": [
+              "Selecting the single best project for a task.",
+              "Applying task-specific exact-match heuristics for one repository name/path.",
+              "Opening a repository page after search.",
+              "Aggregating or ranking beyond the fetched page order."
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "base_url": {
+                  "type": "string",
+                  "description": "Root URL of the GitLab instance."
+                },
+                "query": {
+                  "type": "string",
+                  "description": "Project search text."
+                }
+              },
+              "required": [
+                "base_url",
+                "query"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "search_url": {
+                  "type": "string"
+                },
+                "results": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "project_path": {
+                        "type": "string"
+                      },
+                      "project_url": {
+                        "type": "string"
+                      },
+                      "label": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "project_path",
+                      "project_url",
+                      "label"
+                    ]
+                  }
+                },
+                "page_number": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "is_complete_page": {
+                  "type": "boolean",
+                  "description": "True for the fetched page of results, not a claim about all search pages."
+                }
+              },
+              "required": [
+                "search_url",
+                "results",
+                "page_number",
+                "is_complete_page"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "gitlab_project_search_results_page"
+            ],
+            "supported_patterns": [
+              "Project search page retrieval",
+              "Typed project link extraction from search results"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task295_t329",
+                "template_id": "329",
+                "code_quote": "search_html = opener.open(BASE + '/search?scope=projects&search=metaseq').read().decode('utf-8', 'ignore')\npath_match = re.search(r'href=\\\"(/root/metaseq)\\\"', search_html)",
+                "explanation": "Generalized the workflow's project search-page acquisition from one hard-coded project path into a page-scoped project-search primitive returning typed project links."
+              },
+              {
+                "workflow_id": "task293_t329",
+                "template_id": "329",
+                "code_quote": "search_url = urljoin(BASE, '/search?scope=projects&search=' + quote(TARGET_NAME))\nsearch_resp = session.get(search_url, timeout=20)\nlinks = re.findall(r'<a\\b[^>]*href=[\"\\']([^\"\\']*)[\"\\'][^>]*>(.*?)</a>', search_resp.text, re.I|re.S)",
+                "explanation": "A second workflow confirms the same GitLab site search endpoint and HTML anchor-based extraction pattern, supporting a generalized search-results primitive with explicit page-scoped completeness."
+              }
+            ]
+          }
+        },
+        {
+          "operation": "ADD",
+          "replacement": {
+            "primitive_id": "gitlab/get_project_clone_urls",
+            "method": "get_project_clone_urls",
+            "capability": "Open a GitLab project page and extract clone URL information exposed in the project page HTML.",
+            "method_code": "def get_project_clone_urls(self, base_url: str, username: str, password: str, project_path: str) -> dict:\n    import re\n    import html as html_lib\n    import requests\n\n    session = requests.Session()\n    sign_in = session.get(f\"{base_url}/users/sign_in\", timeout=30)\n    sign_in.raise_for_status()\n\n    match = re.search(r'name=[\"\\']authenticity_token[\"\\'][^>]*value=[\"\\']([^\"\\']+)', sign_in.text, re.I | re.S)\n    if not match:\n        match = re.search(r'value=[\"\\']([^\"\\']+)[\"\\'][^>]*name=[\"\\']authenticity_token[\"\\']', sign_in.text, re.I | re.S)\n    if not match:\n        raise RuntimeError(\"Could not find authenticity token on sign-in page\")\n\n    login_resp = session.post(\n        f\"{base_url}/users/sign_in\",\n        data={\n            \"authenticity_token\": html_lib.unescape(match.group(1)),\n            \"user[login]\": username,\n            \"user[password]\": password,\n            \"user[remember_me]\": \"0\",\n        },\n        headers={\"Referer\": f\"{base_url}/users/sign_in\"},\n        timeout=30,\n        allow_redirects=True,\n    )\n    login_resp.raise_for_status()\n\n    response = session.get(f\"{base_url}{project_path}\", timeout=30)\n    response.raise_for_status()\n    page_html = response.text\n\n    ssh_clone_url = None\n    http_clone_url = None\n\n    ssh_match = re.search(r'name=[\"\\']ssh_project_clone[\"\\'][^>]*value=[\"\\']([^\"\\']+)', page_html, re.I | re.S)\n    if not ssh_match:\n        ssh_match = re.search(r'Clone with SSH.*?value=[\"\\']([^\"\\']+)[\"\\']', page_html, re.I | re.S)\n    if not ssh_match:\n        ssh_match = re.search(r'(git@[^\"\\'\\s<>]+?\\.git)', page_html, re.I)\n    if ssh_match:\n        ssh_clone_url = html_lib.unescape(ssh_match.group(1))\n\n    http_match = re.search(r'name=[\"\\']http_project_clone[\"\\'][^>]*value=[\"\\']([^\"\\']+)', page_html, re.I | re.S)\n    if http_match:\n        http_clone_url = html_lib.unescape(http_match.group(1))\n\n    return {\n        \"project_path\": project_path,\n        \"project_url\": response.url,\n        \"ssh_clone_url\": ssh_clone_url,\n        \"http_clone_url\": http_clone_url,\n    }\n",
+            "owns": [
+              "Authenticate to GitLab before accessing project pages when required.",
+              "Fetch a GitLab project page by project path.",
+              "Parse clone URL values exposed in project page HTML.",
+              "Return SSH clone URL when present.",
+              "Return HTTP clone URL when present from the same acquisition boundary.",
+              "Preserve project path and resolved project URL context."
+            ],
+            "does_not_own": [
+              "Searching for which project to inspect.",
+              "Selecting a project based on task intent.",
+              "Performing a git clone.",
+              "Returning only one protocol when the caller may want richer clone metadata."
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "base_url": {
+                  "type": "string"
+                },
+                "username": {
+                  "type": "string"
+                },
+                "password": {
+                  "type": "string"
+                },
+                "project_path": {
+                  "type": "string",
+                  "description": "GitLab project path beginning with /, e.g. /group/project"
+                }
+              },
+              "required": [
+                "base_url",
+                "username",
+                "password",
+                "project_path"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "project_path": {
+                  "type": "string"
+                },
+                "project_url": {
+                  "type": "string"
+                },
+                "ssh_clone_url": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "http_clone_url": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "project_path",
+                "project_url",
+                "ssh_clone_url",
+                "http_clone_url"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "gitlab_project_clone_urls"
+            ],
+            "supported_patterns": [
+              "Project page clone URL extraction",
+              "SSH clone URL retrieval",
+              "HTML parsing of clone controls"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task295_t329",
+                "template_id": "329",
+                "code_quote": "project_html = opener.open(BASE + project_path).read().decode('utf-8', 'ignore')\nclone_with_ssh = re.search(r'Clone with SSH.*?value=\\\"([^\\\"]+)\\\"', project_html, re.S | re.I)",
+                "explanation": "Generalized the project-page HTML extraction of clone data from a hard-coded repository to any provided project path, preserving the stable SSH clone value exposed on the project page."
+              },
+              {
+                "workflow_id": "task293_t329",
+                "template_id": "329",
+                "code_quote": "ssh_match = re.search(r'name=[\"\\']ssh_project_clone[\"\\'][^>]*value=[\"\\']([^\"\\']+)', repo_resp.text, re.I|re.S)\nif not ssh_match:\n    ssh_match = re.search(r'value=[\"\\'](ssh://git@[^\"\\']+?\\.git)[\"\\']', repo_resp.text, re.I|re.S)\nif not ssh_match:\n    ssh_match = re.search(r'(git@[^\"\\'\\s<>]+?\\.git)', repo_resp.text, re.I)",
+                "explanation": "A second workflow confirms stable clone-url patterns on GitLab repository pages and supports a more robust generalized parser that can return SSH and HTTP clone URLs from the same page boundary."
+              }
+            ]
+          }
+        },
+        {
+          "operation": "ADD",
+          "replacement": {
+            "primitive_id": "gitlab/list_repository_commits",
+            "method": "list_repository_commits",
+            "capability": "Retrieve visible commit records from a GitLab repository commits page, optionally filtered by author via the site-native author query parameter.",
+            "method_code": "def list_repository_commits(self, repository_url: str, ref: str, author: str | None = None) -> dict:\n    import re\n    from urllib.parse import quote\n    import httpx\n\n    list_url = f\"{repository_url.rstrip('/')}/-/commits/{ref}\"\n    if author:\n        list_url = f\"{list_url}?author={quote(author)}\"\n\n    with httpx.Client(follow_redirects=True, timeout=30.0) as client:\n        response = client.get(list_url)\n        response.raise_for_status()\n        html = response.text\n\n    matches = re.findall(\n        r'<a class=\\\"commit-author-link\\\"[^>]*>(.*?)</a> authored <time class=\\\"js-timeago\\\"[^>]*datetime=\\\"([^\\\"]+)\\\"',\n        html,\n        re.S,\n    )\n\n    commits = []\n    for raw_author, authored_at in matches:\n        author_name = re.sub(r'<.*?>', '', raw_author).strip()\n        commits.append({\n            \"author_name\": author_name,\n            \"authored_at\": authored_at,\n            \"authored_date\": authored_at[:10] if authored_at else \"\",\n        })\n\n    return {\n        \"list_url\": list_url,\n        \"commits\": commits,\n    }\n",
+            "owns": [
+              "Construct the GitLab repository commits URL from repository URL and ref.",
+              "Apply the GitLab commits-page author filter via query parameter when provided.",
+              "Fetch the commits listing page HTML.",
+              "Parse repeated commit-entry semantics into typed records.",
+              "Return displayed commit author identity and authored timestamp/date.",
+              "Return the exact list URL used for the acquisition."
+            ],
+            "does_not_own": [
+              "Choosing which author or date range matters for the task.",
+              "Counting commits within a requested month or year.",
+              "Aggregating or summarizing results into a final answer.",
+              "Verifying repository context outside the commits-listing acquisition."
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "repository_url": {
+                  "type": "string",
+                  "description": "Base GitLab repository URL, e.g. https://gitlab.example.com/group/project"
+                },
+                "ref": {
+                  "type": "string",
+                  "description": "Branch or ref whose commits page should be listed, e.g. main"
+                },
+                "author": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Optional GitLab commits-page author filter value, e.g. 'Philip Wong'"
+                }
+              },
+              "required": [
+                "repository_url",
+                "ref"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "list_url": {
+                  "type": "string"
+                },
+                "commits": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "author_name": {
+                        "type": "string"
+                      },
+                      "authored_at": {
+                        "type": "string"
+                      },
+                      "authored_date": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "author_name",
+                      "authored_at",
+                      "authored_date"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "list_url",
+                "commits"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "gitlab_repository_commits_page_records"
+            ],
+            "supported_patterns": [
+              "Commits page retrieval by ref",
+              "Optional author-filtered commits page retrieval",
+              "Visible commit author/timestamp extraction"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task305_t321",
+                "template_id": "321",
+                "code_quote": "filtered_url = f\"{COMMITS_URL}?author={quote('Philip Wong')}\"\nr = client.get(filtered_url)\n...\ncommits = re.findall(r'<a class=\\\"commit-author-link\\\"[^>]*>(.*?)</a> authored <time class=\\\"js-timeago\\\"[^>]*datetime=\\\"([^\\\"]+)\\\"', html, re.S)",
+                "explanation": "Generalized the workflow's commits page acquisition from one repository/ref/author into a reusable primitive that returns visible commit records from the fetched commits page. The task-specific month filtering and counting were removed."
+              }
+            ]
+          }
+        },
+        {
+          "operation": "ADD",
+          "replacement": {
+            "primitive_id": "gitlab/resolve_project_by_namespace",
+            "method": "resolve_project_by_namespace",
+            "capability": "Look up a GitLab project by full path_with_namespace and return stable project identity metadata from the projects API.",
+            "method_code": "def resolve_project_by_namespace(self, base_url: str, username: str, password: str, project_path_with_namespace: str) -> dict:\n    import re\n    from urllib.parse import quote\n    import requests\n\n    session = requests.Session()\n    sign_in = session.get(f\"{base_url}/users/sign_in\", timeout=30)\n    sign_in.raise_for_status()\n    match = re.search(r'name=\"authenticity_token\" value=\"([^\"]+)\"', sign_in.text)\n    if not match:\n        raise RuntimeError(\"Could not find authenticity token on sign-in page\")\n\n    login_resp = session.post(\n        f\"{base_url}/users/sign_in\",\n        data={\n            \"authenticity_token\": match.group(1),\n            \"user[login]\": username,\n            \"user[password]\": password,\n            \"user[remember_me]\": \"0\",\n        },\n        timeout=30,\n        allow_redirects=True,\n    )\n    login_resp.raise_for_status()\n\n    response = session.get(\n        f\"{base_url}/api/v4/projects/{quote(project_path_with_namespace, safe='')}\",\n        timeout=30,\n    )\n    response.raise_for_status()\n    project = response.json()\n\n    return {\n        \"id\": project.get(\"id\"),\n        \"name\": project.get(\"name\"),\n        \"path\": project.get(\"path\"),\n        \"path_with_namespace\": project.get(\"path_with_namespace\"),\n        \"web_url\": project.get(\"web_url\"),\n        \"default_branch\": project.get(\"default_branch\"),\n    }\n",
+            "owns": [
+              "Authenticate to GitLab before API use.",
+              "URL-encode a full project path_with_namespace for the projects API.",
+              "Fetch and parse the JSON project record.",
+              "Return stable project identity and canonical metadata exposed by the response."
+            ],
+            "does_not_own": [
+              "Choosing which repository to inspect.",
+              "Commit retrieval or filtering.",
+              "Task-level validation beyond returning the fetched project record."
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "base_url": {
+                  "type": "string"
+                },
+                "username": {
+                  "type": "string"
+                },
+                "password": {
+                  "type": "string"
+                },
+                "project_path_with_namespace": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "base_url",
+                "username",
+                "password",
+                "project_path_with_namespace"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "path": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "path_with_namespace": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "web_url": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "default_branch": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "path",
+                "path_with_namespace",
+                "web_url",
+                "default_branch"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "gitlab_project_identity"
+            ],
+            "supported_patterns": [
+              "Project resolution by namespace path",
+              "Projects API lookup"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task133_t322",
+                "template_id": "322",
+                "code_quote": "url, headers, body = fetch(base + '/api/v4/projects/' + urllib.parse.quote('a11yproject/a11yproject.com', safe=''))\nproject = json.loads(body.decode('utf-8', 'ignore'))\nif project.get('path_with_namespace') != 'a11yproject/a11yproject.com':\n    raise RuntimeError(...)\nproject_id = project['id']",
+                "explanation": "Generalized the hard-coded projects API lookup into a reusable namespace-resolution primitive. Preserved stable project facts directly demonstrated by the fetched project record, especially id and path_with_namespace, and included other standard identity metadata available at the same response boundary."
+              }
+            ]
+          }
+        },
+        {
+          "operation": "ADD",
+          "replacement": {
+            "primitive_id": "gitlab/list_repository_commits_in_time_range",
+            "method": "list_repository_commits_in_time_range",
+            "capability": "Retrieve repository commits from the GitLab commits API for a project, ref, and caller-specified time window, returning typed commit records and pagination metadata.",
+            "method_code": "def list_repository_commits_in_time_range(self, base_url: str, username: str, password: str, project_id: int, ref_name: str, since: str, until: str, per_page: int = 100, page_number: int = 1) -> dict:\n    import re\n    import requests\n\n    session = requests.Session()\n    sign_in = session.get(f\"{base_url}/users/sign_in\", timeout=30)\n    sign_in.raise_for_status()\n    match = re.search(r'name=\"authenticity_token\" value=\"([^\"]+)\"', sign_in.text)\n    if not match:\n        raise RuntimeError(\"Could not find authenticity token on sign-in page\")\n\n    login_resp = session.post(\n        f\"{base_url}/users/sign_in\",\n        data={\n            \"authenticity_token\": match.group(1),\n            \"user[login]\": username,\n            \"user[password]\": password,\n            \"user[remember_me]\": \"0\",\n        },\n        timeout=30,\n        allow_redirects=True,\n    )\n    login_resp.raise_for_status()\n\n    response = session.get(\n        f\"{base_url}/api/v4/projects/{project_id}/repository/commits\",\n        params={\n            \"ref_name\": ref_name,\n            \"since\": since,\n            \"until\": until,\n            \"per_page\": per_page,\n            \"page\": page_number,\n        },\n        timeout=30,\n    )\n    response.raise_for_status()\n    payload = response.json()\n    if not isinstance(payload, list):\n        raise RuntimeError(\"Unexpected commits API response\")\n\n    commits = []\n    for item in payload:\n        commits.append({\n            \"id\": item.get(\"id\"),\n            \"short_id\": item.get(\"short_id\"),\n            \"title\": item.get(\"title\"),\n            \"message\": item.get(\"message\"),\n            \"author_name\": item.get(\"author_name\"),\n            \"author_email\": item.get(\"author_email\"),\n            \"authored_date\": item.get(\"authored_date\"),\n            \"committer_name\": item.get(\"committer_name\"),\n            \"committer_email\": item.get(\"committer_email\"),\n            \"committed_date\": item.get(\"committed_date\"),\n            \"created_at\": item.get(\"created_at\"),\n            \"web_url\": item.get(\"web_url\"),\n        })\n\n    next_page = response.headers.get(\"X-Next-Page\")\n    total = response.headers.get(\"X-Total\")\n    total_pages = response.headers.get(\"X-Total-Pages\")\n\n    return {\n        \"commits\": commits,\n        \"page_number\": page_number,\n        \"per_page\": per_page,\n        \"next_page_number\": int(next_page) if next_page and next_page.isdigit() else None,\n        \"has_next_page\": bool(next_page),\n        \"total\": int(total) if total and total.isdigit() else None,\n        \"total_pages\": int(total_pages) if total_pages and total_pages.isdigit() else None,\n    }\n",
+            "owns": [
+              "Authenticate to GitLab before API use.",
+              "Construct the repository commits API request for a given project id.",
+              "Accept ref selection and since/until bounds as inputs.",
+              "Return typed commit records with stable identity, author, timestamps, message/title, and web URL.",
+              "Return pagination metadata explicitly supplied by GitLab when present."
+            ],
+            "does_not_own": [
+              "Resolving project path to project id.",
+              "Choosing the date window for a task.",
+              "Filtering commits to a specific author.",
+              "Counting or summarizing commits for the final answer."
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "base_url": {
+                  "type": "string"
+                },
+                "username": {
+                  "type": "string"
+                },
+                "password": {
+                  "type": "string"
+                },
+                "project_id": {
+                  "type": "integer"
+                },
+                "ref_name": {
+                  "type": "string"
+                },
+                "since": {
+                  "type": "string"
+                },
+                "until": {
+                  "type": "string"
+                },
+                "per_page": {
+                  "type": "integer",
+                  "default": 100
+                },
+                "page_number": {
+                  "type": "integer",
+                  "default": 1
+                }
+              },
+              "required": [
+                "base_url",
+                "username",
+                "password",
+                "project_id",
+                "ref_name",
+                "since",
+                "until"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "commits": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "short_id": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "title": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "message": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "author_name": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "author_email": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "authored_date": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "committer_name": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "committer_email": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "committed_date": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "created_at": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "web_url": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "short_id",
+                      "title",
+                      "message",
+                      "author_name",
+                      "author_email",
+                      "authored_date",
+                      "committer_name",
+                      "committer_email",
+                      "committed_date",
+                      "created_at",
+                      "web_url"
+                    ]
+                  }
+                },
+                "page_number": {
+                  "type": "integer"
+                },
+                "per_page": {
+                  "type": "integer"
+                },
+                "next_page_number": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "has_next_page": {
+                  "type": "boolean"
+                },
+                "total": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "total_pages": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "commits",
+                "page_number",
+                "per_page",
+                "next_page_number",
+                "has_next_page",
+                "total",
+                "total_pages"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "gitlab_repository_commits_page"
+            ],
+            "supported_patterns": [
+              "Commits API listing by project id",
+              "Time-bounded commit retrieval",
+              "Paginated commit retrieval"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task133_t322",
+                "template_id": "322",
+                "code_quote": "api_url = base + f'/api/v4/projects/{project_id}/repository/commits?ref_name=main&since=2023-03-02T00:00:00Z&until=2023-03-02T23:59:59Z&per_page=100'\nurl, headers, body = fetch(api_url)\ncommits = json.loads(body.decode('utf-8', 'ignore'))\n...\nfor c in commits:\n    author = c.get('author_name', '')\n    authored = c.get('authored_date', '')\n    ... c.get('short_id') ... c.get('title') ... c.get('web_url')",
+                "explanation": "Generalized the commits API request by parameterizing project id, ref, time window, and pagination controls. Preserved stable commit fields explicitly consumed from the API response and exposed pagination metadata from GitLab response headers when available."
+              }
+            ]
+          }
+        }
+      ],
+      "workflow_attribution": [
+        {
+          "workflow_id": "task174_t310",
+          "decision": "SKIP",
+          "reason": "Its candidate search_issues is covered by stronger issue primitives in this batch and was not added as a separate primitive."
+        },
+        {
+          "workflow_id": "task175_t310",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0,
+            1
+          ]
+        },
+        {
+          "workflow_id": "task132_t322",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            2
+          ]
+        },
+        {
+          "workflow_id": "task176_t310",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            3,
+            4
+          ]
+        },
+        {
+          "workflow_id": "task295_t329",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            5,
+            6
+          ]
+        },
+        {
+          "workflow_id": "task305_t321",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            7
+          ]
+        },
+        {
+          "workflow_id": "task293_t329",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            5,
+            6
+          ]
+        },
+        {
+          "workflow_id": "task133_t322",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            8,
+            9
+          ]
+        }
+      ],
+      "candidate_attribution": [
+        {
+          "candidate_id": "task174_t310::search_issues",
+          "decision": "COVERED",
+          "target_id": "gitlab/list_project_issues",
+          "reason": "Issue retrieval/search needs in this batch are sufficiently covered by stronger accepted issue primitives; this specific UI search-results parser was not added separately."
+        },
+        {
+          "candidate_id": "task175_t310::list_project_issues",
+          "decision": "ADD",
+          "operation_index": 0
+        },
+        {
+          "candidate_id": "task175_t310::get_issue_details",
+          "decision": "ADD",
+          "operation_index": 1
+        },
+        {
+          "candidate_id": "task132_t322::get_gitlab_repository_commit_activity_by_date",
+          "decision": "ADD",
+          "operation_index": 2
+        },
+        {
+          "candidate_id": "task176_t310::list_dashboard_issues",
+          "decision": "ADD",
+          "operation_index": 3
+        },
+        {
+          "candidate_id": "task176_t310::get_issue_detail_status",
+          "decision": "ADD",
+          "operation_index": 4
+        },
+        {
+          "candidate_id": "task295_t329::search_projects_by_name",
+          "decision": "ADD",
+          "operation_index": 5
+        },
+        {
+          "candidate_id": "task295_t329::get_project_clone_urls",
+          "decision": "ADD",
+          "operation_index": 6
+        },
+        {
+          "candidate_id": "task305_t321::list_repository_commits",
+          "decision": "ADD",
+          "operation_index": 7
+        },
+        {
+          "candidate_id": "task293_t329::authenticate_gitlab_session",
+          "decision": "REJECT",
+          "target_id": null,
+          "reason": "Boundary defect: generic authentication/session establishment is not a standalone site-output primitive; authentication should be internal to concrete acquisition primitives."
+        },
+        {
+          "candidate_id": "task293_t329::search_gitlab_projects",
+          "decision": "COVERED",
+          "target_id": "gitlab/search_projects_by_name",
+          "reason": "Covered by the added project-search primitive with the same acquisition boundary and stable typed output."
+        },
+        {
+          "candidate_id": "task293_t329::get_gitlab_repository_clone_urls",
+          "decision": "ADD",
+          "operation_index": 6
+        },
+        {
+          "candidate_id": "task133_t322::resolve_project_by_namespace",
+          "decision": "ADD",
+          "operation_index": 8
+        },
+        {
+          "candidate_id": "task133_t322::list_repository_commits_in_time_range",
+          "decision": "ADD",
+          "operation_index": 9
+        }
+      ]
+    },
+    "quality_verdicts": {
+      "verdicts": [
+        {
+          "operation_index": 0,
+          "verdict": "PASS",
+          "reason": "Supported by direct evidence of GitLab per-project issues API use with scope/order/per_page. Output is typed and includes stable issue identity/time/state/link fields plus explicit pagination headers. Authentication is site-specific and evidenced by GitLab sign-in/token flow. Boundary is appropriate: acquisition/parsing only, not cross-project search or task answer logic."
+        },
+        {
+          "operation_index": 1,
+          "verdict": "PASS",
+          "reason": "Direct evidence supports project+issue IID API lookup. Output is typed and limited to stable issue detail fields. Authentication handling is site-specific and evidenced. owns/does_not_own stay within acquisition boundary and exclude task-specific selection/boolean conversion."
+        },
+        {
+          "operation_index": 2,
+          "verdict": "PASS",
+          "reason": "Evidence directly shows navigating to a GitLab commits history page and parsing rendered body text for a displayed date group, commit count, and authored names. The primitive generalizes page-scoped UI parsing into typed records without retaining task-specific date/author filtering. It also reports page-scoped pagination rather than claiming full collection completeness."
+        },
+        {
+          "operation_index": 3,
+          "verdict": "PASS",
+          "reason": "Direct evidence supports dashboard issues URL parameters assignee_username/state/search/sort and rendered-page issue-link extraction. Output is typed. The primitive uses site-native controls rather than imposing extra task logic, and does not select a final issue or produce task answers."
+        },
+        {
+          "operation_index": 4,
+          "verdict": "PASS",
+          "reason": "Evidence directly supports opening an issue detail page and inferring visible open/closed status from stable UI text/actions. Output is typed and normalized. Boundary is acquisition/parsing only, excluding issue discovery and task-specific boolean answering."
+        },
+        {
+          "operation_index": 5,
+          "verdict": "PASS",
+          "reason": "Supported by two evidence snippets showing GitLab project search via /search?scope=projects&search=... and HTML anchor extraction. Output is typed project records. The primitive stays page-scoped and does not claim exhaustive multi-page completeness, which is consistent with the contract."
+        },
+        {
+          "operation_index": 6,
+          "verdict": "PASS",
+          "reason": "Direct evidence supports fetching a GitLab project page and extracting clone URL values from HTML, including named SSH clone fields and alternate patterns. Output is typed and preserves project context. Authentication mechanics are site-specific and evidenced. Returning both SSH and HTTP clone URLs is an acceptable richer same-boundary parse, not task logic."
+        },
+        {
+          "operation_index": 7,
+          "verdict": "PASS",
+          "reason": "Direct evidence supports constructing a commits page URL with optional author query parameter and parsing repeated commit author/timestamp entries from HTML. Output is typed. The primitive properly avoids downstream counting/month filtering and returns the acquisition URL used."
+        },
+        {
+          "operation_index": 8,
+          "verdict": "PASS",
+          "reason": "Direct evidence supports resolving a project by encoded path_with_namespace through /api/v4/projects/{encoded}. Output is typed stable project metadata. Authentication is site-specific and evidenced. Boundary is clean and excludes downstream commit/task logic."
+        },
+        {
+          "operation_index": 9,
+          "verdict": "PASS",
+          "reason": "Direct evidence supports the commits API with project id, ref_name, since, until, and per_page, plus parsing stable commit fields. Output is typed and includes pagination metadata from response headers, satisfying completeness requirements for page-scoped listing. The primitive excludes task-specific author filtering and counting."
+        }
+      ],
+      "rejection_verdicts": [
+        {
+          "candidate_id": "task293_t329::authenticate_gitlab_session",
+          "verdict": "PASS",
+          "reason": "Reject is appropriate. This candidate is only generic authenticated session establishment and does not itself provide a reusable typed GitLab acquisition/parsing record beyond browser/session setup. The site-specific login flow is valid, but here it is better kept internal to concrete primitives that fetch projects/issues/clone data."
+        }
+      ]
+    },
+    "errors": []
+  }
+]

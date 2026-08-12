@@ -1,0 +1,238 @@
+{
+  "site": "reddit",
+  "status": "candidate",
+  "history": [
+    {
+      "batch": 0,
+      "workflows": [
+        "task30_t33",
+        "task28_t33",
+        "task29_t33"
+      ],
+      "diff": [
+        {
+          "op": "ADD",
+          "primitive_id": "reddit/list_forum_posts",
+          "before_hash": null,
+          "after_hash": "sha256:7bced56e5fdd12bd3cea9208155509158189bc2bddd478b75976aaefa35cae0c"
+        },
+        {
+          "op": "ADD",
+          "primitive_id": "reddit/get_post_details",
+          "before_hash": null,
+          "after_hash": "sha256:05629ffa9b972ca542f8bce4de5bb2fc547c6e04b81557fb8990d11dc7383736"
+        },
+        {
+          "op": "ADD",
+          "primitive_id": "reddit/list_post_comments_with_net_scores",
+          "before_hash": null,
+          "after_hash": "sha256:44346b94b651b32f77e5f098e0a301513f6809bffc6df04d321f902cba8c46e4"
+        }
+      ]
+    }
+  ],
+  "consolidation_operations": [
+    {
+      "op": "KEEP",
+      "source": "reddit/list_forum_posts",
+      "feature": "forums"
+    },
+    {
+      "op": "MERGE",
+      "sources": [
+        "reddit/get_post_details",
+        "reddit/list_post_comments_with_net_scores"
+      ],
+      "feature": "posts",
+      "replacement": {
+        "primitive_id": "reddit/posts/read_post_page",
+        "method": "read_post_page",
+        "capability": "Fetch a Reddit post page and return stable post metadata together with typed visible comment records parsed from the same page, preserving page-visible comment order and exposing page-level comment summary signals when available.",
+        "method_code": "def read_post_page(self, post_url: str) -> dict:\n    \"\"\"Fetch a post page and return stable post metadata plus visible comments.\"\"\"\n    import html as html_lib\n    import re\n    from urllib.parse import urlparse\n\n    self.page.goto(post_url)\n    page_html = self.page.content()\n    current_url = self.page.url\n\n    path_match = re.search(r'/f/[^/]+/(\\d+)/', urlparse(current_url).path)\n\n    title_match = re.search(r'<h1 class=\"submission__title[^>]*>.*?<a [^>]*>(.*?)</a>', page_html, re.I | re.S)\n    if title_match:\n        post_title = re.sub(r'<[^>]+>', ' ', title_match.group(1))\n        post_title = ' '.join(html_lib.unescape(post_title).split())\n    else:\n        meta_title_match = re.search(r'<meta[^>]+property=\"og:title\"[^>]+content=\"([^\"]*)\"', page_html, re.I)\n        if meta_title_match:\n            post_title = html_lib.unescape(meta_title_match.group(1)).strip()\n        else:\n            title_tag_match = re.search(r'<title>\\s*(.*?)\\s*</title>', page_html, re.I | re.S)\n            post_title = html_lib.unescape(title_tag_match.group(1)).strip() if title_tag_match else ''\n\n    author_match = re.search(r'og:article:author\" content=\"([^\"]+)\"', page_html)\n    if not author_match:\n        author_match = re.search(r'Submitted by\\s*<a href=\"/user/([^\"]+)\"', page_html, re.I | re.S)\n    author_username = html_lib.unescape(author_match.group(1)).strip() if author_match else ''\n\n    comment_count_match = re.search(r'data-comment-count=\"(\\d+)\"', page_html)\n    comment_count = int(comment_count_match.group(1)) if comment_count_match else None\n    comments_empty = (\n        bool(re.search(r'<strong>No comments</strong>', page_html, re.I))\n        or \"There's nothing here\" in page_html\n        or \"There&#039;s nothing here\" in page_html\n        or comment_count == 0\n    )\n\n    starts = [m.start() for m in re.finditer(r'<article class=\"comment', page_html)]\n    comments = []\n\n    def _strip_tags(value: str) -> str:\n        text = re.sub(r'<[^>]+>', ' ', value)\n        return ' '.join(html_lib.unescape(text).split())\n\n    for i, start in enumerate(starts):\n        end = starts[i + 1] if i + 1 < len(starts) else page_html.find('</section>', start)\n        if end == -1:\n            end = len(page_html)\n        segment = page_html[start:end]\n\n        comment_author_match = re.search(r'<a href=\"/user/[^\"]+\" class=\"fg-inherit\"><strong>(.*?)</strong></a>', segment)\n        score_match = re.search(r'<span class=\"vote__net-score\"[^>]*>([−\\-]?\\d+)</span>', segment)\n        time_match = re.search(r'<time class=\"[^\"]*\"[\\s\\S]*?title=\"([^\"]+)\"', segment)\n        is_op_marked = ('comment__author--op' in segment) or (re.search(r'>\\s*OP\\s*<', segment) is not None)\n\n        comments.append({\n            \"comment_position\": len(comments) + 1,\n            \"author_username\": html_lib.unescape(comment_author_match.group(1)).strip() if comment_author_match else None,\n            \"net_score\": int(score_match.group(1).replace('−', '-')) if score_match else None,\n            \"displayed_timestamp\": time_match.group(1) if time_match else None,\n            \"is_op_marked\": is_op_marked,\n            \"comment_text_excerpt\": _strip_tags(segment)[:300],\n        })\n\n    return {\n        \"post_id\": path_match.group(1) if path_match else None,\n        \"post_url\": current_url,\n        \"post_title\": post_title,\n        \"author_username\": author_username,\n        \"comment_count\": comment_count,\n        \"comments_empty\": comments_empty,\n        \"comments\": comments,\n        \"completeness\": \"page_visible_comments\",\n    }\n",
+        "owns": [
+          "Open a post detail page by URL or path.",
+          "Parse stable post metadata from page markup or metadata fallbacks, including title and author username.",
+          "Parse page-exposed comment count summary metadata when present.",
+          "Detect explicit empty-comments signals exposed by the page.",
+          "Identify individual displayed comment blocks on the page.",
+          "Parse each visible comment's author username, displayed net score, displayed timestamp, and OP-marking metadata.",
+          "Return typed comment records for downstream filtering and aggregation.",
+          "Return visible text excerpts as typed strings rather than raw HTML.",
+          "Return post identity derived from the URL alongside extracted detail fields."
+        ],
+        "does_not_own": [
+          "Choose which post to inspect.",
+          "Determine whether a comment counts for a particular task.",
+          "Compare comment authors against the post author for task-specific exclusions.",
+          "Interpret negative net score as satisfying a business rule.",
+          "Aggregate counts or format final task outputs.",
+          "Perform task-specific reasoning or final answer formatting."
+        ],
+        "input_contract": {
+          "type": "object",
+          "properties": {
+            "post_url": {
+              "type": "string",
+              "description": "Absolute URL or site-relative path for the post page."
+            }
+          },
+          "required": [
+            "post_url"
+          ]
+        },
+        "output_contract": {
+          "type": "object",
+          "properties": {
+            "post_id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Stable post identifier parsed from the post URL when available."
+            },
+            "post_url": {
+              "type": "string"
+            },
+            "post_title": {
+              "type": "string"
+            },
+            "author_username": {
+              "type": "string",
+              "description": "Post author username parsed from page metadata or byline when available."
+            },
+            "comment_count": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "description": "Comment count summary exposed by the page when parseable."
+            },
+            "comments_empty": {
+              "type": "boolean",
+              "description": "Whether the page explicitly indicates an empty comments state."
+            },
+            "comments": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "comment_position": {
+                    "type": "integer",
+                    "description": "1-based order among parsed visible comments."
+                  },
+                  "author_username": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "net_score": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "description": "Displayed net score shown on the page."
+                  },
+                  "displayed_timestamp": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "is_op_marked": {
+                    "type": "boolean",
+                    "description": "Whether the comment is explicitly marked as OP on the page."
+                  },
+                  "comment_text_excerpt": {
+                    "type": "string",
+                    "description": "Short visible text excerpt parsed from the comment block."
+                  }
+                },
+                "required": [
+                  "comment_position",
+                  "author_username",
+                  "net_score",
+                  "displayed_timestamp",
+                  "is_op_marked",
+                  "comment_text_excerpt"
+                ]
+              }
+            },
+            "completeness": {
+              "type": "string",
+              "enum": [
+                "page_visible_comments"
+              ]
+            }
+          },
+          "required": [
+            "post_id",
+            "post_url",
+            "post_title",
+            "author_username",
+            "comment_count",
+            "comments_empty",
+            "comments",
+            "completeness"
+          ]
+        },
+        "requires": [],
+        "provides": [
+          "reddit_post_page"
+        ],
+        "supported_patterns": [
+          "Post detail pages addressed by post URL or relative path",
+          "Title extraction from submission heading, og:title, or title tag fallback",
+          "Author extraction from page metadata or submission byline",
+          "Page-level comment summary extraction",
+          "Visible comment enumeration from post-page HTML",
+          "Displayed net score extraction from vote score markup",
+          "OP marker extraction from class or badge text"
+        ],
+        "source_evidence": [
+          {
+            "workflow_id": "task30_t33",
+            "template_id": "33",
+            "code_quote": "post_resp = get(latest_href)\ntitle_match = re.search(r'<title>\\s*(.*?)\\s*</title>', post_html, re.I|re.S)\npost_title = html.unescape(title_match.group(1)).strip() if title_match else ''\nauthor_match = re.search(r'og:article:author\" content=\"([^\"]+)\"', post_html)\nusername = author_match.group(1) if author_match else ''\ncomment_count_match = re.search(r'data-comment-count=\"(\\d+)\"', post_html)\ncomment_count_attr = int(comment_count_match.group(1)) if comment_count_match else 0\nhas_empty_comments = \"There's nothing here\" in post_html or \"There&#039;s nothing here\" in post_html",
+            "explanation": "Supports post-level metadata and comment summary extraction from a fetched post page.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          },
+          {
+            "workflow_id": "task29_t33",
+            "template_id": "33",
+            "code_quote": "title_m = re.search(r'<h1 class=\"submission__title[^>]*>.*?<a [^>]*>(.*?)</a>', phtml, re.S)\nog_title = re.search(r'<meta property=\"og:title\" content=\"(.*?)\">', phtml)\nauthor_m = re.search(r'Submitted by\\s*<a href=\"/user/([^\"]+)\"', phtml, re.S)\ncomments_zero = bool(re.search(r'<strong>No comments</strong>', phtml)) or 'data-comment-count=\"0\"' in phtml",
+            "explanation": "Supports title and author fallback extraction plus explicit zero-comment indicators.",
+            "evidence_match_mode": "exact"
+          },
+          {
+            "workflow_id": "task28_t33",
+            "template_id": "33",
+            "code_quote": "post_html = fetch(post['href'])\ncomments = [parse_comment(seg) for seg in split_comments(post_html)]\n...\ndef split_comments(html):\n    starts = [m.start() for m in re.finditer(r'<article class=\"comment', html)]\n    ...\n\ndef parse_comment(seg):\n    author = re.search(r'<a href=\"/user/[^\"]+\" class=\"fg-inherit\"><strong>(.*?)</strong></a>', seg)\n    score = re.search(r'<span class=\"vote__net-score\"[^>]*>([−\\-]?\\d+)</span>', seg)\n    time = re.search(r'<time class=\"[^\"]*\"[\\s\\S]*?title=\"([^\"]+)\"', seg)\n    op = 'comment__author--op' in seg or re.search(r'>\\s*OP\\s*<', seg) is not None\n    return {'author': ..., 'score': ..., 'time': ..., 'is_op_marked': op, 'text': strip_tags(seg)[:300]}",
+            "explanation": "Supports parsing visible comment blocks and typed comment fields from the same fetched post page.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        ],
+        "source_attribution": {
+          "sources": [
+            "reddit/get_post_details",
+            "reddit/list_post_comments_with_net_scores"
+          ],
+          "explanation": "These two primitives share the same navigation boundary and parse complementary post-page data from a single HTML fetch. Merging removes duplicate page loads while preserving a cohesive post-page primitive boundary."
+        }
+      },
+      "reason": "Both source primitives operate on the same post-page fetch boundary. Their responsibilities are complementary site mechanics and typed parsing from one page, so a single post-page reader is more cohesive and avoids duplicate navigation without pushing task-specific filtering into the primitive."
+    }
+  ],
+  "coverage": {
+    "expected": [
+      "reddit/get_post_details",
+      "reddit/list_forum_posts",
+      "reddit/list_post_comments_with_net_scores"
+    ],
+    "consumed": [
+      "reddit/list_forum_posts",
+      "reddit/get_post_details",
+      "reddit/list_post_comments_with_net_scores"
+    ]
+  }
+}

@@ -1,0 +1,192 @@
+[
+  {
+    "attempt": 1,
+    "proposal": {
+      "language_id": {
+        "type": "integer",
+        "description": "GitLab language filter id used in the explore/projects query, e.g. 8 for Python in the demonstrated workflow"
+      },
+      "sort": {
+        "type": "string",
+        "description": "GitLab explore sort value, e.g. stars_desc"
+      },
+      "page_number": {
+        "type": "integer",
+        "description": "1-based results page number for paginated explore results",
+        "nullable": true
+      }
+    },
+    "errors": [
+      "extraction must return non-empty CANDIDATES or a justified SKIP"
+    ]
+  },
+  {
+    "attempt": 2,
+    "proposal": {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task296_t329::list_explore_projects",
+          "proposed_method": "list_explore_projects",
+          "capability": "list GitLab explore projects for a given language and sort order with pagination metadata",
+          "owns": [
+            "Constructing the /explore/projects query with language filter, sort option, and page number",
+            "Fetching and parsing the explore projects HTML",
+            "Extracting typed project records from displayed results",
+            "Returning pagination/completeness information based on the requested page"
+          ],
+          "does_not_own": [
+            "Choosing which project is 'best'",
+            "Ranking beyond the site-provided sort order",
+            "Subjective filtering such as deciding what counts as a GAN implementation",
+            "Opening a project detail page to fetch clone URLs"
+          ],
+          "input_contract": {
+            "language_id": {
+              "type": "integer",
+              "description": "GitLab language filter id used in the explore/projects query, e.g. 8 for Python in the demonstrated workflow"
+            },
+            "sort": {
+              "type": "string",
+              "description": "Explore sort value exposed by GitLab, e.g. stars_desc"
+            },
+            "page_number": {
+              "type": "integer",
+              "description": "1-based results page number",
+              "nullable": true
+            }
+          },
+          "output_contract": {
+            "type": "object",
+            "properties": {
+              "projects": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "namespace": {
+                      "type": "string",
+                      "description": "Owner/group path shown with the project"
+                    },
+                    "path": {
+                      "type": "string",
+                      "description": "Project path slug if derivable from the result link"
+                    },
+                    "href": {
+                      "type": "string",
+                      "description": "Absolute or site-relative URL to the project detail page"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "href"
+                  ]
+                }
+              },
+              "page_number": {
+                "type": "integer",
+                "nullable": true
+              },
+              "has_next_page": {
+                "type": "boolean",
+                "nullable": true
+              },
+              "applied_filters": {
+                "type": "object",
+                "properties": {
+                  "language_id": {
+                    "type": "integer"
+                  },
+                  "sort": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "language_id",
+                  "sort"
+                ]
+              }
+            },
+            "required": [
+              "projects",
+              "applied_filters"
+            ]
+          },
+          "source_evidence": {
+            "workflow_id": "task296_t329",
+            "template_id": "329",
+            "code_quote": "explore=opener.open(BASE+'/explore/projects?language=8&sort=stars_desc').read().decode('utf-8','ignore')\nidx=explore.find('PyTorch-GAN')\nsnippet=' '.join(re.sub(r'<[^>]+>',' ', explore[max(0,idx-700):idx+900]).split())",
+            "explanation": "The workflow demonstrably fetches the GitLab explore projects page with a language filter and sort order, then parses page HTML to inspect project results. Generalizing the hard-coded language and sort into parameters yields a reusable listing capability. Pagination is appropriate because explore results are paginated by page query even though only one page was used here.",
+            "evidence_match_mode": "exact"
+          }
+        },
+        {
+          "candidate_id": "task296_t329::get_project_clone_urls",
+          "proposed_method": "get_project_clone_urls",
+          "capability": "retrieve clone URLs exposed on a GitLab project detail page",
+          "owns": [
+            "Opening a specific GitLab project page by namespace/project path or URL",
+            "Parsing the repository page HTML for displayed clone URLs",
+            "Returning stable clone transport values exposed by the page, including SSH when present"
+          ],
+          "does_not_own": [
+            "Selecting which repository to inspect",
+            "Determining whether a repository is the best match for a task",
+            "Performing git clone or validating repository access outside what the page displays"
+          ],
+          "input_contract": {
+            "project_path": {
+              "type": "string",
+              "description": "GitLab project path in namespace/project form, e.g. eriklindernoren/PyTorch-GAN"
+            }
+          },
+          "output_contract": {
+            "type": "object",
+            "properties": {
+              "project_path": {
+                "type": "string"
+              },
+              "project_url": {
+                "type": "string",
+                "description": "Repository detail page URL"
+              },
+              "clone_urls": {
+                "type": "object",
+                "properties": {
+                  "ssh": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "http": {
+                    "type": "string",
+                    "nullable": true
+                  }
+                },
+                "required": [
+                  "ssh",
+                  "http"
+                ]
+              }
+            },
+            "required": [
+              "project_path",
+              "project_url",
+              "clone_urls"
+            ]
+          },
+          "source_evidence": {
+            "workflow_id": "task296_t329",
+            "template_id": "329",
+            "code_quote": "project=opener.open(BASE+'/eriklindernoren/PyTorch-GAN').read().decode('utf-8','ignore')\nssh_match=re.search(r'ssh://git@[^\\s\"\\'<>]+', project)\nssh_url=ssh_match.group(0) if ssh_match else FINAL_URL",
+            "explanation": "The workflow opens a concrete project detail page and parses the displayed SSH clone URL from HTML. This supports a reusable primitive that, after parameterizing the hard-coded project path, returns clone URLs exposed by the repository page. Although only SSH was consumed, the demonstrated acquisition boundary is the clone-url section of the repository page, so both SSH and HTTP may be returned when present there; no undocumented fields are invented.",
+            "evidence_match_mode": "exact"
+          }
+        }
+      ]
+    },
+    "errors": []
+  }
+]

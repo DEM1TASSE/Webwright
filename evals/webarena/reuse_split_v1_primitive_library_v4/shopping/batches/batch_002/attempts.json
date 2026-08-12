@@ -1,0 +1,680 @@
+[
+  {
+    "attempt": 1,
+    "proposal": {
+      "operations": [
+        {
+          "operation": "UPDATE",
+          "target_id": "shopping/list_customer_order_history_page",
+          "replacement": {
+            "primitive_id": "shopping/list_customer_order_history_page",
+            "method": "list_customer_order_history_page",
+            "capability": "Retrieve structured order summary rows from one authenticated customer order-history page on the shopping site.",
+            "method_code": "def list_customer_order_history_page(self, page_number: int = 1) -> dict:\n    import re\n    import html as html_lib\n    from urllib.parse import urljoin\n\n    def _clean(text: str) -> str:\n        text = re.sub(r'<script.*?</script>', ' ', text, flags=re.I | re.S)\n        text = re.sub(r'<style.*?</style>', ' ', text, flags=re.I | re.S)\n        text = re.sub(r'<[^>]+>', ' ', text)\n        return html_lib.unescape(re.sub(r'\\s+', ' ', text)).strip()\n\n    base_url = \"http://ec2-18-223-172-69.us-east-2.compute.amazonaws.com:7770/\"\n    path = \"sales/order/history/\" if page_number == 1 else f\"sales/order/history/?p={page_number}\"\n    url = urljoin(base_url, path)\n    self.page.goto(url, wait_until=\"domcontentloaded\")\n    html = self.page.content()\n\n    orders = []\n    seen = set()\n    for match in re.finditer(r'<tr[^>]*>(.*?)</tr>', html, re.I | re.S):\n        row_html = match.group(1)\n        cells_html = re.findall(r'<td[^>]*>(.*?)</td>', row_html, re.I | re.S)\n        cells = [_clean(cell) for cell in cells_html]\n        if len(cells) < 4:\n            continue\n\n        href_match = re.search(r'href=[\"\\']([^\"\\']*sales/order/view/order_id/\\d+/?)[\"\\']', row_html, re.I)\n        order_number = cells[0]\n        if not order_number or order_number.lower() == 'order #' or order_number in seen:\n            continue\n        seen.add(order_number)\n\n        record = {\n            \"order_number\": order_number,\n            \"order_date\": cells[1],\n            \"order_total_display\": cells[2],\n            \"status\": cells[3],\n            \"order_detail_url\": urljoin(self.page.url, href_match.group(1)) if href_match else None,\n        }\n        if len(cells) >= 5:\n            record[\"ship_to\"] = cells[2]\n            record[\"order_total_display\"] = cells[3]\n            record[\"status\"] = cells[4]\n        orders.append(record)\n\n    has_next_page = None\n    next_patterns = [\n        rf'href=[\"\\'][^\"\\']*sales/order/history/\\?p={page_number + 1}[^\"\\']*[\"\\']',\n        rf'href=[\"\\'][^\"\\']*sales/order/history/index/\\?p={page_number + 1}[^\"\\']*[\"\\']',\n    ]\n    for pattern in next_patterns:\n        if re.search(pattern, html, re.I):\n            has_next_page = True\n            break\n    if has_next_page is None and re.search(r'sales/order/history/(?:index/)?\\?p=\\d+', html, re.I):\n        has_next_page = False\n\n    return {\n        \"orders\": orders,\n        \"page_number\": page_number,\n        \"page_url\": self.page.url,\n        \"has_next_page\": has_next_page,\n        \"is_complete_for_page\": True,\n    }\n",
+            "owns": [
+              "Open one authenticated customer order-history page",
+              "Parse visible order-history table rows on that page",
+              "Extract stable displayed row fields including order number, date, total, status, optional ship-to, and any linked order detail URL",
+              "Represent completeness only for the fetched history page and expose page provenance"
+            ],
+            "does_not_own": [
+              "Authenticating the customer session",
+              "Deciding how many history pages to inspect",
+              "Filtering orders by status or recency",
+              "Selecting a single order as the final answer",
+              "Aggregating counts or spend across orders"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "page_number": {
+                  "type": "integer",
+                  "description": "1-based customer order-history page number",
+                  "default": 1
+                }
+              },
+              "required": []
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "orders": {
+                  "type": "array",
+                  "description": "Structured order rows parsed from the requested history page in displayed order",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "order_number": {
+                        "type": "string",
+                        "description": "Displayed order number/identifier"
+                      },
+                      "order_date": {
+                        "type": "string",
+                        "description": "Displayed order date string from the history table"
+                      },
+                      "ship_to": {
+                        "type": "string",
+                        "description": "Displayed ship-to/recipient text when that column is present on the page"
+                      },
+                      "order_total_display": {
+                        "type": "string",
+                        "description": "Displayed total amount string from the history table"
+                      },
+                      "status": {
+                        "type": "string",
+                        "description": "Displayed order status"
+                      },
+                      "order_detail_url": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "Absolute URL to the order detail page when the row exposes a view link"
+                      }
+                    },
+                    "required": [
+                      "order_number",
+                      "order_date",
+                      "order_total_display",
+                      "status",
+                      "order_detail_url"
+                    ]
+                  }
+                },
+                "page_number": {
+                  "type": "integer",
+                  "description": "The requested history page number"
+                },
+                "page_url": {
+                  "type": "string",
+                  "description": "Resolved URL of the fetched history page"
+                },
+                "has_next_page": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ],
+                  "description": "Whether another history page appears available, if determinable from fetched page content"
+                },
+                "is_complete_for_page": {
+                  "type": "boolean",
+                  "description": "True because the returned rows represent the full fetched history page, not all pages"
+                }
+              },
+              "required": [
+                "orders",
+                "page_number",
+                "page_url",
+                "has_next_page",
+                "is_complete_for_page"
+              ]
+            },
+            "requires": [
+              "authenticated_customer_session"
+            ],
+            "provides": [
+              "customer_order_history_page"
+            ],
+            "supported_patterns": [
+              "authenticated_order_history_table",
+              "paginated_order_history_page"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task234_t213",
+                "template_id": "213",
+                "code_quote": "for idx, url in enumerate([f'{START_URL}/sales/order/history/', f'{START_URL}/sales/order/history/?p=2', f'{START_URL}/sales/order/history/?p=3', f'{START_URL}/sales/order/history/?p=4'], start=3): ... await page.goto(url, wait_until='domcontentloaded'); rows = await extract_rows(page)\nasync def extract_rows(page): return await page.locator('table tbody tr').evaluate_all(\"rows => rows.map(r => Array.from(r.querySelectorAll('td')).map(td => (td.innerText||td.textContent||'').trim()))\")",
+                "explanation": "Generalized explicit pagination over order-history pages and DOM row extraction into a page-scoped primitive with page_number/page_url provenance. The workflow's later cross-page search for On Hold orders remains workflow logic."
+              },
+              {
+                "workflow_id": "task232_t213",
+                "template_id": "213",
+                "code_quote": "await page.get_by_role('link', name='My Orders').click() ... table = page.get_by_role('table', name='Orders') ... for i in range(1, row_count): texts = [t.strip() for t in await rows.nth(i).locator('td').all_inner_texts()]\nif len(texts) >= 4: order_no, date, total, status = texts[:4]; parsed.append({'order_no': order_no, 'date': date, 'total': total, 'status': status})",
+                "explanation": "Confirms stable table fields for displayed orders and supports preserving displayed row order while leaving pending-order selection and most-recent choice outside the primitive."
+              },
+              {
+                "workflow_id": "task143_t162",
+                "template_id": "162",
+                "code_quote": "for page_num in range(1, 5): path = 'sales/order/history/' if page_num == 1 else f'sales/order/history/?p={page_num}' ... hrefm = re.search(r'href=\"([^\"]*sales/order/view/order_id/\\d+/)\"', row, re.I) ... record = {'href': urljoin(history.url, hrefm.group(1)), 'order': tds[0], 'date': tds[1], 'total': tds[2], 'status': tds[3]}",
+                "explanation": "Provides broader site evidence that order-history rows can include view links and paginated URL patterns, supporting optional order_detail_url and has_next_page detection."
+              }
+            ]
+          }
+        },
+        {
+          "operation": "SKIP",
+          "reason": "Candidate task165_t136::get_product_review_feed_metadata is unnecessary as a public primitive because the existing shopping/list_product_reviews already owns the stable site review endpoint and returns typed review records; exposing separate feed-discovery metadata would oversplit acquisition and the source evidence only demonstrates task-specific HTML discovery from one product page without a broader stable contract beyond downstream review listing."
+        },
+        {
+          "operation": "SKIP",
+          "reason": "Candidate task165_t136::list_product_reviews_from_review_feed is covered by existing shopping/list_product_reviews, which already provides a stronger normalized primitive for fetching Magento review-list data as typed records. The candidate uses a feed URL input rather than the site's stable product_id-based endpoint contract, so no update is warranted from this evidence."
+        }
+      ],
+      "workflow_attribution": [
+        {
+          "workflow_id": "task234_t213",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0
+          ]
+        },
+        {
+          "workflow_id": "task165_t136",
+          "decision": "SKIP",
+          "reason": "Its extracted review capabilities are already covered by the existing list_product_reviews primitive, and the separate feed-metadata discovery step does not warrant a new public primitive from the provided evidence."
+        },
+        {
+          "workflow_id": "task232_t213",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0
+          ]
+        }
+      ],
+      "candidate_attribution": [
+        {
+          "candidate_id": "task234_t213::list_order_history_pages",
+          "decision": "UPDATE",
+          "operation_index": 0
+        },
+        {
+          "candidate_id": "task165_t136::get_product_review_feed_metadata",
+          "decision": "REJECT",
+          "target_id": null,
+          "reason": "Boundary defect: this splits endpoint discovery from the site's stable review-list acquisition capability and is not needed as a standalone public primitive given existing coverage by shopping/list_product_reviews."
+        },
+        {
+          "candidate_id": "task165_t136::list_product_reviews_from_review_feed",
+          "decision": "COVERED",
+          "target_id": "shopping/list_product_reviews",
+          "reason": "Existing primitive already covers typed review retrieval from the site's Magento review listing with a stronger stable contract keyed by product_id/page_number/limit; the candidate's feed_url input is a less canonical variant."
+        },
+        {
+          "candidate_id": "task232_t213::list_customer_orders",
+          "decision": "UPDATE",
+          "operation_index": 0
+        }
+      ]
+    },
+    "quality_verdicts": null,
+    "errors": [
+      "operations[0]: UPDATE may not change the core input/output contract"
+    ]
+  },
+  {
+    "attempt": 2,
+    "proposal": {
+      "operations": [
+        {
+          "operation": "UPDATE",
+          "target_id": "shopping/list_customer_order_history_page",
+          "replacement": {
+            "primitive_id": "shopping/list_customer_order_history_page",
+            "method": "list_customer_order_history_page",
+            "capability": "Retrieve structured order summary rows from one authenticated customer order-history page on the shopping site.",
+            "method_code": "def list_customer_order_history_page(self, page_number: int = 1) -> dict:\n    import re\n    import html as html_lib\n    from urllib.parse import urljoin\n\n    def _clean(text: str) -> str:\n        text = re.sub(r'<script.*?</script>', ' ', text, flags=re.I | re.S)\n        text = re.sub(r'<style.*?</style>', ' ', text, flags=re.I | re.S)\n        text = re.sub(r'<[^>]+>', ' ', text)\n        return html_lib.unescape(re.sub(r'\\s+', ' ', text)).strip()\n\n    base_url = \"http://ec2-18-223-172-69.us-east-2.compute.amazonaws.com:7770/\"\n    path = \"sales/order/history/\" if page_number == 1 else f\"sales/order/history/?p={page_number}\"\n    self.page.goto(urljoin(base_url, path), wait_until=\"domcontentloaded\")\n    html = self.page.content()\n\n    orders = []\n    seen = set()\n    for match in re.finditer(r'<tr[^>]*>(.*?)</tr>', html, re.I | re.S):\n        row_html = match.group(1)\n        if 'sales/order/view/order_id/' not in row_html:\n            continue\n\n        href_match = re.search(r'href=[\"\\']([^\"\\']*sales/order/view/order_id/\\d+/?)[\"\\']', row_html, re.I)\n        cells = [_clean(cell) for cell in re.findall(r'<td[^>]*>(.*?)</td>', row_html, re.I | re.S)]\n        if not href_match or len(cells) < 4:\n            continue\n\n        order_number = cells[0]\n        if not order_number or order_number in seen:\n            continue\n        seen.add(order_number)\n\n        orders.append({\n            \"order_number\": order_number,\n            \"order_date\": cells[1],\n            \"order_total_display\": cells[2],\n            \"status\": cells[3],\n            \"order_detail_url\": urljoin(self.page.url, href_match.group(1)),\n        })\n\n    has_next_page = None\n    next_patterns = [\n        rf'href=[\"\\'][^\"\\']*sales/order/history/\\?p={page_number + 1}[^\"\\']*[\"\\']',\n        rf'href=[\"\\'][^\"\\']*sales/order/history/index/\\?p={page_number + 1}[^\"\\']*[\"\\']',\n    ]\n    for pattern in next_patterns:\n        if re.search(pattern, html, re.I):\n            has_next_page = True\n            break\n    if has_next_page is None:\n        pager_present = re.search(r'sales/order/history/(?:index/)?\\?p=\\d+', html, re.I)\n        if pager_present:\n            has_next_page = False\n\n    return {\n        \"orders\": orders,\n        \"page_number\": page_number,\n        \"has_next_page\": has_next_page,\n        \"is_complete_for_page\": True,\n    }\n",
+            "owns": [
+              "Open one authenticated customer order-history page",
+              "Parse order-history table rows that link to order detail pages",
+              "Extract stable displayed row fields and resolve order detail URLs",
+              "Represent completeness only for the fetched history page"
+            ],
+            "does_not_own": [
+              "Authenticating the customer session",
+              "Searching across multiple pages for a target order",
+              "Filtering by date, status, or recency",
+              "Aggregating counts or spend across orders"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "page_number": {
+                  "type": "integer",
+                  "description": "1-based customer order-history page number",
+                  "default": 1
+                }
+              },
+              "required": []
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "orders": {
+                  "type": "array",
+                  "description": "Structured order rows parsed from the requested history page",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "order_number": {
+                        "type": "string",
+                        "description": "Displayed order number/identifier"
+                      },
+                      "order_date": {
+                        "type": "string",
+                        "description": "Displayed order date string from the history table"
+                      },
+                      "order_total_display": {
+                        "type": "string",
+                        "description": "Displayed total amount string from the history table"
+                      },
+                      "status": {
+                        "type": "string",
+                        "description": "Displayed order status"
+                      },
+                      "order_detail_url": {
+                        "type": "string",
+                        "description": "Absolute URL to the order detail page"
+                      }
+                    },
+                    "required": [
+                      "order_number",
+                      "order_date",
+                      "order_total_display",
+                      "status",
+                      "order_detail_url"
+                    ]
+                  }
+                },
+                "page_number": {
+                  "type": "integer",
+                  "description": "The requested history page number"
+                },
+                "has_next_page": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ],
+                  "description": "Whether another history page appears available, if determinable from fetched page content"
+                },
+                "is_complete_for_page": {
+                  "type": "boolean",
+                  "description": "True because the returned rows represent the full fetched history page, not all pages"
+                }
+              },
+              "required": [
+                "orders",
+                "page_number",
+                "has_next_page",
+                "is_complete_for_page"
+              ]
+            },
+            "requires": [
+              "authenticated_customer_session"
+            ],
+            "provides": [
+              "customer_order_history_page"
+            ],
+            "supported_patterns": [
+              "authenticated_order_history_table",
+              "paginated_order_history_page"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task234_t213",
+                "template_id": "213",
+                "code_quote": "for idx, url in enumerate([ f'{START_URL}/sales/order/history/', f'{START_URL}/sales/order/history/?p=2', f'{START_URL}/sales/order/history/?p=3', f'{START_URL}/sales/order/history/?p=4', ], start=3): ... await page.goto(url, wait_until='domcontentloaded')\nrows = await extract_rows(page)\n...\nasync def extract_rows(page):\n    return await page.locator('table tbody tr').evaluate_all(\n        \"rows => rows.map(r => Array.from(r.querySelectorAll('td')).map(td => (td.innerText||td.textContent||'').trim()))\"\n    )",
+                "explanation": "Generalizes explicit navigation over numbered order-history pages and DOM row extraction into the existing page-scoped primitive. The workflow's later cross-page On Hold search is excluded as workflow logic."
+              },
+              {
+                "workflow_id": "task232_t213",
+                "template_id": "213",
+                "code_quote": "await page.get_by_role('link', name='My Orders').click() ... table = page.get_by_role('table', name='Orders') ... for i in range(1, row_count): texts = [t.strip() for t in await rows.nth(i).locator('td').all_inner_texts()]\nif len(texts) >= 4:\n    order_no, date, total, status = texts[:4]\n    parsed.append({'order_no': order_no, 'date': date, 'total': total, 'status': status})",
+                "explanation": "Confirms the stable order-history table fields returned by the primitive: order number, date, displayed total, and status, while keeping pending-order selection outside the primitive."
+              }
+            ]
+          }
+        },
+        {
+          "operation": "SKIP",
+          "reason": "Candidate task165_t136::get_product_review_feed_metadata should not be added as a standalone public primitive because it oversplits review acquisition into a discovery step. The existing shopping/list_product_reviews already owns the stable site review-list endpoint and returns typed review records; the provided evidence does not justify a separate stable public contract for metadata-only feed discovery."
+        },
+        {
+          "operation": "SKIP",
+          "reason": "Candidate task165_t136::list_product_reviews_from_review_feed is covered by existing shopping/list_product_reviews. The candidate's review_feed_url input is a less stable/canonical contract than the existing product_id-based site primitive, and the evidence does not warrant changing that core contract."
+        }
+      ],
+      "workflow_attribution": [
+        {
+          "workflow_id": "task234_t213",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0
+          ]
+        },
+        {
+          "workflow_id": "task165_t136",
+          "decision": "SKIP",
+          "reason": "Its review-related capabilities are already covered by the existing shopping/list_product_reviews primitive, and the separate metadata discovery step should not be exposed as a standalone public primitive."
+        },
+        {
+          "workflow_id": "task232_t213",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0
+          ]
+        }
+      ],
+      "candidate_attribution": [
+        {
+          "candidate_id": "task234_t213::list_order_history_pages",
+          "decision": "UPDATE",
+          "operation_index": 0
+        },
+        {
+          "candidate_id": "task165_t136::get_product_review_feed_metadata",
+          "decision": "REJECT",
+          "target_id": null,
+          "reason": "Boundary defect: it splits review acquisition into a metadata-discovery substep instead of exposing the stable site review-list capability directly."
+        },
+        {
+          "candidate_id": "task165_t136::list_product_reviews_from_review_feed",
+          "decision": "COVERED",
+          "target_id": "shopping/list_product_reviews",
+          "reason": "Existing primitive already covers typed review retrieval from the Magento review listing with a stronger stable contract keyed by product_id, page_number, and limit."
+        },
+        {
+          "candidate_id": "task232_t213::list_customer_orders",
+          "decision": "UPDATE",
+          "operation_index": 0
+        }
+      ]
+    },
+    "quality_verdicts": {
+      "verdicts": [
+        {
+          "operation_index": 0,
+          "verdict": "PASS",
+          "reason": "The update is directly supported by the cited evidence: both workflows show authenticated navigation to the customer order-history page(s) and parsing table rows into stable displayed fields. The replacement keeps a proper site primitive boundary by owning page navigation and DOM/HTML parsing for one requested history page, while explicitly not owning authentication, cross-page search, filtering by status/date, or aggregation. Output is typed and includes page-scoped completeness metadata, which matches the evidence that pagination exists and that only one fetched page is being returned. The chosen fields (order number, date, displayed total, status, detail URL) are supported or reasonably derived from the row link evidence; the method also reports has_next_page rather than implying full-history completeness. owns/does_not_own are consistent with the code and contract."
+        }
+      ],
+      "rejection_verdicts": [
+        {
+          "candidate_id": "task165_t136::get_product_review_feed_metadata",
+          "verdict": "FAIL",
+          "reason": "Rejecting this candidate is too aggressive. The evidence shows reusable site-specific acquisition/parsing on the product page: fetching HTML and extracting productReviewUrl and reviewCount are concrete, typed site facts. Even if metadata-only discovery may be an oversplit versus an existing stronger primitive, this is not a case where removing task logic leaves no reusable website core. Per policy, such a REJECT should fail so the updater narrows or covers it rather than rejecting outright."
+        }
+      ]
+    },
+    "errors": [
+      "coverage gate rejected dropping task165_t136::get_product_review_feed_metadata: Rejecting this candidate is too aggressive. The evidence shows reusable site-specific acquisition/parsing on the product page: fetching HTML and extracting productReviewUrl and reviewCount are concrete, typed site facts. Even if metadata-only discovery may be an oversplit versus an existing stronger primitive, this is not a case where removing task logic leaves no reusable website core. Per policy, such a REJECT should fail so the updater narrows or covers it rather than rejecting outright."
+    ]
+  },
+  {
+    "attempt": 3,
+    "proposal": {
+      "operations": [
+        {
+          "operation": "UPDATE",
+          "target_id": "shopping/list_customer_order_history_page",
+          "replacement": {
+            "primitive_id": "shopping/list_customer_order_history_page",
+            "method": "list_customer_order_history_page",
+            "capability": "Retrieve structured order summary rows from one authenticated customer order-history page on the shopping site.",
+            "method_code": "def list_customer_order_history_page(self, page_number: int = 1) -> dict:\n    import re\n    import html as html_lib\n    from urllib.parse import urljoin\n\n    def _clean(text: str) -> str:\n        text = re.sub(r'<script.*?</script>', ' ', text, flags=re.I | re.S)\n        text = re.sub(r'<style.*?</style>', ' ', text, flags=re.I | re.S)\n        text = re.sub(r'<[^>]+>', ' ', text)\n        return html_lib.unescape(re.sub(r'\\s+', ' ', text)).strip()\n\n    base_url = \"http://ec2-18-223-172-69.us-east-2.compute.amazonaws.com:7770/\"\n    path = \"sales/order/history/\" if page_number == 1 else f\"sales/order/history/?p={page_number}\"\n    url = urljoin(base_url, path)\n    self.page.goto(url, wait_until=\"domcontentloaded\")\n    html = self.page.content()\n\n    orders = []\n    seen = set()\n    for match in re.finditer(r'<tr[^>]*>(.*?)</tr>', html, re.I | re.S):\n        row_html = match.group(1)\n        if 'sales/order/view/order_id/' not in row_html:\n            continue\n\n        href_match = re.search(r'href=[\"\\']([^\"\\']*sales/order/view/order_id/\\d+/?)[\"\\']', row_html, re.I)\n        cells = [_clean(cell) for cell in re.findall(r'<td[^>]*>(.*?)</td>', row_html, re.I | re.S)]\n        if not href_match or len(cells) < 4:\n            continue\n\n        order_number = cells[0]\n        if not order_number or order_number in seen:\n            continue\n        seen.add(order_number)\n\n        orders.append({\n            \"order_number\": order_number,\n            \"order_date\": cells[1],\n            \"order_total_display\": cells[2],\n            \"status\": cells[3],\n            \"order_detail_url\": urljoin(self.page.url, href_match.group(1)),\n        })\n\n    has_next_page = None\n    next_patterns = [\n        rf'href=[\"\\'][^\"\\']*sales/order/history/\\?p={page_number + 1}[^\"\\']*[\"\\']',\n        rf'href=[\"\\'][^\"\\']*sales/order/history/index/\\?p={page_number + 1}[^\"\\']*[\"\\']',\n    ]\n    for pattern in next_patterns:\n        if re.search(pattern, html, re.I):\n            has_next_page = True\n            break\n    if has_next_page is None:\n        pager_present = re.search(r'sales/order/history/(?:index/)?\\?p=\\d+', html, re.I)\n        if pager_present:\n            has_next_page = False\n\n    return {\n        \"orders\": orders,\n        \"page_number\": page_number,\n        \"has_next_page\": has_next_page,\n        \"is_complete_for_page\": True,\n    }\n",
+            "owns": [
+              "Open one authenticated customer order-history page",
+              "Parse order-history table rows that link to order detail pages",
+              "Extract stable displayed row fields and resolve order detail URLs",
+              "Represent completeness only for the fetched history page"
+            ],
+            "does_not_own": [
+              "Authenticating the customer session",
+              "Searching across multiple pages for a target order",
+              "Filtering by date, status, or recency",
+              "Aggregating counts or spend across orders"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "page_number": {
+                  "type": "integer",
+                  "description": "1-based customer order-history page number",
+                  "default": 1
+                }
+              },
+              "required": []
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "orders": {
+                  "type": "array",
+                  "description": "Structured order rows parsed from the requested history page",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "order_number": {
+                        "type": "string",
+                        "description": "Displayed order number/identifier"
+                      },
+                      "order_date": {
+                        "type": "string",
+                        "description": "Displayed order date string from the history table"
+                      },
+                      "order_total_display": {
+                        "type": "string",
+                        "description": "Displayed total amount string from the history table"
+                      },
+                      "status": {
+                        "type": "string",
+                        "description": "Displayed order status"
+                      },
+                      "order_detail_url": {
+                        "type": "string",
+                        "description": "Absolute URL to the order detail page"
+                      }
+                    },
+                    "required": [
+                      "order_number",
+                      "order_date",
+                      "order_total_display",
+                      "status",
+                      "order_detail_url"
+                    ]
+                  }
+                },
+                "page_number": {
+                  "type": "integer",
+                  "description": "The requested history page number"
+                },
+                "has_next_page": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ],
+                  "description": "Whether another history page appears available, if determinable from fetched page content"
+                },
+                "is_complete_for_page": {
+                  "type": "boolean",
+                  "description": "True because the returned rows represent the full fetched history page, not all pages"
+                }
+              },
+              "required": [
+                "orders",
+                "page_number",
+                "has_next_page",
+                "is_complete_for_page"
+              ]
+            },
+            "requires": [
+              "authenticated_customer_session"
+            ],
+            "provides": [
+              "customer_order_history_page"
+            ],
+            "supported_patterns": [
+              "authenticated_order_history_table",
+              "paginated_order_history_page"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task234_t213",
+                "template_id": "213",
+                "code_quote": "for idx, url in enumerate([ f'{START_URL}/sales/order/history/', f'{START_URL}/sales/order/history/?p=2', f'{START_URL}/sales/order/history/?p=3', f'{START_URL}/sales/order/history/?p=4', ], start=3): ... await page.goto(url, wait_until='domcontentloaded')\nrows = await extract_rows(page)\n...\nasync def extract_rows(page):\n    return await page.locator('table tbody tr').evaluate_all(\"rows => rows.map(r => Array.from(r.querySelectorAll('td')).map(td => (td.innerText||td.textContent||'').trim()))\")",
+                "explanation": "Generalizes explicit navigation over numbered order-history pages and DOM row extraction into the existing page-scoped primitive. The workflow's later cross-page On Hold search is excluded as workflow logic."
+              },
+              {
+                "workflow_id": "task232_t213",
+                "template_id": "213",
+                "code_quote": "await page.get_by_role('link', name='My Orders').click() ... table = page.get_by_role('table', name='Orders') ... for i in range(1, row_count): texts = [t.strip() for t in await rows.nth(i).locator('td').all_inner_texts()]\nif len(texts) >= 4:\n    order_no, date, total, status = texts[:4]\n    parsed.append({'order_no': order_no, 'date': date, 'total': total, 'status': status})",
+                "explanation": "Confirms the stable order-history table fields returned by the primitive: order number, date, displayed total, and status, while keeping pending-order selection outside the primitive."
+              }
+            ]
+          }
+        },
+        {
+          "operation": "ADD",
+          "replacement": {
+            "primitive_id": "shopping/get_product_review_feed_metadata",
+            "method": "get_product_review_feed_metadata",
+            "capability": "Fetch a shopping product detail page and extract stable review-feed metadata exposed in the product HTML.",
+            "method_code": "def get_product_review_feed_metadata(self, product_url: str) -> dict:\n    import re\n    import html as html_lib\n    from urllib.parse import urljoin\n\n    self.page.goto(product_url, wait_until=\"domcontentloaded\")\n    html = self.page.content()\n\n    title_match = re.search(r'<title>(.*?)</title>', html, re.I | re.S)\n    review_url_match = re.search(r'\"productReviewUrl\"\\s*:\\s*\"(.*?)\"', html)\n    review_count_match = re.search(r'<span[^>]*itemprop=[\"\\']reviewCount[\"\\'][^>]*>(\\d+)</span>', html, re.I)\n\n    review_feed_url = None\n    if review_url_match:\n        review_feed_url = review_url_match.group(1).encode('utf-8').decode('unicode_escape').replace('\\\\/', '/')\n        review_feed_url = urljoin(self.page.url, review_feed_url)\n\n    product_title = None\n    if title_match:\n        product_title = html_lib.unescape(re.sub(r'\\s+', ' ', title_match.group(1))).strip()\n\n    review_count = int(review_count_match.group(1)) if review_count_match else None\n\n    return {\n        \"product_url\": self.page.url,\n        \"product_title\": product_title,\n        \"review_feed_url\": review_feed_url,\n        \"review_count\": review_count,\n    }\n",
+            "owns": [
+              "Open a product detail page URL on the shopping site",
+              "Read product HTML for embedded review-source metadata",
+              "Extract the embedded product review feed URL when present",
+              "Extract the displayed review count when present",
+              "Return page title context from the product page when present"
+            ],
+            "does_not_own": [
+              "Fetching or parsing the review feed response itself",
+              "Filtering reviews by rating or any other task-specific predicate",
+              "Interpreting review percentages into business thresholds",
+              "Formatting a final user answer"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "product_url": {
+                  "type": "string",
+                  "description": "Absolute or site-relative product detail page URL"
+                }
+              },
+              "required": [
+                "product_url"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "product_url": {
+                  "type": "string",
+                  "description": "Resolved URL of the inspected product page"
+                },
+                "product_title": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Document title of the product page when present"
+                },
+                "review_feed_url": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Resolved review feed/listing URL exposed in product HTML when present"
+                },
+                "review_count": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "description": "Displayed review count from the product page when present"
+                }
+              },
+              "required": [
+                "product_url",
+                "product_title",
+                "review_feed_url",
+                "review_count"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "product_review_feed_metadata"
+            ],
+            "supported_patterns": [
+              "product_detail_page_html_metadata",
+              "embedded_review_feed_discovery"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task165_t136",
+                "template_id": "136",
+                "code_quote": "product_html = fetch(START_URL)\nproduct_title = re.search(r'<title>(.*?)</title>', product_html, re.I | re.S)\nreview_url_match = re.search(r'\"productReviewUrl\"\\s*:\\s*\"(.*?)\"', product_html)\nreview_count_match = re.search(r'<span itemprop=\"reviewCount\">(\\d+)</span>', product_html, re.I)\n...\nreview_url = review_url_match.group(1).encode('utf-8').decode('unicode_escape').replace('\\\\/', '/')",
+                "explanation": "Generalizes the product-page metadata extraction step into a reusable primitive keyed by product URL. The later fetching of the review endpoint and low-rating filtering remain outside this primitive."
+              }
+            ]
+          }
+        },
+        {
+          "operation": "SKIP",
+          "reason": "Candidate task165_t136::list_product_reviews_from_review_feed is covered by existing shopping/list_product_reviews. The candidate's review_feed_url input changes the core contract from the existing stronger product_id-based site primitive, so it should not update that primitive on this evidence."
+        }
+      ],
+      "workflow_attribution": [
+        {
+          "workflow_id": "task234_t213",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0
+          ]
+        },
+        {
+          "workflow_id": "task165_t136",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            1
+          ]
+        },
+        {
+          "workflow_id": "task232_t213",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0
+          ]
+        }
+      ],
+      "candidate_attribution": [
+        {
+          "candidate_id": "task234_t213::list_order_history_pages",
+          "decision": "UPDATE",
+          "operation_index": 0
+        },
+        {
+          "candidate_id": "task165_t136::get_product_review_feed_metadata",
+          "decision": "ADD",
+          "operation_index": 1
+        },
+        {
+          "candidate_id": "task165_t136::list_product_reviews_from_review_feed",
+          "decision": "COVERED",
+          "target_id": "shopping/list_product_reviews",
+          "reason": "Existing primitive already covers typed review retrieval from the Magento review listing with a stronger stable contract keyed by product_id, page_number, and limit."
+        },
+        {
+          "candidate_id": "task232_t213::list_customer_orders",
+          "decision": "UPDATE",
+          "operation_index": 0
+        }
+      ]
+    },
+    "quality_verdicts": {
+      "verdicts": [
+        {
+          "operation_index": 0,
+          "verdict": "PASS",
+          "reason": "The update is directly supported by evidence from two workflows showing authenticated navigation to customer order-history pages, DOM extraction of table rows/cells, and stable row fields order number/date/total/status. The replacement is properly typed in input/output contracts. It stays within a reusable site primitive boundary: fetching one authenticated history page, parsing rows, resolving detail URLs, and reporting page-scoped completeness. It does not own task-specific cross-page search/filtering/aggregation, and those exclusions are consistent with the evidence. The added pagination signal is acceptable because the cited workflow explicitly visits numbered ?p= pages. Code and contract are broadly aligned."
+        },
+        {
+          "operation_index": 1,
+          "verdict": "PASS",
+          "reason": "The add is directly supported by evidence showing product-page HTML retrieval and regex extraction of <title>, embedded productReviewUrl, and reviewCount. The output is typed, and the primitive owns only site-specific acquisition/parsing of product-page metadata, not downstream review-feed fetching, filtering, interpretation, or answer formatting. owns and does_not_own are consistent, and the code matches the contract."
+        }
+      ],
+      "rejection_verdicts": []
+    },
+    "errors": []
+  }
+]

@@ -1,0 +1,228 @@
+{
+  "decision": "CANDIDATES",
+  "candidates": [
+    {
+      "candidate_id": "task1_t279::get_bestsellers_report_csv",
+      "proposed_method": "get_bestsellers_report_csv",
+      "capability": "retrieve typed bestseller report rows from the shopping admin bestsellers report for a specified date range and period grouping",
+      "owns": [
+        "Authenticate to shopping admin with username/password and form_key handling",
+        "Construct Magento bestsellers report filter URL using encoded report parameters",
+        "Load the bestsellers report page",
+        "Extract the export CSV URL for the current filtered report from the page",
+        "Download and parse the CSV export into typed bestseller rows"
+      ],
+      "does_not_own": [
+        "Aggregating rows to find top sellers",
+        "Ranking or tie-breaking products",
+        "Resolving product brands from product names",
+        "Any task-specific date choice beyond provided inputs"
+      ],
+      "input_contract": {
+        "username": {
+          "type": "string",
+          "description": "Shopping admin username"
+        },
+        "password": {
+          "type": "string",
+          "description": "Shopping admin password"
+        },
+        "period_type": {
+          "type": "string",
+          "enum": [
+            "day",
+            "month",
+            "year",
+            "quarter"
+          ],
+          "description": "Report grouping period used by the Magento sales report filter"
+        },
+        "from_date": {
+          "type": "string",
+          "description": "Report start date in the admin's accepted format, e.g. 'Jan 1, 2022'"
+        },
+        "to_date": {
+          "type": "string",
+          "description": "Report end date in the admin's accepted format, e.g. 'Mar 31, 2022'"
+        },
+        "show_empty_rows": {
+          "type": "integer",
+          "enum": [
+            0,
+            1
+          ],
+          "description": "Whether to include empty rows in the report filter"
+        }
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "report_url": {
+            "type": "string",
+            "description": "Resolved filtered report URL used to open the report"
+          },
+          "export_csv_url": {
+            "type": "string",
+            "description": "Resolved CSV export URL discovered on the report page"
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "interval": {
+                  "type": "string",
+                  "description": "Report interval label from the CSV"
+                },
+                "product_name": {
+                  "type": "string",
+                  "description": "Product name column from the CSV"
+                },
+                "price": {
+                  "type": "string",
+                  "description": "Price value as exported by the report CSV"
+                },
+                "order_quantity": {
+                  "type": "number",
+                  "description": "Order quantity parsed from the CSV row"
+                }
+              },
+              "required": [
+                "interval",
+                "product_name",
+                "price",
+                "order_quantity"
+              ]
+            }
+          },
+          "column_headers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "CSV header row as exported by the report"
+          },
+          "completeness": {
+            "type": "object",
+            "properties": {
+              "source": "string",
+              "filtered_report": "boolean",
+              "export_based": "boolean"
+            },
+            "description": "Evidence that results come from the filtered export, not partial page scraping"
+          }
+        },
+        "required": [
+          "report_url",
+          "export_csv_url",
+          "rows",
+          "column_headers",
+          "completeness"
+        ]
+      },
+      "source_evidence": {
+        "workflow_id": "task1_t279",
+        "template_id": "279",
+        "code_quote": "params='period_type=quarter&from=Jan+1%2C+2022&to=Mar+31%2C+2022&show_empty_rows=0'\nenc=m64(params)\nreport_url=BEST+'filter/'+enc+'/'\npage=s.get(report_url, timeout=30).text\n...\nfor row in csv.reader(io.StringIO(s.get(html.unescape(re.search(r'<option value=\"([^\"]*exportBestsellersCsv[^\"]*)\"', page).group(1)), timeout=30).text)):\n    rows.append(row)\n...\nHeaders: Interval, Product, Price, Order Quantity",
+        "explanation": "The workflow demonstrates a complete reusable acquisition path for Magento admin bestsellers data: login, parameterized report filtering, extraction of the export endpoint from the filtered report page, and CSV parsing into stable typed records. The task-specific aggregation was removed; the reusable primitive should return the exported rows and associated completeness metadata.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    },
+    {
+      "candidate_id": "task1_t279::search_products_with_global_search",
+      "proposed_method": "search_products_with_global_search",
+      "capability": "query shopping admin global search suggestions and return typed product search results including manufacturer when present",
+      "owns": [
+        "Authenticate to shopping admin with username/password and form_key handling",
+        "Call the admin globalSearch endpoint with a query string",
+        "Parse JSON or text response enough to extract stable suggestion fields actually exposed, including manufacturer when present"
+      ],
+      "does_not_own": [
+        "Heuristic brand inference from product names",
+        "Choosing which query terms to search",
+        "Ranking or selecting a final brand answer across multiple products"
+      ],
+      "input_contract": {
+        "username": {
+          "type": "string",
+          "description": "Shopping admin username"
+        },
+        "password": {
+          "type": "string",
+          "description": "Shopping admin password"
+        },
+        "query": {
+          "type": "string",
+          "description": "Search text to send to the admin global search endpoint"
+        }
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string"
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "raw_item": {
+                  "type": [
+                    "object",
+                    "string"
+                  ],
+                  "description": "Original parsed suggestion item when structured, otherwise raw response fragment"
+                },
+                "manufacturer": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Manufacturer/brand value if exposed in the global search response"
+                },
+                "title": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Suggestion title/name if exposed"
+                },
+                "url": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Suggestion target URL if exposed"
+                },
+                "entity_type": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Suggestion/entity type if exposed"
+                }
+              }
+            }
+          },
+          "raw_response_text": {
+            "type": "string",
+            "description": "Original response text for debugging or fallback parsing"
+          }
+        },
+        "required": [
+          "query",
+          "results",
+          "raw_response_text"
+        ]
+      },
+      "source_evidence": {
+        "workflow_id": "task1_t279",
+        "template_id": "279",
+        "code_quote": "gs=s.get('http://ec2-18-223-172-69.us-east-2.compute.amazonaws.com:7780/admin/admin/index/globalSearch/', params={'query': q}, timeout=30)\ntxt=gs.text\ntry:\n    data=gs.json()\n    bucket=json.dumps(data)\nexcept Exception:\n    bucket=txt\nm=re.search(r'\\\"manufacturer\\\"\\s*:?\\s*\\\"([^\\\"]+)\\\"', bucket, re.I)\nif m: brand=m.group(1)",
+        "explanation": "The workflow demonstrates that the shopping admin exposes a reusable global search endpoint parameterized by query and that its response can contain structured manufacturer data. Generalizing this yields a primitive for retrieving typed search suggestions and exposed product metadata; the task-specific fallback mappings are excluded because they are heuristic workflow logic, not site capability.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    }
+  ]
+}

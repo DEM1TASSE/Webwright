@@ -1,0 +1,175 @@
+[
+  {
+    "attempt": 1,
+    "proposal": {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task75_t65::geocode_place_names",
+          "proposed_method": "geocode_place_names",
+          "capability": "Geocode place-name queries via the site's Nominatim search endpoint into typed location records.",
+          "owns": [
+            "Constructing parameterized Nominatim search requests from place-name queries",
+            "Fetching JSON geocoding results from the map site's backing search service",
+            "Parsing geocoding result objects into typed location records",
+            "Returning multiple candidate matches up to a caller-specified limit when demonstrated by the endpoint"
+          ],
+          "does_not_own": [
+            "Choosing which candidate is the correct place for a task",
+            "Comparing route permutations or optimizing visit order",
+            "Formatting final answers for the user"
+          ],
+          "input_contract": {
+            "queries": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Place-name or address queries to geocode."
+            },
+            "limit": {
+              "type": "integer",
+              "description": "Maximum number of candidates to request per query from the search endpoint.",
+              "default": 3
+            }
+          },
+          "output_contract": {
+            "results_by_query": {
+              "type": "object",
+              "description": "Mapping from each input query string to a list of geocoding candidate records returned by the endpoint.",
+              "additionalProperties": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "query": {
+                      "type": "string"
+                    },
+                    "display_name": {
+                      "type": "string"
+                    },
+                    "latitude": {
+                      "type": "number"
+                    },
+                    "longitude": {
+                      "type": "number"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "query",
+                    "latitude",
+                    "longitude"
+                  ]
+                }
+              }
+            },
+            "completeness": {
+              "type": "string",
+              "enum": [
+                "top_n_returned_by_endpoint"
+              ],
+              "description": "Indicates these are the top candidates returned by the endpoint up to the requested limit, not an exhaustive global set."
+            }
+          },
+          "source_evidence": {
+            "workflow_id": "task75_t65",
+            "template_id": "65",
+            "code_quote": "def geocode(name):\n    url = NOMINATIM_URL + \"search?format=jsonv2&limit=3&q=\" + urllib.parse.quote(name)\n    data = fetch_json(url)\n    ...\n    row = data[0]\n    return {\n        \"name\": name,\n        \"display_name\": row.get(\"display_name\"),\n        \"lat\": float(row[\"lat\"]),\n        \"lon\": float(row[\"lon\"]),\n        \"type\": row.get(\"type\"),\n    }",
+            "explanation": "The workflow demonstrates a stable website operation: querying the map site's Nominatim-backed search endpoint with a place string and parsing structured geocoding results. The primitive should generalize the hard-coded single-name helper to accept arbitrary queries and preserve the objectively exposed fields (query identity, display name, coordinates, and result type), plus the demonstrated top-N completeness boundary from the limit parameter.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        },
+        {
+          "candidate_id": "task75_t65::get_driving_route",
+          "proposed_method": "get_driving_route",
+          "capability": "Retrieve driving route metrics for an ordered list of coordinates or places via the site's OSRM directions service.",
+          "owns": [
+            "Constructing OSRM route requests from an ordered waypoint sequence",
+            "Calling the map site's driving directions endpoint",
+            "Parsing route-level metrics from the OSRM response",
+            "Returning the endpoint URL used for traceability"
+          ],
+          "does_not_own": [
+            "Selecting the best route among multiple candidate waypoint orders",
+            "Generating waypoint permutations",
+            "Interpreting route quality beyond the returned objective metrics",
+            "Formatting final user-facing recommendations"
+          ],
+          "input_contract": {
+            "waypoints": {
+              "type": "array",
+              "description": "Ordered route waypoints.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "label": {
+                    "type": "string"
+                  },
+                  "latitude": {
+                    "type": "number"
+                  },
+                  "longitude": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "latitude",
+                  "longitude"
+                ]
+              }
+            },
+            "overview": {
+              "type": "boolean",
+              "default": false,
+              "description": "Whether to request geometry overview from OSRM."
+            },
+            "steps": {
+              "type": "boolean",
+              "default": true,
+              "description": "Whether to request step data from OSRM."
+            }
+          },
+          "output_contract": {
+            "route": {
+              "type": "object",
+              "properties": {
+                "waypoint_order": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Ordered waypoint labels when provided by the caller."
+                },
+                "duration_seconds": {
+                  "type": "number"
+                },
+                "distance_meters": {
+                  "type": "number"
+                },
+                "request_url": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "duration_seconds",
+                "distance_meters",
+                "request_url"
+              ]
+            }
+          },
+          "source_evidence": {
+            "workflow_id": "task75_t65",
+            "template_id": "65",
+            "code_quote": "def route(order, coord_map):\n    encoded = \";\".join(f\"{coord_map[name]['lon']},{coord_map[name]['lat']}\" for name in order)\n    url = OSRM_BASE + encoded + \"?overview=false&steps=true\"\n    data = fetch_json(url)\n    if data.get(\"code\") != \"Ok\":\n        raise RuntimeError(...)\n    route0 = data[\"routes\"][0]\n    return {\n        \"order\": order,\n        \"duration\": route0[\"duration\"],\n        \"distance\": route0[\"distance\"],\n        \"url\": url,\n    }",
+            "explanation": "The workflow demonstrates a reusable website capability against the map site's OSRM service: given an ordered sequence of waypoints, it requests a driving route and parses objective route metrics. The generalized primitive parameterizes the hard-coded location order and coordinate source while preserving stable exposed outputs: ordered identity, duration, distance, and request URL.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        }
+      ]
+    },
+    "errors": []
+  }
+]

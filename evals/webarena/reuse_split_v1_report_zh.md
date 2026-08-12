@@ -28,7 +28,10 @@ final candidate snapshots。
 
 ## Retrieval-only audit
 
-待正式库完成后填入。
+188 条预执行 routing 记录完整且无 error：T1 exact workflow 为 use 22、skip 48；T2
+workflow-adapt 为 adapt 23、skip 36；T2 primitive-direct 为 use 2、adapt 40、skip 17。
+这证明三条 routing 通道可执行且任务覆盖完整；它不等价于行为收益，最终结论以 browser eval
+为准。
 
 ## T1：同 template 新实例
 
@@ -44,5 +47,5 @@ final candidate snapshots。
 - Workflow gold gate 会降低实际覆盖率；缺少三个 gold source 的 template 在 workflow arm
   明确路由为 skip，而不是借用别的 template 冒充 exact match。
 - 建库和运行中的所有需人工关注项记录在 `review_required.md`。
-- 旧 sampler 只按 evaluator 类型过滤，曾混入 1 个 TRAIN 和 7 个 T2 mutation/不可执行任务；
-  已在正式 browser eval 前剔除并写入 split metadata。正式规模为 T1 70、T2 60。
+- 旧 sampler 只按 evaluator 类型过滤，曾混入 1 个 TRAIN 和 8 个 T2 mutation/不可执行任务；
+  已在正式 browser eval 前剔除并写入 split metadata。正式规模为 T1 70、T2 59。

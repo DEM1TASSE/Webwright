@@ -1,0 +1,226 @@
+{
+  "operations": [
+    {
+      "op": "KEEP",
+      "source": "shopping_admin/get_product_review_detail",
+      "feature": "reviews"
+    },
+    {
+      "op": "KEEP",
+      "source": "shopping_admin/search_product_reviews",
+      "feature": "reviews"
+    },
+    {
+      "op": "KEEP",
+      "source": "shopping_admin/get_customer_detail_from_admin_url",
+      "feature": "customers"
+    },
+    {
+      "op": "KEEP",
+      "source": "shopping_admin/get_sales_orders_report_rows",
+      "feature": "orders"
+    },
+    {
+      "op": "KEEP",
+      "source": "shopping_admin/get_bestsellers_report_csv",
+      "feature": "orders"
+    },
+    {
+      "op": "KEEP",
+      "source": "shopping_admin/list_sales_orders_from_grid",
+      "feature": "orders"
+    },
+    {
+      "op": "MERGE",
+      "sources": [
+        "shopping_admin/get_order_detail_items",
+        "shopping_admin/get_order_detail_skus"
+      ],
+      "feature": "orders",
+      "replacement": {
+        "primitive_id": "shopping_admin/orders/get_order_detail",
+        "method": "get_order_detail",
+        "capability": "Open a shopping admin order detail page by URL or order ID and extract objective order metadata together with typed line-item names, displayed money strings, and rendered SKU occurrences shown on the page.",
+        "method_code": "async def get_order_detail(self, order_url: str | None = None, order_id: str | None = None) -> dict:\n    import re\n    from urllib.parse import urljoin\n\n    if not order_url and not order_id:\n        raise ValueError('Provide order_url or order_id')\n    if order_url and order_id:\n        raise ValueError('Provide only one of order_url or order_id')\n\n    target_url = order_url or f'/admin/sales/order/view/order_id/{order_id}/'\n\n    await self.page.goto(target_url, wait_until='domcontentloaded')\n    await self.page.wait_for_load_state('networkidle')\n\n    def _strip_tags(text: str) -> str:\n        text = re.sub(r'<br\\s*/?>', ' ', text, flags=re.I)\n        text = re.sub(r'<.*?>', ' ', text, flags=re.S)\n        text = text.replace('&nbsp;', ' ').replace('&amp;', '&')\n        return ' '.join(text.split())\n\n    html = await self.page.content()\n    body_text = await self.page.locator('body').inner_text()\n    current_url = self.page.url\n\n    title_match = re.search(r'<title>(.*?)</title>', html, re.S | re.I)\n    order_title = _strip_tags(title_match.group(1)) if title_match else None\n\n    date_match = re.search(r'Order Date</th>\\s*<td[^>]*>\\s*(.*?)\\s*</td>', html, re.S | re.I)\n    order_date = _strip_tags(date_match.group(1)) if date_match else None\n\n    status_match = re.search(r'Order Status</th>\\s*<td[^>]*>\\s*(.*?)\\s*</td>', html, re.S | re.I)\n    order_status = _strip_tags(status_match.group(1)) if status_match else None\n\n    skus = []\n    sku_matches = re.findall(r'SKU:\\s*([^\\n\\r]+)', body_text)\n    for sku in sku_matches:\n        sku = sku.strip()\n        if sku:\n            skus.append({'sku': sku})\n\n    items = []\n    for block in re.findall(r'<tbody[^>]*>(.*?)</tbody>', html, re.S | re.I):\n        if 'id=\"order_item_' not in block:\n            continue\n        name_match = re.search(r'<div[^>]*class=\"product-title\"[^>]*>(.*?)</div>', block, re.S | re.I)\n        if not name_match:\n            continue\n        name = _strip_tags(name_match.group(1))\n        displayed_money_amounts = re.findall(r'\\$\\d+[\\d,]*\\.\\d{2}', _strip_tags(block))\n        items.append({\n            'name': name,\n            'displayed_money_amounts': displayed_money_amounts,\n        })\n\n    resolved_order_id = str(order_id) if order_id else None\n    if resolved_order_id is None:\n        id_match = re.search(r'/order_id/(\\d+)/', current_url)\n        if id_match:\n            resolved_order_id = id_match.group(1)\n\n    return {\n        'order_id': resolved_order_id,\n        'order_url': urljoin(current_url, current_url),\n        'order': {\n            'title': order_title,\n            'order_date': order_date,\n            'order_status': order_status,\n        },\n        'items': items,\n        'skus': skus,\n        'is_complete': True,\n    }\n",
+        "owns": [
+          "Navigate to an authenticated admin order detail page by URL or order_id",
+          "Parse stable order-level fields displayed on the page such as title, order date, and order status",
+          "Identify line-item tbody blocks corresponding to order items",
+          "Extract product name from each line-item block",
+          "Extract displayed money strings from each item block without overcommitting to a heuristic semantic interpretation",
+          "Read rendered page text from the order detail page",
+          "Parse SKU occurrences from the rendered page into typed SKU records preserving page order",
+          "Return typed order-detail facts rather than raw HTML or raw body text"
+        ],
+        "does_not_own": [
+          "Selecting which order to inspect",
+          "Verifying business rules like requiring Complete status",
+          "Sorting items by price",
+          "Inferring which displayed currency amount corresponds to a canonical business field",
+          "Deduplicating or comparing SKUs in workflow logic",
+          "Formatting final answer",
+          "Mutating the order"
+        ],
+        "input_contract": {
+          "type": "object",
+          "properties": {
+            "order_url": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Admin order detail page URL to fetch and parse."
+            },
+            "order_id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Admin entity_id of the order to inspect when opening by canonical order detail route."
+            }
+          },
+          "oneOf": [
+            {
+              "required": [
+                "order_url"
+              ]
+            },
+            {
+              "required": [
+                "order_id"
+              ]
+            }
+          ]
+        },
+        "output_contract": {
+          "type": "object",
+          "properties": {
+            "order_id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Admin entity_id of the order when supplied or parsed from the resolved order URL."
+            },
+            "order_url": {
+              "type": "string",
+              "description": "Resolved admin order detail URL that was opened."
+            },
+            "order": {
+              "type": "object",
+              "properties": {
+                "title": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Page title text for the order detail."
+                },
+                "order_date": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Displayed order date text from the detail page."
+                },
+                "order_status": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Displayed order status text from the detail page."
+                }
+              },
+              "required": [
+                "title",
+                "order_date",
+                "order_status"
+              ]
+            },
+            "items": {
+              "type": "array",
+              "description": "Parsed product line items from the order detail page.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "description": "Product name shown in the line item."
+                  },
+                  "displayed_money_amounts": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Currency amounts found in the rendered item block, preserved in page order."
+                  }
+                },
+                "required": [
+                  "name",
+                  "displayed_money_amounts"
+                ]
+              }
+            },
+            "skus": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "sku": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "sku"
+                ]
+              },
+              "description": "Typed SKU occurrences parsed from rendered page text in page order."
+            },
+            "is_complete": {
+              "type": "boolean",
+              "description": "True when the rendered order detail page was acquired and the supported order metadata, line items, money strings, and SKU occurrences were parsed from that page."
+            }
+          },
+          "required": [
+            "order_id",
+            "order_url",
+            "order",
+            "items",
+            "skus",
+            "is_complete"
+          ]
+        },
+        "requires": [
+          "Authenticated shopping_admin admin browser session"
+        ],
+        "provides": [
+          "Typed order detail metadata, line-item facts, and SKU occurrences from an admin order detail page"
+        ],
+        "supported_patterns": [
+          "Read order status and date from an order detail page",
+          "List product names from order items",
+          "Let workflows choose how to interpret displayed money amounts",
+          "List all SKU occurrences from a chosen order detail page",
+          "Support downstream workflow-side sorting, selection, deduplication, or comparison"
+        ],
+        "source_evidence": [
+          {
+            "workflow_id": "task204_t366",
+            "template_id": "366",
+            "code_quote": "detail = session.get(order_url)\n...\ndate_m = re.search(r\"Order Date</th>\\s*<td[^>]*>\\s*(.*?)\\s*</td>\", order_html, re.S)\nstatus_m = re.search(r\"Order Status</th>\\s*<td[^>]*>\\s*(.*?)\\s*</td>\", order_html, re.S)\n...\nfor block in re.findall(r\"<tbody[^>]*>(.*?)</tbody>\", order_html, re.S):\n    if 'id=\\\"order_item_' not in block:\n        continue\n    title_m = re.search(r'<div[^>]*class=\\\"product-title\\\"[^>]*>(.*?)</div>', block, re.S)\n    ...\n    nums = re.findall(r\"\\$\\d+[\\d,]*\\.\\d{2}\", strip_tags(block))",
+            "explanation": "Carries forward the demonstrated order-detail acquisition boundary that fetches an order detail page, parses displayed order metadata, locates item blocks, extracts item names, and preserves money strings objectively shown in each block.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          },
+          {
+            "workflow_id": "task290_t234",
+            "template_id": "234",
+            "code_quote": "await page.goto(f\"{BASE}/sales/order/view/order_id/{order_id}/\", wait_until=\"networkidle\")\nbody_text = await page.locator(\"body\").inner_text()\nsku_matches = re.findall(r\"SKU:\\s*([^\\n\\r]+)\", body_text)\nfinal_skus = sku_matches",
+            "explanation": "Adds the same page's reusable capability to parse rendered SKU occurrences by opening the order detail route with an order_id. The merged primitive generalizes navigation to accept either order_url or order_id while preserving objective parsing responsibilities.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        ]
+      },
+      "reason": "Both primitives operate on the same cohesive orders feature and the same admin order detail page boundary. Merging removes an artificial split between item-block parsing and SKU parsing while keeping workflows responsible for downstream selection, interpretation, and aggregation."
+    }
+  ]
+}

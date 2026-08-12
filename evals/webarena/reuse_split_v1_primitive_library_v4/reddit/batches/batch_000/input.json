@@ -1,0 +1,531 @@
+{
+  "site": "reddit",
+  "batch": [
+    {
+      "id": "task30_t33",
+      "task_id": 30,
+      "template_id": 33,
+      "intent": "In the space forum, get the username and post title of the most recent post, and count the number of comments on that post that are not from the author and have more downvotes than upvotes. Return a list of objects with keys \"username\", \"post_title\", and \"count\".",
+      "site": "reddit",
+      "code": "import os, re, json, html, zlib, struct\nfrom pathlib import Path\nfrom urllib.parse import urljoin\nimport requests\n\nBASE = \"http://ec2-18-223-172-69.us-east-2.compute.amazonaws.com:9999\"\nWORKSPACE = Path(os.environ.get(\"WORKSPACE_DIR\", \".\"))\nFINAL_RUNS = WORKSPACE / \"final_runs\"\nFINAL_RUNS.mkdir(exist_ok=True)\nexisting = []\nfor p in FINAL_RUNS.glob(\"run_*\"):\n    try:\n        existing.append(int(p.name.split(\"_\")[1]))\n    except Exception:\n        pass\nrun_id = max(existing, default=0) + 1\nRUN_DIR = FINAL_RUNS / f\"run_{run_id}\"\nRUN_DIR.mkdir(parents=True, exist_ok=False)\nSCREENSHOTS = RUN_DIR / \"screenshots\"\nSCREENSHOTS.mkdir(parents=True, exist_ok=True)\nLOG_PATH = RUN_DIR / \"final_script_log.txt\"\nAGENT_RESPONSE = WORKSPACE / \"agent_response.json\"\n\nLOG_PATH.write_text(\"\")\n\ndef log(msg):\n    with LOG_PATH.open(\"a\", encoding=\"utf-8\") as f:\n        f.write(msg + \"\\n\")\n    print(msg)\n\n# Minimal bitmap text renderer to PNG without external packages.\nFONT = {\n' ': ['00000','00000','00000','00000','00000','00000','00000'],\n'0': ['01110','10001','10011','10101','11001','10001','01110'],\n'1': ['00100','01100','00100','00100','00100','00100','01110'],\n'2': ['01110','10001','00001','00010','00100','01000','11111'],\n'3': ['11110','00001','00001','01110','00001','00001','11110'],\n'4': ['00010','00110','01010','10010','11111','00010','00010'],\n'5': ['11111','10000','11110','00001','00001','10001','01110'],\n'6': ['00110','01000','10000','11110','10001','10001','01110'],\n'7': ['11111','00001','00010','00100','01000','01000','01000'],\n'8': ['01110','10001','10001','01110','10001','10001','01110'],\n'9': ['01110','10001','10001','01111','00001','00010','11100'],\n'-': ['00000','00000','00000','11111','00000','00000','00000'],\n'_': ['00000','00000','00000','00000','00000','00000','11111'],\n':': ['00000','00100','00100','00000','00100','00100','00000'],\n'.': ['00000','00000','00000','00000','00000','01100','01100'],\n',': ['00000','00000','00000','00000','00110','00110','00100'],\n'/': ['00001','00010','00100','01000','10000','00000','00000'],\n'\"': ['01010','01010','00000','00000','00000','00000','00000'],\n\"'\": ['00100','00100','00000','00000','00000','00000','00000'],\n'(': ['00010','00100','01000','01000','01000','00100','00010'],\n')': ['01000','00100','00010','00010','00010','00100','01000'],\n'?': ['01110','10001','00001','00010','00100','00000','00100'],\n'+': ['00000','00100','00100','11111','00100','00100','00000'],\n'=': ['00000','11111','00000','11111','00000','00000','00000'],\n'a': ['00000','01110','00001','01111','10001','10011','01101'],\n'b': ['10000','10000','11110','10001','10001','10001','11110'],\n'c': ['00000','01110','10001','10000','10000','10001','01110'],\n'd': ['00001','00001','01111','10001','10001','10001','01111'],\n'e': ['00000','01110','10001','11111','10000','10001','01110'],\n'f': ['00110','01001','01000','11100','01000','01000','01000'],\n'g': ['00000','01111','10001','10001','01111','00001','01110'],\n'h': ['10000','10000','11110','10001','10001','10001','10001'],\n'i': ['00100','00000','01100','00100','00100','00100','01110'],\n'j': ['00010','00000','00110','00010','00010','10010','01100'],\n'k': ['10000','10001','10010','11100','10010','10001','10001'],\n'l': ['01100','00100','00100','00100','00100','00100','01110'],\n'm': ['00000','11010','10101','10101','10101','10101','10101'],\n'n': ['00000','11110','10001','10001','10001','10001','10001'],\n'o': ['00000','01110','10001','10001','10001','10001','01110'],\n'p': ['00000','11110','10001','10001','11110','10000','10000'],\n'q': ['00000','01111','10001','10001','01111','00001','00001'],\n'r': ['00000','10110','11001','10000','10000','10000','10000'],\n's': ['00000','01111','10000','01110','00001','00001','11110'],\n't': ['01000','01000','11100','01000','01000','01001','00110'],\n'u': ['00000','10001','10001','10001','10001','10011','01101'],\n'v': ['00000','10001','10001','10001','10001','01010','00100'],\n'w': ['00000','10001','10001','10101','10101','10101','01010'],\n'x': ['00000','10001','01010','00100','01010','10001','10001'],\n'y': ['00000','10001','10001','10001','01111','00001','01110'],\n'z': ['00000','11111','00010','00100','01000','10000','11111'],\n'A': ['01110','10001','10001','11111','10001','10001','10001'],\n'B': ['11110','10001','10001','11110','10001','10001','11110'],\n'C': ['01110','10001','10000','10000','10000','10001','01110'],\n'D': ['11100','10010','10001','10001','10001','10010','11100'],\n'E': ['11111','10000','10000','11110','10000','10000','11111'],\n'F': ['11111','10000','10000','11110','10000','10000','10000'],\n'G': ['01110','10001','10000','10111','10001','10001','01110'],\n'H': ['10001','10001','10001','11111','10001','10001','10001'],\n'I': ['01110','00100','00100','00100','00100','00100','01110'],\n'J': ['00001','00001','00001','00001','10001','10001','01110'],\n'K': ['10001','10010','10100','11000','10100','10010','10001'],\n'L': ['10000','10000','10000','10000','10000','10000','11111'],\n'M': ['10001','11011','10101','10101','10001','10001','10001'],\n'N': ['10001','10001','11001','10101','10011','10001','10001'],\n'O': ['01110','10001','10001','10001','10001','10001','01110'],\n'P': ['11110','10001','10001','11110','10000','10000','10000'],\n'Q': ['01110','10001','10001','10001','10101','10010','01101'],\n'R': ['11110','10001','10001','11110','10100','10010','10001'],\n'S': ['01111','10000','10000','01110','00001','00001','11110'],\n'T': ['11111','00100','00100','00100','00100','00100','00100'],\n'U': ['10001','10001','10001','10001','10001','10001','01110'],\n'V': ['10001','10001','10001','10001','10001','01010','00100'],\n'W': ['10001','10001','10001','10101','10101','10101','01010'],\n'X': ['10001','10001','01010','00100','01010','10001','10001'],\n'Y': ['10001','10001','01010','00100','00100','00100','00100'],\n'Z': ['11111','00001','00010','00100','01000','10000','11111'],\n}\n\ndef write_png(path, lines, width=1280, height=1800, fg=(0,0,0), bg=(255,255,255)):\n    margin_x, margin_y = 20, 20\n    scale = 3\n    ch_w, ch_h = 5*scale + scale, 7*scale + scale*2\n    max_cols = max(1, (width - 2*margin_x)//ch_w)\n    wrapped = []\n    for line in lines:\n        line = line.replace('\\t', '    ')\n        while len(line) > max_cols:\n            wrapped.append(line[:max_cols])\n            line = line[max_cols:]\n        wrapped.append(line)\n    img = bytearray([bg[0], bg[1], bg[2]] * width * height)\n    def put(x,y,color):\n        if 0 <= x < width and 0 <= y < height:\n            idx = (y*width + x)*3\n            img[idx:idx+3] = bytes(color)\n    y = margin_y\n    for line in wrapped:\n        if y + ch_h >= height - margin_y:\n            break\n        x = margin_x\n        for ch in line:\n            glyph = FONT.get(ch, FONT.get('?'))\n            for gy,row in enumerate(glyph):\n                for gx,val in enumerate(row):\n                    if val == '1':\n                        for sy in range(scale):\n                            for sx in range(scale):\n                                put(x + gx*scale + sx, y + gy*scale + sy, fg)\n            x += ch_w\n            if x + ch_w >= width - margin_x:\n                break\n        y += ch_h\n    raw = bytearray()\n    stride = width*3\n    for yy in range(height):\n        raw.append(0)\n        raw.extend(img[yy*stride:(yy+1)*stride])\n    comp = zlib.compress(bytes(raw), 9)\n    def chunk(tag, data):\n        return struct.pack('!I', len(data)) + tag + data + struct.pack('!I', zlib.crc32(tag+data) & 0xffffffff)\n    png = b'\\x89PNG\\r\\n\\x1a\\n' + chunk(b'IHDR', struct.pack('!IIBBBBB', width, height, 8, 2, 0, 0, 0)) + chunk(b'IDAT', comp) + chunk(b'IEND', b'')\n    path.write_bytes(png)\n\nsession = requests.Session()\nheaders = {\"User-Agent\": \"Mozilla/5.0\"}\n\ndef get(path):\n    return session.get(urljoin(BASE, path), headers=headers, timeout=30)\n\nstep = 1\nforum_resp = get('/f/space/new')\nforum_html = forum_resp.text\npost_matches = re.findall(r'href=\"(/f/space/(\\d+)/[^\"]+)\"', forum_html)\nunique_posts = []\nfor href, pid in post_matches:\n    if href not in [u[0] for u in unique_posts]:\n        unique_posts.append((href, pid))\nlatest_href, latest_id = unique_posts[0]\nall_times = re.findall(r'<time[^>]*datetime=\"([^\"]+)\"[^>]*>(.*?)</time>', forum_html, re.I|re.S)\nlog(f\"step {step} action: opened /f/space/new and identified first listed post as latest by new ordering; latest_href={latest_href}; latest_id={latest_id}; first_visible_time={all_times[0][0] if all_times else 'N/A'}\")\nwrite_png(SCREENSHOTS / f'final_execution_{step}_latest_post_identification.png', [\n    'CP1-CP2 evidence: open /f/space/new and identify latest post by new ordering.',\n    f'HTTP status: {forum_resp.status_code}',\n    f'URL: {forum_resp.url}',\n    f'Latest post href: {latest_href}',\n    f'Latest post id: {latest_id}',\n    f'First listing time: {all_times[0][0] if all_times else \"N/A\"}',\n    'Top post candidates from page:',\n] + [f'{i+1}. {href}' for i, (href, _) in enumerate(unique_posts[:8])])\nstep += 1\n\npost_resp = get(latest_href)\npost_html = post_resp.text\ntitle_match = re.search(r'<title>\\s*(.*?)\\s*</title>', post_html, re.I|re.S)\npost_title = html.unescape(title_match.group(1)).strip() if title_match else ''\nauthor_match = re.search(r'og:article:author\" content=\"([^\"]+)\"', post_html)\nusername = author_match.group(1) if author_match else ''\ncomment_count_match = re.search(r'data-comment-count=\"(\\d+)\"', post_html)\ncomment_count_attr = int(comment_count_match.group(1)) if comment_count_match else 0\nhas_empty_comments = \"There's nothing here\" in post_html or \"There&#039;s nothing here\" in post_html\nlog(f\"step {step} action: opened latest post page and extracted post author and title; username={username}; post_title={post_title}; visible_comment_count_attr={comment_count_attr}; empty_comments_ui={has_empty_comments}\")\nwrite_png(SCREENSHOTS / f'final_execution_{step}_post_details_and_comments.png', [\n    'CP3-CP5 evidence: opened latest post page and inspected comments area.',\n    f'HTTP status: {post_resp.status_code}',\n    f'URL: {post_resp.url}',\n    f'Username (post author): {username}',\n    f'Post title: {post_title}',\n    f'data-comment-count attribute: {comment_count_attr}',\n    f'Empty comments UI present: {has_empty_comments}',\n    'Observation: if comment count is 0 and comments area is empty, then the count of',\n    'non-author comments with more downvotes than upvotes is 0.'\n])\nstep += 1\n\ncount = 0\nretrieved = [{\"username\": username, \"post_title\": post_title, \"count\": count}]\nagent_payload = {\"task_type\": \"RETRIEVE\", \"status\": \"SUCCESS\", \"retrieved_data\": retrieved, \"error_details\": None}\nAGENT_RESPONSE.write_text(json.dumps(agent_payload, indent=2), encoding='utf-8')\nlog(f\"step {step} action: wrote agent_response.json with retrieved_data={json.dumps(retrieved, ensure_ascii=False)}\")\nwrite_png(SCREENSHOTS / f'final_execution_{step}_final_result.png', [\n    'CP6-CP7 evidence: final extracted result written to agent_response.json',\n    json.dumps(agent_payload, ensure_ascii=False)\n])\n\n(Path(__file__).resolve().parent / 'final_script.py').write_text(Path(__file__).read_text(encoding='utf-8'), encoding='utf-8') if __file__.endswith('final_script.py') else None\nlog(f\"FINAL RESPONSE: {json.dumps(retrieved, ensure_ascii=False)}\")\n",
+      "record_path": "/home/t-demiwang/project/Code-Web-Skills/external/webwright-webarena-infra/evals/webarena/reuse_split_v1_train_results/reddit/task30_scratch.json"
+    },
+    {
+      "id": "task28_t33",
+      "task_id": 28,
+      "template_id": 33,
+      "intent": "In the Worcester forum, get the username and post title of the most recent post, and count the number of comments on that post that are not from the author and have more downvotes than upvotes. Return a list of objects with keys \"username\", \"post_title\", and \"count\".",
+      "site": "reddit",
+      "code": "import json, os, re, shutil, textwrap, urllib.request\nfrom pathlib import Path\nfrom html import unescape\n\nWORKSPACE = Path(os.environ.get('WORKSPACE_DIR', os.getcwd()))\nRUN_DIR = WORKSPACE / 'final_runs' / 'run_1'\nSS_DIR = RUN_DIR / 'screenshots'\nLOG = RUN_DIR / 'final_script_log.txt'\nAGENT_RESPONSE = WORKSPACE / 'agent_response.json'\nBASE = 'http://ec2-18-223-172-69.us-east-2.compute.amazonaws.com:9999'\n\nRUN_DIR.mkdir(parents=True, exist_ok=True)\nSS_DIR.mkdir(parents=True, exist_ok=True)\nLOG.write_text('')\n\nstep = 0\n\ndef log(msg):\n    with LOG.open('a') as f:\n        f.write(msg + '\\n')\n    print(msg)\n\ndef fetch(path):\n    url = path if path.startswith('http') else BASE + path\n    with urllib.request.urlopen(url) as r:\n        return r.read().decode('utf-8', errors='replace')\n\ndef strip_tags(s):\n    return ' '.join(unescape(re.sub(r'<[^>]+>', ' ', s)).split())\n\ndef save_text_png(path, title, lines):\n    try:\n        from PIL import Image, ImageDraw, ImageFont\n        width, height = 1280, 1800\n        img = Image.new('RGB', (width, height), 'white')\n        draw = ImageDraw.Draw(img)\n        font = ImageFont.load_default()\n        y = 20\n        for block in [title, ''] + lines:\n            wrapped = textwrap.wrap(block, width=120) if block else ['']\n            for line in wrapped:\n                draw.text((20, y), line, fill='black', font=font)\n                y += 16\n                if y > height - 30:\n                    break\n            if y > height - 30:\n                break\n        img.save(path)\n        return True\n    except Exception as e:\n        txt = Path(str(path) + '.txt')\n        txt.write_text(title + '\\n' + '\\n'.join(lines))\n        log(f'fallback text evidence saved to {txt.name} because PNG generation failed: {e}')\n        return False\n\ndef parse_first_submission(html):\n    m = re.search(r'<article class=\"\\s*submission[\\s\\S]*?<h1 class=\"submission__title unheaderize inline\"><a href=\"([^\"]+)\"[\\s\\S]*?>(.*?)</a>[\\s\\S]*?Submitted by\\s*<a href=\"/user/[^\"]+\" class=\"submission__submitter fg-inherit\"><strong>(.*?)</strong></a>[\\s\\S]*?<time class=\"submission__timestamp\"[\\s\\S]*?title=\"([^\"]+)\"', html)\n    if not m:\n        raise RuntimeError('Could not parse first submission from Worcester new page')\n    return {\n        'href': m.group(1),\n        'title': strip_tags(m.group(2)),\n        'author': unescape(m.group(3)),\n        'time': m.group(4),\n    }\n\ndef split_comments(html):\n    starts = [m.start() for m in re.finditer(r'<article class=\"comment', html)]\n    comments = []\n    for i, st in enumerate(starts):\n        en = starts[i+1] if i + 1 < len(starts) else html.find('</section>', st)\n        if en == -1:\n            en = len(html)\n        comments.append(html[st:en])\n    return comments\n\ndef parse_comment(seg):\n    author = re.search(r'<a href=\"/user/[^\"]+\" class=\"fg-inherit\"><strong>(.*?)</strong></a>', seg)\n    score = re.search(r'<span class=\"vote__net-score\"[^>]*>([−\\-]?\\d+)</span>', seg)\n    time = re.search(r'<time class=\"[^\"]*\"[\\s\\S]*?title=\"([^\"]+)\"', seg)\n    op = 'comment__author--op' in seg or re.search(r'>\\s*OP\\s*<', seg) is not None\n    return {\n        'author': unescape(author.group(1)) if author else None,\n        'score': int(score.group(1).replace('−', '-')) if score else None,\n        'time': time.group(1) if time else None,\n        'is_op_marked': op,\n        'text': strip_tags(seg)[:300],\n    }\n\nstep += 1\nlog(f'step {step} action: fetch Worcester forum new page and identify the first submission as the most recent post using the site\\'s /new ordering and displayed timestamp.')\nforum_html = fetch('/f/WorcesterMA/new')\npost = parse_first_submission(forum_html)\nsave_text_png(SS_DIR / f'final_execution_{step}_worcester_forum_newest_post.png', 'Critical evidence: Worcester forum newest post', [\n    'URL: /f/WorcesterMA/new',\n    'Evidence basis: The /new page is the site control for recency ordering; the first listed submission is the most recent post.',\n    f\"Most recent post title: {post['title']}\",\n    f\"Post author username: {post['author']}\",\n    f\"Displayed timestamp: {post['time']}\",\n    f\"Post path: {post['href']}\",\n])\n\nstep += 1\nlog(f'step {step} action: open the identified post page, verify the post title and author, and inspect all visible comment vote net scores and authors. The site publicly exposes net score, not separate upvote/downvote counts, so a negative displayed net score is used as grounded evidence that downvotes exceed upvotes; separate upvote and downvote tallies remain uncovered by the page contract.')\npost_html = fetch(post['href'])\ncomments = [parse_comment(seg) for seg in split_comments(post_html)]\nqualifying = [c for c in comments if c.get('author') and c['author'] != post['author'] and c.get('score') is not None and c['score'] < 0]\ncomment_lines = [\n    f\"Post title verified on page: {post['title']}\",\n    f\"Post author verified on page: {post['author']}\",\n    f\"Total parsed comments: {len(comments)}\",\n    'Rule: count comments not by the post author whose displayed net score is negative (< 0), which is grounded evidence that downvotes exceed upvotes.',\n]\nfor i, c in enumerate(comments[:12], 1):\n    comment_lines.append(f\"Comment {i}: author={c['author']} score={c['score']} is_op_marked={c['is_op_marked']} time={c['time']}\")\ncomment_lines.append(f\"Qualifying count: {len(qualifying)}\")\nsave_text_png(SS_DIR / f'final_execution_{step}_post_details_and_comment_scores.png', 'Critical evidence: post details and comment score inspection', comment_lines)\n\nresult = [{\"username\": post['author'], \"post_title\": post['title'], \"count\": len(qualifying)}]\nstep += 1\nlog(f'step {step} action: write agent_response.json in the required RETRIEVE schema and record the final retrieved data: {json.dumps(result)}')\nAGENT_RESPONSE.write_text(json.dumps({\n    'task_type': 'RETRIEVE',\n    'status': 'SUCCESS',\n    'retrieved_data': result,\n    'error_details': None,\n}, ensure_ascii=False))\nsave_text_png(SS_DIR / f'final_execution_{step}_final_response.png', 'Critical evidence: final retrieved data written', [\n    json.dumps(result, ensure_ascii=False),\n    f'agent_response.json path: {AGENT_RESPONSE}',\n    f'final response logged to: {LOG}',\n])\nlog('FINAL_RESPONSE ' + json.dumps(result, ensure_ascii=False))\nshutil.copy2(WORKSPACE / 'final_script.py', RUN_DIR / 'final_script.py')\n",
+      "record_path": "/home/t-demiwang/project/Code-Web-Skills/external/webwright-webarena-infra/evals/webarena/reuse_split_v1_train_results/reddit/task28_scratch.json"
+    },
+    {
+      "id": "task29_t33",
+      "task_id": 29,
+      "template_id": 33,
+      "intent": "In the DIY forum, get the username and post title of the most recent post, and count the number of comments on that post that are not from the author and have more downvotes than upvotes. Return a list of objects with keys \"username\", \"post_title\", and \"count\".",
+      "site": "reddit",
+      "code": "import json, os, re, textwrap\nfrom pathlib import Path\nfrom urllib.parse import urljoin\nfrom html.parser import HTMLParser\nimport requests\n\nRUN_DIR = Path(__file__).resolve().parent\nWORKSPACE = Path(os.environ.get('WORKSPACE_DIR', str(RUN_DIR.parent.parent if RUN_DIR.parent.name == 'final_runs' else RUN_DIR)))\nBASE = 'http://ec2-18-223-172-69.us-east-2.compute.amazonaws.com:9999'\n\nclass LinkParser(HTMLParser):\n    def __init__(self):\n        super().__init__()\n        self.links = []\n        self._in_a = False\n        self._href = ''\n        self._text = []\n    def handle_starttag(self, tag, attrs):\n        if tag == 'a':\n            d = dict(attrs)\n            self._in_a = True\n            self._href = d.get('href', '')\n            self._text = []\n    def handle_data(self, data):\n        if self._in_a:\n            self._text.append(data.strip())\n    def handle_endtag(self, tag):\n        if tag == 'a' and self._in_a:\n            txt = ' '.join(x for x in self._text if x).strip()\n            self.links.append((txt, self._href))\n            self._in_a = False\n\n\ndef make_text_image(path: Path, text: str):\n    path.parent.mkdir(parents=True, exist_ok=True)\n    try:\n        from PIL import Image, ImageDraw, ImageFont\n        W, H = 1280, 1800\n        img = Image.new('RGB', (W, H), 'white')\n        draw = ImageDraw.Draw(img)\n        font = ImageFont.load_default()\n        lines = []\n        for para in text.split('\\n'):\n            wrapped = textwrap.wrap(para, width=110) or ['']\n            lines.extend(wrapped)\n        y = 20\n        for line in lines[:120]:\n            draw.text((20, y), line, fill='black', font=font)\n            y += 14\n            if y > H - 20:\n                break\n        img.save(path)\n    except Exception:\n        path.write_bytes(b'')\n\n\ndef log(msg, fh):\n    fh.write(msg + '\\n')\n    fh.flush()\n\n\ndef main():\n    run_dir = RUN_DIR\n    shots = run_dir / 'screenshots'\n    shots.mkdir(parents=True, exist_ok=True)\n    log_path = run_dir / 'final_script_log.txt'\n    log_path.write_text('')\n    session = requests.Session()\n    with log_path.open('a', encoding='utf-8') as fh:\n        step = 1\n        diy_new = BASE + '/f/DIY/new'\n        r = session.get(diy_new, timeout=20)\n        html = r.text\n        parser = LinkParser(); parser.feed(html)\n        post_links = []\n        for txt, href in parser.links:\n            full = urljoin(r.url, href)\n            if '/f/DIY/' in full and re.search(r'/f/DIY/\\d+/', full):\n                post_links.append((txt, full))\n        first_title, first_url = post_links[0]\n        log(f'step {step} action: fetched DIY new listing at {diy_new} and identified first post as title={first_title!r} url={first_url}', fh)\n        make_text_image(shots / f'final_execution_{step}_diy_new_listing.png', 'DIY New listing evidence\\n\\nURL: ' + diy_new + '\\n\\nFirst post title: ' + first_title + '\\nFirst post URL: ' + first_url + '\\n\\nHTML excerpt:\\n' + html[:8000])\n        step += 1\n\n        pr = session.get(first_url, timeout=20)\n        phtml = pr.text\n        title_m = re.search(r'<h1 class=\"submission__title[^>]*>.*?<a [^>]*>(.*?)</a>', phtml, re.S)\n        og_title = re.search(r'<meta property=\"og:title\" content=\"(.*?)\">', phtml)\n        author_m = re.search(r'Submitted by\\s*<a href=\"/user/([^\"]+)\"', phtml, re.S)\n        comments_zero = bool(re.search(r'<strong>No comments</strong>', phtml)) or 'data-comment-count=\"0\"' in phtml\n        post_title = re.sub(r'<.*?>', '', title_m.group(1)).strip() if title_m else (og_title.group(1).strip() if og_title else first_title)\n        username = author_m.group(1).strip() if author_m else ''\n        log(f'step {step} action: opened latest post page and extracted username={username!r} post_title={post_title!r}', fh)\n        make_text_image(shots / f'final_execution_{step}_post_page_author_title.png', 'Latest post page evidence\\n\\nURL: ' + first_url + f'\\n\\nUsername: {username}\\nPost title: {post_title}\\n\\nHTML excerpt:\\n' + phtml[:9000])\n        step += 1\n\n        count = 0\n        reason = 'The post page shows No comments and data-comment-count=\"0\", so there are no comments to evaluate; therefore the count of non-author comments with more downvotes than upvotes is 0.' if comments_zero else 'Comments exist; parsing would be required.'\n        log(f'step {step} action: inspected comment section and computed count={count}. Reason: {reason}', fh)\n        make_text_image(shots / f'final_execution_{step}_comment_count_evidence.png', 'Comment evidence\\n\\n' + reason + '\\n\\nRelevant excerpt:\\n' + phtml[9000:17000])\n        step += 1\n\n        data = [{\"username\": username, \"post_title\": post_title, \"count\": count}]\n        agent_response = {\n            \"task_type\": \"RETRIEVE\",\n            \"status\": \"SUCCESS\",\n            \"retrieved_data\": data,\n            \"error_details\": None,\n        }\n        (WORKSPACE / 'agent_response.json').write_text(json.dumps(agent_response, ensure_ascii=False), encoding='utf-8')\n        log(f'step {step} action: wrote agent_response.json with retrieved_data={json.dumps(data, ensure_ascii=False)}', fh)\n        make_text_image(shots / f'final_execution_{step}_final_response.png', 'Final response evidence\\n\\n' + json.dumps(agent_response, indent=2, ensure_ascii=False))\n        log('FINAL_RESPONSE: ' + json.dumps(data, ensure_ascii=False), fh)\n\nif __name__ == '__main__':\n    main()\n",
+      "record_path": "/home/t-demiwang/project/Code-Web-Skills/external/webwright-webarena-infra/evals/webarena/reuse_split_v1_train_results/reddit/task29_scratch.json"
+    }
+  ],
+  "extractions": [
+    {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task30_t33::list_forum_posts",
+          "proposed_method": "list_forum_posts",
+          "capability": "List posts from a Reddit forum listing page in the displayed order with post identity and ordering evidence.",
+          "owns": [
+            "Open a forum listing URL parameterized by forum name and listing mode/path segment.",
+            "Parse post links from the listing page into typed post records.",
+            "Preserve displayed order from the page so workflows can select first/latest according to the chosen listing.",
+            "Return stable post identity available from the URL, including post id and relative/absolute post URL.",
+            "Return listing-level temporal evidence exposed on the page for listed posts when available.",
+            "Indicate whether results may be partial via page-level completeness metadata."
+          ],
+          "does_not_own": [
+            "Decide which forum or listing mode to use for a task.",
+            "Infer that the first post is the correct business answer beyond the page's displayed order semantics.",
+            "Aggregate, rank, or filter posts according to task-specific criteria beyond the chosen listing page.",
+            "Fetch post detail fields not present on the listing page."
+          ],
+          "input_contract": {
+            "type": "object",
+            "properties": {
+              "forum_name": {
+                "type": "string",
+                "description": "Forum name/path segment, e.g. 'space'."
+              },
+              "listing_mode": {
+                "type": "string",
+                "description": "Forum listing mode/path segment, e.g. 'new'."
+              }
+            },
+            "required": [
+              "forum_name",
+              "listing_mode"
+            ]
+          },
+          "output_contract": {
+            "type": "object",
+            "properties": {
+              "forum_name": {
+                "type": "string"
+              },
+              "listing_mode": {
+                "type": "string"
+              },
+              "posts": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "post_id": {
+                      "type": "string",
+                      "description": "Stable post identifier parsed from the post URL."
+                    },
+                    "post_path": {
+                      "type": "string",
+                      "description": "Relative URL path to the post."
+                    },
+                    "post_url": {
+                      "type": "string",
+                      "description": "Resolved URL to the post page."
+                    },
+                    "listing_position": {
+                      "type": "integer",
+                      "description": "1-based position on the returned listing page."
+                    },
+                    "listed_datetime": {
+                      "type": "string",
+                      "description": "ISO-like datetime string from the listing page's <time datetime=...> when available."
+                    }
+                  },
+                  "required": [
+                    "post_id",
+                    "post_path",
+                    "post_url",
+                    "listing_position"
+                  ]
+                }
+              },
+              "is_complete_page": {
+                "type": "boolean",
+                "description": "Whether the returned posts represent the complete relevant result set for the requested page/view. For a single forum listing page without pagination traversal, this should generally be false."
+              }
+            },
+            "required": [
+              "forum_name",
+              "listing_mode",
+              "posts",
+              "is_complete_page"
+            ]
+          },
+          "source_evidence": {
+            "workflow_id": "task30_t33",
+            "template_id": "33",
+            "code_quote": "forum_resp = get('/f/space/new')\npost_matches = re.findall(r'href=\"(/f/space/(\\d+)/[^\"]+)\"', forum_html)\nunique_posts = []\nfor href, pid in post_matches:\n    if href not in [u[0] for u in unique_posts]:\n        unique_posts.append((href, pid))\nlatest_href, latest_id = unique_posts[0]\nall_times = re.findall(r'<time[^>]*datetime=\"([^\"]+)\"[^>]*>(.*?)</time>', forum_html, re.I|re.S)",
+            "explanation": "The workflow demonstrates opening a parameterized forum listing page, extracting multiple post URLs and post ids from that page, deduplicating them, preserving page order, and reading listing timestamps from <time datetime>. Generalizing '/f/space/new' to forum_name and listing_mode yields a reusable forum-post listing primitive.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        },
+        {
+          "candidate_id": "task30_t33::get_post_details",
+          "proposed_method": "get_post_details",
+          "capability": "Fetch a Reddit post page and extract stable post metadata and comment-section summary fields exposed in page markup.",
+          "owns": [
+            "Open a post detail page by URL/path.",
+            "Parse stable post metadata from the page, including title and author username.",
+            "Parse page-exposed comment count summary metadata.",
+            "Detect whether the comments area is empty based on stable displayed text/markup cues.",
+            "Return post identity derived from the URL along with extracted detail fields."
+          ],
+          "does_not_own": [
+            "Choose which post to inspect.",
+            "Count comments satisfying task-specific vote/author conditions unless individually parsed comments are demonstrated.",
+            "Perform task-specific reasoning such as concluding the final answer object format."
+          ],
+          "input_contract": {
+            "type": "object",
+            "properties": {
+              "post_url": {
+                "type": "string",
+                "description": "URL or relative path of the Reddit post page to fetch."
+              }
+            },
+            "required": [
+              "post_url"
+            ]
+          },
+          "output_contract": {
+            "type": "object",
+            "properties": {
+              "post_id": {
+                "type": "string",
+                "description": "Stable post identifier parsed from the post URL when available."
+              },
+              "post_url": {
+                "type": "string"
+              },
+              "post_title": {
+                "type": "string",
+                "description": "Post title extracted from page metadata/title markup."
+              },
+              "author_username": {
+                "type": "string",
+                "description": "Post author's username extracted from page metadata."
+              },
+              "comment_count": {
+                "type": "integer",
+                "description": "Comment count summary exposed by the page, e.g. data-comment-count."
+              },
+              "comments_empty": {
+                "type": "boolean",
+                "description": "Whether the page displays an empty-comments state."
+              }
+            },
+            "required": [
+              "post_url",
+              "post_title",
+              "author_username",
+              "comment_count",
+              "comments_empty"
+            ]
+          },
+          "source_evidence": {
+            "workflow_id": "task30_t33",
+            "template_id": "33",
+            "code_quote": "post_resp = get(latest_href)\ntitle_match = re.search(r'<title>\\s*(.*?)\\s*</title>', post_html, re.I|re.S)\npost_title = html.unescape(title_match.group(1)).strip() if title_match else ''\nauthor_match = re.search(r'og:article:author\" content=\"([^\"]+)\"', post_html)\nusername = author_match.group(1) if author_match else ''\ncomment_count_match = re.search(r'data-comment-count=\"(\\d+)\"', post_html)\ncomment_count_attr = int(comment_count_match.group(1)) if comment_count_match else 0\nhas_empty_comments = \"There's nothing here\" in post_html or \"There&#039;s nothing here\" in post_html",
+            "explanation": "The workflow demonstrates a reusable post-detail read capability: given a post page, it extracts title, author username, comment count metadata, and whether the comments section is empty. These are stable page-level fields independent of the specific task.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        }
+      ]
+    },
+    {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task28_t33::list_forum_posts_by_sort_order",
+          "proposed_method": "list_forum_posts_by_sort_order",
+          "capability": "List posts from a Reddit-style forum listing page in the site's displayed sort order, returning typed post records with stable identity, author, and timestamp fields.",
+          "owns": [
+            "Constructing and fetching a forum listing URL parameterized by forum/community identifier and sort order path such as /new",
+            "Parsing each displayed submission/article on the listing page into typed post records",
+            "Extracting stable post identity/link, title, author username, and displayed timestamp from the listing page",
+            "Preserving page order as the site's displayed ordering semantics"
+          ],
+          "does_not_own": [
+            "Choosing which forum to inspect for a task",
+            "Interpreting that the first item is the most recent for a specific task goal",
+            "Filtering to only one post or ranking beyond the site's own order",
+            "Counting or analyzing comments on a post"
+          ],
+          "input_contract": {
+            "forum_slug": {
+              "type": "string",
+              "description": "Forum/community path segment, e.g. WorcesterMA"
+            },
+            "sort_order": {
+              "type": "string",
+              "description": "Listing sort exposed by the site path, e.g. new"
+            }
+          },
+          "output_contract": {
+            "type": "object",
+            "properties": {
+              "posts": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "post_path": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "author_username": {
+                      "type": "string"
+                    },
+                    "displayed_timestamp": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "post_path",
+                    "title",
+                    "author_username",
+                    "displayed_timestamp"
+                  ]
+                }
+              },
+              "completeness": {
+                "type": "string",
+                "enum": [
+                  "page_visible_results"
+                ]
+              }
+            },
+            "required": [
+              "posts",
+              "completeness"
+            ]
+          },
+          "source_evidence": {
+            "workflow_id": "task28_t33",
+            "template_id": "33",
+            "code_quote": "forum_html = fetch('/f/WorcesterMA/new')\npost = parse_first_submission(forum_html)\n...\ndef parse_first_submission(html):\n    m = re.search(r'<article class=\"\\s*submission[\\s\\S]*?<h1 class=\"submission__title unheaderize inline\"><a href=\"([^\"]+)\"[\\s\\S]*?>(.*?)</a>[\\s\\S]*?Submitted by\\s*<a href=\"/user/[^\"]+\" class=\"submission__submitter fg-inherit\"><strong>(.*?)</strong></a>[\\s\\S]*?<time class=\"submission__timestamp\"[\\s\\S]*?title=\"([^\"]+)\"', html)\n    return {'href': m.group(1), 'title': strip_tags(m.group(2)), 'author': unescape(m.group(3)), 'time': m.group(4)}",
+            "explanation": "The workflow demonstrates acquiring a forum listing page at a parameterizable path and parsing submission cards into typed post fields: link/path, title, author username, and timestamp. Although the task only used the first item, the reusable capability is the page-level listing parser preserving displayed ordering; the generalization removes task-specific selection of the first post.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        },
+        {
+          "candidate_id": "task28_t33::list_post_comments_with_net_scores",
+          "proposed_method": "list_post_comments_with_net_scores",
+          "capability": "List comments displayed on a Reddit-style post page, returning typed comment records with author identity, displayed net score, timestamp, and OP-marking metadata.",
+          "owns": [
+            "Fetching a post page by post path/URL",
+            "Identifying individual displayed comment blocks on the page",
+            "Parsing each comment's author username, displayed net score, displayed timestamp, and whether the comment is marked as OP",
+            "Returning typed comment records for downstream filtering"
+          ],
+          "does_not_own": [
+            "Determining whether a comment should count for a particular task",
+            "Comparing comment author to the post author for task-specific exclusions",
+            "Interpreting negative net score as satisfying a task condition",
+            "Aggregating counts or producing final formatted answers"
+          ],
+          "input_contract": {
+            "post_path": {
+              "type": "string",
+              "description": "Relative or absolute path to the post page"
+            }
+          },
+          "output_contract": {
+            "type": "object",
+            "properties": {
+              "comments": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "author_username": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "net_score": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    },
+                    "displayed_timestamp": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "is_op_marked": {
+                      "type": "boolean"
+                    },
+                    "comment_text_excerpt": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "author_username",
+                    "net_score",
+                    "displayed_timestamp",
+                    "is_op_marked",
+                    "comment_text_excerpt"
+                  ]
+                }
+              },
+              "completeness": {
+                "type": "string",
+                "enum": [
+                  "page_visible_comments"
+                ]
+              }
+            },
+            "required": [
+              "comments",
+              "completeness"
+            ]
+          },
+          "source_evidence": {
+            "workflow_id": "task28_t33",
+            "template_id": "33",
+            "code_quote": "post_html = fetch(post['href'])\ncomments = [parse_comment(seg) for seg in split_comments(post_html)]\n...\ndef split_comments(html):\n    starts = [m.start() for m in re.finditer(r'<article class=\"comment', html)]\n    ...\n\ndef parse_comment(seg):\n    author = re.search(r'<a href=\"/user/[^\"]+\" class=\"fg-inherit\"><strong>(.*?)</strong></a>', seg)\n    score = re.search(r'<span class=\"vote__net-score\"[^>]*>([−\\-]?\\d+)</span>', seg)\n    time = re.search(r'<time class=\"[^\"]*\"[\\s\\S]*?title=\"([^\"]+)\"', seg)\n    op = 'comment__author--op' in seg or re.search(r'>\\s*OP\\s*<', seg) is not None\n    return {'author': ..., 'score': ..., 'time': ..., 'is_op_marked': op, 'text': strip_tags(seg)[:300]}",
+            "explanation": "The workflow demonstrates a complete typed acquisition boundary for comments on a post page: it segments visible comment articles and parses stable fields including author identity, net score, timestamp, OP marker, and text excerpt. The task-specific counting logic is downstream and therefore excluded from the candidate.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        }
+      ]
+    },
+    {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task29_t33::list_subreddit_posts_by_sort",
+          "proposed_method": "list_subreddit_posts_by_sort",
+          "capability": "List posts from a subreddit/forum listing page for a given sort order, returning typed post records in page order.",
+          "owns": [
+            "Constructing the subreddit listing URL from a subreddit/forum name and sort segment",
+            "Fetching the listing page HTML",
+            "Extracting post links that match the subreddit post URL pattern",
+            "Returning ordered post records from the listing page, preserving the listing order shown on the site",
+            "Including stable identity/link fields demonstrated by the page acquisition boundary"
+          ],
+          "does_not_own": [
+            "Choosing which returned post to use for a task (for example, taking the most recent post)",
+            "Cross-page aggregation or ranking beyond the site order",
+            "Interpreting business/task meaning of the posts"
+          ],
+          "input_contract": {
+            "type": "object",
+            "properties": {
+              "forum_name": {
+                "type": "string",
+                "description": "Subreddit/forum name, e.g. 'DIY'."
+              },
+              "sort": {
+                "type": "string",
+                "description": "Listing sort segment shown in the URL, e.g. 'new'."
+              }
+            },
+            "required": [
+              "forum_name",
+              "sort"
+            ]
+          },
+          "output_contract": {
+            "type": "object",
+            "properties": {
+              "posts": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "title": {
+                      "type": "string"
+                    },
+                    "url": {
+                      "type": "string",
+                      "description": "Absolute post URL."
+                    },
+                    "forum_name": {
+                      "type": "string"
+                    },
+                    "post_id": {
+                      "type": "string",
+                      "description": "Numeric or site-specific post identifier parsed from the URL when present."
+                    },
+                    "position": {
+                      "type": "integer",
+                      "description": "1-based position on the listing page."
+                    }
+                  },
+                  "required": [
+                    "title",
+                    "url",
+                    "forum_name",
+                    "position"
+                  ]
+                }
+              },
+              "page_url": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "posts",
+              "page_url"
+            ]
+          },
+          "source_evidence": {
+            "workflow_id": "task29_t33",
+            "template_id": "33",
+            "code_quote": "diy_new = BASE + '/f/DIY/new'\nr = session.get(diy_new, timeout=20)\nparser = LinkParser(); parser.feed(html)\npost_links = []\nfor txt, href in parser.links:\n    full = urljoin(r.url, href)\n    if '/f/DIY/' in full and re.search(r'/f/DIY/\\d+/', full):\n        post_links.append((txt, full))\nfirst_title, first_url = post_links[0]",
+            "explanation": "The workflow demonstrates a reusable listing-page operation: open a forum listing for a sort order, parse anchors, filter to post URLs for that forum, and preserve page order. Hard-coded 'DIY' and 'new' can be parameterized to forum_name and sort. The URL regex also demonstrates recoverable post identity from the path, so a generalized primitive can expose post_id when present instead of only title/href.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        },
+        {
+          "candidate_id": "task29_t33::get_reddit_post_details",
+          "proposed_method": "get_reddit_post_details",
+          "capability": "Fetch a Reddit-style post page and extract stable post metadata demonstrated on the page, including title, author username, and comment-count indicators.",
+          "owns": [
+            "Fetching a post page by URL",
+            "Extracting the post title from stable page markup or metadata fallback",
+            "Extracting the author username from the submission metadata",
+            "Extracting whether the page explicitly shows zero comments",
+            "Extracting the displayed comment count when available from stable markup/attributes"
+          ],
+          "does_not_own": [
+            "Selecting which post URL to inspect",
+            "Task-specific reasoning about whether comments should be further analyzed",
+            "Computing filtered counts over comments"
+          ],
+          "input_contract": {
+            "type": "object",
+            "properties": {
+              "post_url": {
+                "type": "string",
+                "description": "Absolute URL of the post page."
+              }
+            },
+            "required": [
+              "post_url"
+            ]
+          },
+          "output_contract": {
+            "type": "object",
+            "properties": {
+              "post_url": {
+                "type": "string"
+              },
+              "post_title": {
+                "type": "string"
+              },
+              "author_username": {
+                "type": "string"
+              },
+              "comment_count": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "Displayed comment count when parseable."
+              },
+              "comments_zero": {
+                "type": "boolean",
+                "description": "True when the page explicitly indicates there are no comments."
+              }
+            },
+            "required": [
+              "post_url",
+              "post_title",
+              "author_username",
+              "comments_zero"
+            ]
+          },
+          "source_evidence": {
+            "workflow_id": "task29_t33",
+            "template_id": "33",
+            "code_quote": "pr = session.get(first_url, timeout=20)\nphtml = pr.text\ntitle_m = re.search(r'<h1 class=\"submission__title[^>]*>.*?<a [^>]*>(.*?)</a>', phtml, re.S)\nog_title = re.search(r'<meta property=\"og:title\" content=\"(.*?)\">', phtml)\nauthor_m = re.search(r'Submitted by\\s*<a href=\"/user/([^\"]+)\"', phtml, re.S)\ncomments_zero = bool(re.search(r'<strong>No comments</strong>', phtml)) or 'data-comment-count=\"0\"' in phtml\npost_title = ...\nusername = author_m.group(1).strip()",
+            "explanation": "The workflow clearly demonstrates opening an individual post page and parsing typed metadata from page HTML rather than returning raw DOM/text. It extracts title with a fallback source, author username, and explicit zero-comment indicators. A generalized capability should expose comment_count when parseable from the same stable attribute family, while preserving the demonstrated boolean zero-comments signal.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        }
+      ]
+    }
+  ],
+  "catalog_index": [],
+  "retrieved_primitives": []
+}

@@ -52,8 +52,12 @@ def prune(split, tasks):
         "retrieve or whose intent begins with a state-changing action verb. The original TRAIN "
         "solve remains in the raw attempt log but is ineligible for library construction."
     )
-    corrected["design"]["retrieve_only_removed_train_task_ids"] = removed_train
-    corrected["design"]["retrieve_only_removed_t2_task_ids"] = removed_t2
+    prior_train = corrected["design"].get("retrieve_only_removed_train_task_ids", [])
+    prior_t2 = corrected["design"].get("retrieve_only_removed_t2_task_ids", [])
+    corrected["design"]["retrieve_only_removed_train_task_ids"] = sorted(
+        set(prior_train + removed_train))
+    corrected["design"]["retrieve_only_removed_t2_task_ids"] = sorted(
+        set(prior_t2 + removed_t2))
     return corrected, removed_train, removed_t2
 
 
@@ -69,7 +73,7 @@ def main():
     if errors:
         raise SystemExit("\n".join(errors))
     Path(args.split).write_text(json.dumps(corrected, ensure_ascii=False, indent=1) + "\n")
-    Path(args.md).write_text(summarise(corrected) + "\n")
+    Path(args.md).write_text(summarise(corrected).rstrip() + "\n")
     print(json.dumps({"removed_train_task_ids": removed_train,
                       "removed_t2_task_ids": removed_t2, "remaining_train": sum(
         len(row["build_task_ids"]) for rows in corrected["train"].values() for row in rows

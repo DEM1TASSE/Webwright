@@ -1,0 +1,187 @@
+{
+  "decision": "CANDIDATES",
+  "candidates": [
+    {
+      "candidate_id": "task143_t162::login_customer_account",
+      "proposed_method": "login_customer_account",
+      "capability": "authenticate a customer account on the shopping site via the Magento login form",
+      "owns": [
+        "Fetch the customer login page",
+        "Extract the login form action URL and hidden form_key token from the login form",
+        "Submit username and password with form_key",
+        "Determine whether login succeeded from the post-login account URL/redirect"
+      ],
+      "does_not_own": [
+        "Choosing which credentials to use",
+        "Any downstream account navigation or business-task logic",
+        "Interpreting order history or order details"
+      ],
+      "input_contract": {
+        "username": {
+          "type": "string",
+          "description": "Customer account email/username"
+        },
+        "password": {
+          "type": "string",
+          "description": "Customer account password"
+        }
+      },
+      "output_contract": {
+        "authenticated": {
+          "type": "boolean",
+          "description": "Whether login succeeded"
+        },
+        "account_url": {
+          "type": "string",
+          "description": "Final URL after login submission"
+        },
+        "login_form_action": {
+          "type": "string",
+          "description": "Resolved form action used for submission"
+        }
+      },
+      "source_evidence": {
+        "workflow_id": "task143_t162",
+        "template_id": "162",
+        "code_quote": "login_page = s.get(urljoin(BASE, 'customer/account/login/'), timeout=30)\nform = re.search(r'<form[^>]*id=\"login-form\"[\\s\\S]*?</form>', login_page.text, re.I)\nform_key = re.search(r'name=\"form_key\"[^>]*value=\"([^\"]+)\"', form.group(0), re.I).group(1)\naction = re.search(r'action=\"([^\"]+)\"', form.group(0), re.I).group(1)\nresp = s.post(urljoin(login_page.url, action), data={'form_key': form_key, 'login[username]': USERNAME, 'login[password]': PASSWORD}, timeout=30, allow_redirects=True)\nok = '/customer/account/' in resp.url",
+        "explanation": "The workflow demonstrates a complete reusable authentication primitive for this site: visit the login page, extract Magento-specific CSRF form_key and action, submit credentials, and verify success via redirect. Hard-coded credentials are task-specific and should become parameters.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    },
+    {
+      "candidate_id": "task143_t162::list_customer_order_history_page",
+      "proposed_method": "list_customer_order_history_page",
+      "capability": "retrieve structured order rows from a customer's order history page",
+      "owns": [
+        "Request a specific order history page after authentication",
+        "Parse each order-history table row that links to an order detail page",
+        "Return typed order records with stable fields exposed by the page",
+        "Resolve relative order-detail links to absolute URLs",
+        "Represent page-scoped completeness rather than pretending all orders are returned"
+      ],
+      "does_not_own": [
+        "Authenticating the session",
+        "Searching across multiple pages for a target date",
+        "Selecting a specific order for a task",
+        "Summarizing or classifying purchases"
+      ],
+      "input_contract": {
+        "page_number": {
+          "type": "integer",
+          "description": "1-based order history page number"
+        }
+      },
+      "output_contract": {
+        "orders": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "order_number": {
+                "type": "string",
+                "description": "Displayed order number/identifier"
+              },
+              "order_date": {
+                "type": "string",
+                "description": "Displayed order date string from the history table"
+              },
+              "order_total_display": {
+                "type": "string",
+                "description": "Displayed total amount string from the history table"
+              },
+              "status": {
+                "type": "string",
+                "description": "Displayed order status"
+              },
+              "order_detail_url": {
+                "type": "string",
+                "description": "Absolute URL to the order detail page"
+              }
+            }
+          },
+          "description": "Structured order rows found on the requested history page"
+        },
+        "page_number": {
+          "type": "integer",
+          "description": "The requested page number"
+        },
+        "has_next_page": {
+          "type": "boolean|null",
+          "description": "Whether another history page likely exists, if determinable from page content; null if not determined by this acquisition path"
+        },
+        "is_complete_for_page": {
+          "type": "boolean",
+          "description": "True because the returned rows reflect the full requested history page, not all pages"
+        }
+      },
+      "source_evidence": {
+        "workflow_id": "task143_t162",
+        "template_id": "162",
+        "code_quote": "for page_num in range(1, 5):\n    path = 'sales/order/history/' if page_num == 1 else f'sales/order/history/?p={page_num}'\n    history = s.get(urljoin(BASE, path), timeout=30)\n    ...\n    for m in re.finditer(r'<tr[^>]*>(.*?)</tr>', history.text, re.I | re.S):\n        row = m.group(1)\n        if 'sales/order/view/order_id/' not in row:\n            continue\n        hrefm = re.search(r'href=\"([^\"]*sales/order/view/order_id/\\d+/)\"', row, re.I)\n        tds = [clean(x) for x in re.findall(r'<td[^>]*>(.*?)</td>', row, re.I | re.S)]\n        ...\n        record = {'href': urljoin(history.url, hrefm.group(1)), 'order': tds[0], 'date': tds[1], 'total': tds[2], 'status': tds[3]}",
+        "explanation": "The workflow repeatedly fetches paginated order-history pages and parses each row into stable typed order records. The reusable capability is page-level structured extraction; the loop over pages and date matching are task logic and should stay outside the primitive.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    },
+    {
+      "candidate_id": "task143_t162::get_order_detail_financials_and_items",
+      "proposed_method": "get_order_detail_financials_and_items",
+      "capability": "retrieve structured line items and key financial totals from an order detail page",
+      "owns": [
+        "Fetch an order detail page by URL",
+        "Parse order item rows from the detail table",
+        "Extract item text visible in each line item row",
+        "Extract displayed item price when present",
+        "Extract subtotal, shipping and handling, and grand total from the order totals footer"
+      ],
+      "does_not_own": [
+        "Choosing which order URL to inspect",
+        "Subjectively classifying items into categories",
+        "Computing task-specific filtered totals beyond the page's displayed financials"
+      ],
+      "input_contract": {
+        "order_detail_url": {
+          "type": "string",
+          "description": "Absolute or resolvable URL of the order detail page"
+        }
+      },
+      "output_contract": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "item_text": {
+                "type": "string",
+                "description": "Cleaned visible text content from the order item row"
+              },
+              "item_price_display": {
+                "type": "string|null",
+                "description": "Displayed price found in the row, if present"
+              }
+            }
+          },
+          "description": "Line items parsed from the order detail page"
+        },
+        "subtotal_display": {
+          "type": "string|null",
+          "description": "Displayed subtotal amount"
+        },
+        "shipping_and_handling_display": {
+          "type": "string|null",
+          "description": "Displayed shipping and handling amount"
+        },
+        "grand_total_display": {
+          "type": "string|null",
+          "description": "Displayed grand total amount"
+        }
+      },
+      "source_evidence": {
+        "workflow_id": "task143_t162",
+        "template_id": "162",
+        "code_quote": "detail = s.get(jan_row['href'], timeout=30)\nitem_rows = re.findall(r'<tr[^>]*id=\"order-item-row-[^\"]*\"[^>]*>(.*?)</tr>', detail.text, re.I | re.S)\nitems = []\nfor row in item_rows:\n    txt = clean(row)\n    prices = re.findall(r'\\$[\\d,]+\\.\\d{2}', txt)\n    price = prices[0] if prices else None\n    items.append({'text': txt, 'price': price})\ntf = re.search(r'<tfoot[^>]*>(.*?)</tfoot>', detail.text, re.I | re.S)\nfooter_text = clean(tf.group(1)) if tf else ''\nsubtotal_m = re.search(r'Subtotal\\s*(\\$[\\d,]+\\.\\d{2})', footer_text)\nshipping_m = re.search(r'Shipping\\s*&\\s*Handling\\s*(\\$[\\d,]+\\.\\d{2})', footer_text)\ngrand_m = re.search(r'Grand Total\\s*(\\$[\\d,]+\\.\\d{2})', footer_text)",
+        "explanation": "The workflow shows a reusable acquisition boundary on the order detail page: item rows and displayed financial totals are parsed into structured fields. The later inclusion/exclusion logic is task-specific and not part of this primitive.",
+        "evidence_match_mode": "exact"
+      }
+    }
+  ]
+}

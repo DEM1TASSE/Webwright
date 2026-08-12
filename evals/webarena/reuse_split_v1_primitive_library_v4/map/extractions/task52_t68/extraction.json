@@ -1,0 +1,168 @@
+{
+  "decision": "CANDIDATES",
+  "candidates": [
+    {
+      "candidate_id": "task52_t68::geocode_place_search",
+      "proposed_method": "geocode_place_search",
+      "capability": "search for places/addresses via the site's configured geocoding service and return typed location candidates",
+      "owns": [
+        "Calling the map site's Nominatim search endpoint with a free-text query",
+        "Parameterizing query text and result limit",
+        "Parsing JSON geocoder results into typed location candidate records",
+        "Returning stable identity/location fields exposed by the endpoint, including display name and coordinates"
+      ],
+      "does_not_own": [
+        "Choosing which candidate is the correct task answer",
+        "Comparing or ranking candidates beyond endpoint order",
+        "Computing routes or travel times",
+        "Formatting the final answer for a task"
+      ],
+      "input_contract": {
+        "query": {
+          "type": "string",
+          "description": "Free-text place/address search query."
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Maximum number of candidates to request from the geocoder.",
+          "default": 5
+        }
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "candidates": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "display_name": {
+                  "type": "string"
+                },
+                "latitude": {
+                  "type": "number"
+                },
+                "longitude": {
+                  "type": "number"
+                }
+              }
+            }
+          },
+          "request_url": {
+            "type": "string",
+            "description": "Final URL used for the geocoding request, useful for traceability."
+          }
+        }
+      },
+      "source_evidence": {
+        "workflow_id": "task52_t68",
+        "template_id": "68",
+        "code_quote": "def geocode(query):\n    r = session.get(NOMINATIM_URL, params={'q': query, 'format': 'json', 'limit': 5}, timeout=30)\n    r.raise_for_status()\n    return r.json(), r.url\n...\norigin_results, origin_url = geocode('Carnegie Mellon University')\n...\ndest_results, dest_url = geocode('Starbucks Craig Street Pittsburgh')",
+        "explanation": "The workflow demonstrates a reusable place-search operation against the site's configured Nominatim service. The hard-coded queries can be parameterized into a generic query input. The endpoint demonstrably returns stable typed fields used here: display_name, lat, and lon; the request URL is also captured as evidence and can be returned for traceability.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    },
+    {
+      "candidate_id": "task52_t68::get_route_summary",
+      "proposed_method": "get_route_summary",
+      "capability": "retrieve a route summary between two coordinates from the site's configured OSRM engine, including duration, distance, waypoints, and step-level route details",
+      "owns": [
+        "Calling the site's OSRM route endpoint with parameterized origin/destination coordinates",
+        "Parameterizing routing profile/engine selection via the demonstrated port-backed service shape",
+        "Requesting route options such as overview, steps, and annotations",
+        "Parsing route JSON into typed route summary records including route-level, waypoint-level, leg-level, and step-level fields demonstrated by the response"
+      ],
+      "does_not_own": [
+        "Geocoding text places into coordinates",
+        "Selecting origin/destination for a task",
+        "Converting duration into a task-specific output string only",
+        "Task-specific interpretation such as deciding which route answer to report if multiple routes are returned"
+      ],
+      "input_contract": {
+        "origin_longitude": {
+          "type": "number"
+        },
+        "origin_latitude": {
+          "type": "number"
+        },
+        "destination_longitude": {
+          "type": "number"
+        },
+        "destination_latitude": {
+          "type": "number"
+        },
+        "profile_port": {
+          "type": "integer",
+          "description": "OSRM engine port to query, as configured by the site deployment. The workflow demonstrates port 5002 for the walking task."
+        },
+        "overview": {
+          "type": "string",
+          "description": "OSRM overview parameter.",
+          "default": "false"
+        },
+        "steps": {
+          "type": "boolean",
+          "description": "Whether to request turn-by-turn steps.",
+          "default": true
+        },
+        "annotations": {
+          "type": "boolean",
+          "description": "Whether to request annotations.",
+          "default": false
+        }
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "waypoints": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "routes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "distance": {
+                  "type": "number"
+                },
+                "duration_seconds": {
+                  "type": "number"
+                },
+                "legs": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "steps": {
+                        "type": "array",
+                        "items": {
+                          "type": "object"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "request_url": {
+            "type": "string"
+          }
+        }
+      },
+      "source_evidence": {
+        "workflow_id": "task52_t68",
+        "template_id": "68",
+        "code_quote": "osrm_url = f\"{OSRM_BASE}5002/route/v1/driving/{origin_lon},{origin_lat};{dest_lon},{dest_lat}\"\nroute_resp = session.get(osrm_url, params={'overview': 'false', 'steps': 'true', 'annotations': 'false'}, timeout=30)\nroute_data = route_resp.json()\nroute = route_data['routes'][0]\n...\nevidence = [\n    f'URL: {route_resp.url}',\n    json.dumps({'code': route_data.get('code'), 'waypoints': route_data.get('waypoints', []), 'distance': route.get('distance'), 'duration': route.get('duration')}, indent=2),\n    json.dumps(route['legs'][0]['steps'][0], indent=2),\n]",
+        "explanation": "The workflow demonstrates a reusable route-fetching primitive over the site's OSRM service. Although the task only uses duration, the same acquisition boundary clearly exposes route_data.code, waypoints, route distance/duration, and leg/step details, so the generalized output should preserve those stable demonstrated fields rather than collapsing to only a duration string. Hard-coded coordinates and port are parameterizable.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    }
+  ]
+}

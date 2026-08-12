@@ -1,0 +1,738 @@
+{
+  "schema_version": 1,
+  "status": "candidate",
+  "approved": false,
+  "site": "shopping",
+  "root_class": "ShoppingSite",
+  "primitives": [
+    {
+      "primitive_id": "shopping/auth/login_customer_account",
+      "method": "login_customer_account",
+      "capability": "Authenticate a customer account on the shopping site via the Magento customer login form and report whether the current browser session became authenticated.",
+      "method_code": "def login_customer_account(self, username: str, password: str) -> dict:\n    import re\n    from urllib.parse import urljoin\n\n    base_url = \"http://ec2-18-223-172-69.us-east-2.compute.amazonaws.com:7770/\"\n    login_url = urljoin(base_url, \"customer/account/login/\")\n    self.page.goto(login_url, wait_until=\"domcontentloaded\")\n    html = self.page.content()\n\n    form_match = re.search(r'<form[^>]*id=[\"\\']login-form[\"\\'][\\s\\S]*?</form>', html, re.I)\n    if not form_match:\n        raise ValueError(\"Login form not found\")\n    form_html = form_match.group(0)\n\n    form_key_match = re.search(r'name=[\"\\']form_key[\"\\'][^>]*value=[\"\\']([^\"\\']+)[\"\\']', form_html, re.I)\n    action_match = re.search(r'action=[\"\\']([^\"\\']+)[\"\\']', form_html, re.I)\n    if not form_key_match:\n        raise ValueError(\"Magento form_key not found\")\n\n    form_key = form_key_match.group(1)\n    action_url = urljoin(self.page.url, action_match.group(1) if action_match else \"customer/account/loginPost/\")\n\n    self.page.evaluate(\n        \"\"\"\n        async ({actionUrl, formKey, username, password}) => {\n            const params = new URLSearchParams();\n            params.set('form_key', formKey);\n            params.set('login[username]', username);\n            params.set('login[password]', password);\n            params.set('send', '');\n            const response = await fetch(actionUrl, {\n                method: 'POST',\n                headers: {'Content-Type': 'application/x-www-form-urlencoded'},\n                body: params.toString(),\n                credentials: 'same-origin',\n                redirect: 'follow'\n            });\n            await response.text();\n        }\n        \"\"\",\n        {\"actionUrl\": action_url, \"formKey\": form_key, \"username\": username, \"password\": password},\n    )\n    self.page.goto(urljoin(base_url, \"customer/account/\"), wait_until=\"domcontentloaded\")\n\n    body_text = self.page.locator(\"body\").inner_text()\n    authenticated = (\n        \"/customer/account/\" in self.page.url\n        or \"Sign Out\" in body_text\n        or \"My Account\" in body_text\n        or \"customer/account/logout\" in self.page.content()\n    )\n\n    return {\n        \"authenticated\": bool(authenticated),\n        \"account_url\": self.page.url,\n        \"login_form_action\": action_url,\n    }\n",
+      "owns": [
+        "Open the customer login page",
+        "Extract the Magento login form action URL and hidden form_key token",
+        "Submit username and password through the site login form",
+        "Determine whether the browser session became authenticated from resulting account page state"
+      ],
+      "does_not_own": [
+        "Choosing which credentials to use",
+        "Navigating to orders, reviews, or products after login",
+        "Any downstream business filtering, aggregation, or final answer formatting"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string",
+            "description": "Customer account email/username"
+          },
+          "password": {
+            "type": "string",
+            "description": "Customer account password"
+          }
+        },
+        "required": [
+          "username",
+          "password"
+        ]
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "authenticated": {
+            "type": "boolean",
+            "description": "Whether login succeeded for the current browser session"
+          },
+          "account_url": {
+            "type": "string",
+            "description": "Current URL after the login attempt"
+          },
+          "login_form_action": {
+            "type": "string",
+            "description": "Resolved login form action URL used for submission"
+          }
+        },
+        "required": [
+          "authenticated",
+          "account_url",
+          "login_form_action"
+        ]
+      },
+      "requires": [],
+      "provides": [
+        "authenticated_customer_session"
+      ],
+      "supported_patterns": [
+        "magento_customer_login_form",
+        "browser_session_authentication"
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task143_t162",
+          "template_id": "162",
+          "code_quote": "login_page = s.get(urljoin(BASE, 'customer/account/login/'), timeout=30)\nform = re.search(r'<form[^>]*id=\"login-form\"[\\s\\S]*?</form>', login_page.text, re.I)\nform_key = re.search(r'name=\"form_key\"[^>]*value=\"([^\"]+)\"', form.group(0), re.I).group(1)\naction = re.search(r'action=\"([^\"]+)\"', form.group(0), re.I).group(1)\nresp = s.post(urljoin(login_page.url, action), data={'form_key': form_key, 'login[username]': USERNAME, 'login[password]': PASSWORD}, timeout=30, allow_redirects=True)\nok = '/customer/account/' in resp.url",
+          "explanation": "Generalized the Magento login flow into a reusable browser primitive with username/password inputs and objective authentication outputs.",
+          "evidence_match_mode": "attributed_nonverbatim"
+        },
+        {
+          "workflow_id": "task322_t160",
+          "template_id": "160",
+          "code_quote": "login_html=s.get(urljoin(BASE,'customer/account/login/')).text\nform_key=re.search(r'name=\"form_key\" type=\"hidden\" value=\"([^\"]+)\"', login_html).group(1)\nr=s.post(urljoin(BASE,'customer/account/loginPost/'), data={'form_key':form_key,'login[username]':'emma.lopez@gmail.com','login[password]':'Password.123','send':''}, allow_redirects=True)\nassert ('Sign Out' in r.text) or ('customer/account/logout' in r.text)",
+          "explanation": "Confirms the same site-specific form_key submission pattern and authenticated-page success markers without hard-coded credentials.",
+          "evidence_match_mode": "attributed_nonverbatim"
+        }
+      ],
+      "feature": "auth"
+    },
+    {
+      "primitive_id": "shopping/orders/list_customer_order_history_page",
+      "method": "list_customer_order_history_page",
+      "capability": "Retrieve structured order summary rows from one authenticated customer order-history page on the shopping site.",
+      "method_code": "def list_customer_order_history_page(self, page_number: int = 1) -> dict:\n    import re\n    import html as html_lib\n    from urllib.parse import urljoin\n\n    def _clean(text: str) -> str:\n        text = re.sub(r'<script.*?</script>', ' ', text, flags=re.I | re.S)\n        text = re.sub(r'<style.*?</style>', ' ', text, flags=re.I | re.S)\n        text = re.sub(r'<[^>]+>', ' ', text)\n        return html_lib.unescape(re.sub(r'\\s+', ' ', text)).strip()\n\n    base_url = \"http://ec2-18-223-172-69.us-east-2.compute.amazonaws.com:7770/\"\n    path = \"sales/order/history/\" if page_number == 1 else f\"sales/order/history/?p={page_number}\"\n    url = urljoin(base_url, path)\n    self.page.goto(url, wait_until=\"domcontentloaded\")\n    html = self.page.content()\n\n    orders = []\n    seen = set()\n    for match in re.finditer(r'<tr[^>]*>(.*?)</tr>', html, re.I | re.S):\n        row_html = match.group(1)\n        if 'sales/order/view/order_id/' not in row_html:\n            continue\n\n        href_match = re.search(r'href=[\"\\']([^\"\\']*sales/order/view/order_id/\\d+/?)[\"\\']', row_html, re.I)\n        cells = [_clean(cell) for cell in re.findall(r'<td[^>]*>(.*?)</td>', row_html, re.I | re.S)]\n        if not href_match or len(cells) < 4:\n            continue\n\n        order_number = cells[0]\n        if not order_number or order_number in seen:\n            continue\n        seen.add(order_number)\n\n        orders.append({\n            \"order_number\": order_number,\n            \"order_date\": cells[1],\n            \"order_total_display\": cells[2],\n            \"status\": cells[3],\n            \"order_detail_url\": urljoin(self.page.url, href_match.group(1)),\n        })\n\n    has_next_page = None\n    next_patterns = [\n        rf'href=[\"\\'][^\"\\']*sales/order/history/\\?p={page_number + 1}[^\"\\']*[\"\\']',\n        rf'href=[\"\\'][^\"\\']*sales/order/history/index/\\?p={page_number + 1}[^\"\\']*[\"\\']',\n    ]\n    for pattern in next_patterns:\n        if re.search(pattern, html, re.I):\n            has_next_page = True\n            break\n    if has_next_page is None:\n        pager_present = re.search(r'sales/order/history/(?:index/)?\\?p=\\d+', html, re.I)\n        if pager_present:\n            has_next_page = False\n\n    return {\n        \"orders\": orders,\n        \"page_number\": page_number,\n        \"has_next_page\": has_next_page,\n        \"is_complete_for_page\": True,\n    }\n",
+      "owns": [
+        "Open one authenticated customer order-history page",
+        "Parse order-history table rows that link to order detail pages",
+        "Extract stable displayed row fields and resolve order detail URLs",
+        "Represent completeness only for the fetched history page"
+      ],
+      "does_not_own": [
+        "Authenticating the customer session",
+        "Searching across multiple pages for a target order",
+        "Filtering by date, status, or recency",
+        "Aggregating counts or spend across orders"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "page_number": {
+            "type": "integer",
+            "description": "1-based customer order-history page number",
+            "default": 1
+          }
+        },
+        "required": []
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "orders": {
+            "type": "array",
+            "description": "Structured order rows parsed from the requested history page",
+            "items": {
+              "type": "object",
+              "properties": {
+                "order_number": {
+                  "type": "string",
+                  "description": "Displayed order number/identifier"
+                },
+                "order_date": {
+                  "type": "string",
+                  "description": "Displayed order date string from the history table"
+                },
+                "order_total_display": {
+                  "type": "string",
+                  "description": "Displayed total amount string from the history table"
+                },
+                "status": {
+                  "type": "string",
+                  "description": "Displayed order status"
+                },
+                "order_detail_url": {
+                  "type": "string",
+                  "description": "Absolute URL to the order detail page"
+                }
+              },
+              "required": [
+                "order_number",
+                "order_date",
+                "order_total_display",
+                "status",
+                "order_detail_url"
+              ]
+            }
+          },
+          "page_number": {
+            "type": "integer",
+            "description": "The requested history page number"
+          },
+          "has_next_page": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether another history page appears available, if determinable from fetched page content"
+          },
+          "is_complete_for_page": {
+            "type": "boolean",
+            "description": "True because the returned rows represent the full fetched history page, not all pages"
+          }
+        },
+        "required": [
+          "orders",
+          "page_number",
+          "has_next_page",
+          "is_complete_for_page"
+        ]
+      },
+      "requires": [
+        "authenticated_customer_session"
+      ],
+      "provides": [
+        "customer_order_history_page"
+      ],
+      "supported_patterns": [
+        "authenticated_order_history_table",
+        "paginated_order_history_page"
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task234_t213",
+          "template_id": "213",
+          "code_quote": "for idx, url in enumerate([ f'{START_URL}/sales/order/history/', f'{START_URL}/sales/order/history/?p=2', f'{START_URL}/sales/order/history/?p=3', f'{START_URL}/sales/order/history/?p=4', ], start=3): ... await page.goto(url, wait_until='domcontentloaded')\nrows = await extract_rows(page)\n...\nasync def extract_rows(page):\n    return await page.locator('table tbody tr').evaluate_all(\"rows => rows.map(r => Array.from(r.querySelectorAll('td')).map(td => (td.innerText||td.textContent||'').trim()))\")",
+          "explanation": "Generalizes explicit navigation over numbered order-history pages and DOM row extraction into the existing page-scoped primitive. The workflow's later cross-page On Hold search is excluded as workflow logic.",
+          "evidence_match_mode": "attributed_nonverbatim"
+        },
+        {
+          "workflow_id": "task232_t213",
+          "template_id": "213",
+          "code_quote": "await page.get_by_role('link', name='My Orders').click() ... table = page.get_by_role('table', name='Orders') ... for i in range(1, row_count): texts = [t.strip() for t in await rows.nth(i).locator('td').all_inner_texts()]\nif len(texts) >= 4:\n    order_no, date, total, status = texts[:4]\n    parsed.append({'order_no': order_no, 'date': date, 'total': total, 'status': status})",
+          "explanation": "Confirms the stable order-history table fields returned by the primitive: order number, date, displayed total, and status, while keeping pending-order selection outside the primitive.",
+          "evidence_match_mode": "attributed_nonverbatim"
+        }
+      ],
+      "feature": "orders"
+    },
+    {
+      "primitive_id": "shopping/orders/get_order_detail",
+      "method": "get_order_detail",
+      "capability": "Retrieve structured objective facts from an authenticated customer order detail page, including order identity, dates, status, displayed financial totals, line items shown on the page, and any displayed arrival or delivery date normalized when recoverable.",
+      "method_code": "def get_order_detail(self, order_detail_url: str, order_number: str | None = None) -> dict:\n    import re\n    import html as html_lib\n    from datetime import datetime\n    from urllib.parse import urljoin\n\n    def _clean(text: str) -> str:\n        text = re.sub(r'<script.*?</script>', ' ', text, flags=re.I | re.S)\n        text = re.sub(r'<style.*?</style>', ' ', text, flags=re.I | re.S)\n        text = re.sub(r'<[^>]+>', ' ', text)\n        return html_lib.unescape(re.sub(r'\\s+', ' ', text)).strip()\n\n    def _normalize_date(raw: str):\n        raw = raw.strip()\n        for fmt in ('%B %d, %Y', '%b %d, %Y', '%m/%d/%Y', '%m/%d/%y'):\n            try:\n                return datetime.strptime(raw, fmt).strftime('%Y-%m-%d')\n            except Exception:\n                pass\n        return None\n\n    base_url = \"http://ec2-18-223-172-69.us-east-2.compute.amazonaws.com:7770/\"\n    self.page.goto(urljoin(base_url, order_detail_url), wait_until=\"domcontentloaded\")\n    html = self.page.content()\n    body_text = _clean(html)\n\n    extracted_order_number = None\n    order_number_match = re.search(r'Order\\s*#\\s*([0-9]+)', body_text, re.I)\n    if order_number_match:\n        extracted_order_number = order_number_match.group(1)\n\n    anchor_order_number = order_number or extracted_order_number\n    status = None\n    if anchor_order_number:\n        anchored_status_match = re.search(\n            r'Order\\s*#\\s*' + re.escape(anchor_order_number) + r'\\s+([A-Za-z ]+?)\\s+Order Date:',\n            body_text,\n            re.I,\n        )\n        if anchored_status_match:\n            status = anchored_status_match.group(1).strip()\n    if status is None:\n        status_match = re.search(r'Order Status:\\s*([A-Za-z ]+)', body_text, re.I)\n        if status_match:\n            status = status_match.group(1).strip()\n\n    order_date_long_match = re.search(r'Order Date:\\s*([A-Za-z]+\\s+\\d{1,2},\\s+\\d{4})', body_text, re.I)\n    order_date_short_match = re.search(r'\\b(\\d{1,2}/\\d{1,2}/\\d{2})\\b', body_text)\n\n    item_rows = re.findall(r'<tr[^>]*id=[\"\\']order-item-row-[^\"\\']*[\"\\'][^>]*>(.*?)</tr>', html, re.I | re.S)\n    items = []\n    for row_html in item_rows:\n        row_text = _clean(row_html)\n        prices = re.findall(r'\\$[\\d,]+\\.\\d{2}', row_text)\n        name_match = re.search(r'^(.*?)(?:\\s+SKU\\b|\\s+Qty\\b|\\s+Price\\b)', row_text, re.I)\n        item_name = name_match.group(1).strip() if name_match and name_match.group(1).strip() else None\n        items.append({\n            \"item_name\": item_name,\n            \"item_text\": row_text,\n            \"item_price_display\": prices[0] if prices else None,\n        })\n\n    tfoot_match = re.search(r'<tfoot[^>]*>(.*?)</tfoot>', html, re.I | re.S)\n    footer_text = _clean(tfoot_match.group(1)) if tfoot_match else body_text\n    subtotal_match = re.search(r'Subtotal\\s*(\\$[\\d,]+\\.\\d{2})', footer_text, re.I)\n    shipping_match = re.search(r'Shipping\\s*&\\s*Handling\\s*(\\$[\\d,]+\\.\\d{2})', footer_text, re.I)\n    grand_total_match = re.search(r'Grand Total\\s*(\\$[\\d,]+\\.\\d{2})', footer_text, re.I)\n\n    arrival_date = None\n    patterns = [\n        r'(?:Arrival|Arrives|Estimated Delivery|Delivery Date|Delivered on|Expected by|Expected delivery)[:\\s]+([A-Za-z]+\\s+\\d{1,2},\\s*\\d{4})',\n        r'(?:Arrival|Arrives|Estimated Delivery|Delivery Date|Delivered on|Expected by|Expected delivery)[:\\s]+(\\d{1,2}/\\d{1,2}/\\d{2,4})',\n    ]\n    for pattern in patterns:\n        match = re.search(pattern, body_text, re.I)\n        if match:\n            arrival_date = _normalize_date(match.group(1))\n            if arrival_date is not None:\n                break\n\n    return {\n        \"order_number\": extracted_order_number,\n        \"order_date_display\": order_date_short_match.group(1) if order_date_short_match else None,\n        \"order_date_long\": order_date_long_match.group(1) if order_date_long_match else None,\n        \"status\": status,\n        \"subtotal_display\": subtotal_match.group(1) if subtotal_match else None,\n        \"shipping_and_handling_display\": shipping_match.group(1) if shipping_match else None,\n        \"grand_total_display\": grand_total_match.group(1) if grand_total_match else None,\n        \"arrival_date\": arrival_date,\n        \"items\": items,\n        \"order_detail_url\": self.page.url,\n    }\n",
+      "owns": [
+        "Open a specific authenticated order detail page",
+        "Parse displayed order identity, order date, and status facts when present",
+        "Parse line items shown on the detail page",
+        "Extract displayed subtotal, shipping and handling, and grand total amounts",
+        "Detect displayed arrival or delivery date text when present and normalize it to YYYY-MM-DD"
+      ],
+      "does_not_own": [
+        "Choosing which order to inspect",
+        "Classifying items into semantic categories",
+        "Applying refund policy or exclusion rules",
+        "Aggregating across multiple orders",
+        "Inferring an arrival date when the page does not display one"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "order_detail_url": {
+            "type": "string",
+            "description": "Absolute URL or site-relative path for the target authenticated order detail page"
+          },
+          "order_number": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional expected website order number used to anchor status extraction when available"
+          }
+        },
+        "required": [
+          "order_detail_url"
+        ]
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "order_number": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Displayed order number when recoverable from the detail page"
+          },
+          "order_date_display": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Displayed short date string when present on the page"
+          },
+          "order_date_long": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Displayed long-form order date when present"
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Displayed order status when present"
+          },
+          "subtotal_display": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Displayed subtotal amount"
+          },
+          "shipping_and_handling_display": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Displayed shipping and handling amount"
+          },
+          "grand_total_display": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Displayed grand total amount"
+          },
+          "arrival_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Displayed arrival or delivery date normalized to YYYY-MM-DD, or null if not shown"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "item_name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Displayed item name when recoverable from the item row"
+                },
+                "item_text": {
+                  "type": "string",
+                  "description": "Cleaned visible text content from the order item row"
+                },
+                "item_price_display": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Displayed item price found in the row, if present"
+                }
+              },
+              "required": [
+                "item_name",
+                "item_text",
+                "item_price_display"
+              ]
+            }
+          },
+          "order_detail_url": {
+            "type": "string",
+            "description": "Final resolved URL for the fetched order detail page"
+          }
+        },
+        "required": [
+          "items",
+          "order_detail_url",
+          "arrival_date"
+        ]
+      },
+      "requires": [
+        "authenticated_customer_session"
+      ],
+      "provides": [
+        "customer_order_detail"
+      ],
+      "supported_patterns": [
+        "authenticated_order_detail_page",
+        "order_financial_totals_extraction",
+        "order_line_items_extraction",
+        "order_status_extraction",
+        "delivery_date_extraction"
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task143_t162",
+          "template_id": "162",
+          "code_quote": "detail = s.get(jan_row['href'], timeout=30)\nitem_rows = re.findall(r'<tr[^>]*id=\"order-item-row-[^\"]*\"[^>]*>(.*?)</tr>', detail.text, re.I | re.S)\nitems = []\nfor row in item_rows:\n    txt = clean(row)\n    prices = re.findall(r'\\$[\\d,]+\\.\\d{2}', txt)\n    price = prices[0] if prices else None\n    items.append({'text': txt, 'price': price})\n...\nsubtotal_m = re.search(r'Subtotal\\s*(\\$[\\d,]+\\.\\d{2})', footer_text)\nshipping_m = re.search(r'Shipping\\s*&\\s*Handling\\s*(\\$[\\d,]+\\.\\d{2})', footer_text)\ngrand_m = re.search(r'Grand Total\\s*(\\$[\\d,]+\\.\\d{2})', footer_text)",
+          "explanation": "Supports the merged primitive's order-detail page boundary for line items and displayed financial totals.",
+          "evidence_match_mode": "attributed_nonverbatim"
+        },
+        {
+          "workflow_id": "task322_t160",
+          "template_id": "160",
+          "code_quote": "page=s.get(item['view']).text\nplain=normalize_text(page)\ngrand=re.search(r'Grand Total\\s*\\$([0-9,]+\\.[0-9]{2})', plain)\nship=re.search(r'Shipping\\s*&\\s*Handling\\s*\\$([0-9,]+\\.[0-9]{2})', plain)\norder_date=re.search(r'Order Date:\\s*([A-Za-z]+\\s+\\d{1,2},\\s+\\d{4})', plain)\nstatus='Canceled' if 'Canceled' in plain else 'Unknown'",
+          "explanation": "Confirms stable extraction of long-form order date, shipping, grand total, and status from the same order detail page.",
+          "evidence_match_mode": "exact"
+        },
+        {
+          "workflow_id": "task96_t193",
+          "template_id": "193",
+          "code_quote": "detail_url, detail_html = sess.open(latest['detail_url'])\ndetail_text = strip_text(detail_html)\ndetail_status = None\nm = re.search(r'Order\\s+#\\s*' + re.escape(latest['order_number']) + r'\\s+([A-Za-z]+)\\s+Order Date:', detail_text, re.I)\nif m:\n    detail_status = m.group(1)\narrival_date = parse_arrival_date(detail_text)\n...\ndef parse_arrival_date(detail_text):\n    patterns = [\n        r'(?:Arrival|Arrives|Estimated Delivery|Delivery Date|Delivered on|Expected by|Expected delivery)[:\\s]+([A-Za-z]+\\s+\\d{1,2},\\s*\\d{4})',\n        r'(?:Arrival|Arrives|Estimated Delivery|Delivery Date|Delivered on|Expected by|Expected delivery)[:\\s]+(\\d{1,2}/\\d{1,2}/\\d{2,4})',\n    ]",
+          "explanation": "Adds the same-page extraction of anchored status and displayed arrival or delivery date, making merge appropriate.",
+          "evidence_match_mode": "attributed_nonverbatim"
+        }
+      ],
+      "source_attribution": {
+        "sources": [
+          "shopping/get_order_detail",
+          "shopping/get_order_detail_status_and_arrival"
+        ],
+        "explanation": "Merged two primitives with the same authenticated order-detail page boundary. The second only adds another objective field family from that same page, so one cohesive orders primitive is a better fit."
+      },
+      "feature": "orders"
+    },
+    {
+      "primitive_id": "shopping/reviews/list_product_reviews",
+      "method": "list_product_reviews",
+      "capability": "Retrieve structured review records for a shopping product from the site's Magento review listing endpoint.",
+      "method_code": "def list_product_reviews(self, product_id: str, page_number: int = 1, limit: int = 50) -> dict:\n    import re\n    import html as html_lib\n    from urllib.parse import urlencode\n\n    def _clean(text: str) -> str:\n        text = re.sub(r'<[^>]+>', ' ', text)\n        return html_lib.unescape(re.sub(r'\\s+', ' ', text)).strip()\n\n    base_url = \"http://ec2-18-223-172-69.us-east-2.compute.amazonaws.com:7770\"\n    query = {\"limit\": str(limit)}\n    if page_number != 1:\n        query[\"p\"] = str(page_number)\n    review_url = f\"{base_url}/review/product/listAjax/id/{product_id}/?{urlencode(query)}\"\n\n    self.page.goto(review_url, wait_until=\"domcontentloaded\")\n    html = self.page.content()\n\n    reviews = []\n    blocks = re.findall(r'<li class=[\"\\']item review-item[\"\\'].*?</li>', html, re.I | re.S)\n    for block in blocks:\n        title_match = re.search(r'<div class=[\"\\']review-title[\"\\'][^>]*>(.*?)</div>', block, re.I | re.S)\n        content_match = re.search(r'<div class=[\"\\']review-content[\"\\'][^>]*>(.*?)</div>', block, re.I | re.S)\n        author_match = re.search(r'itemprop=[\"\\']author[\"\\']>\\s*(.*?)</strong>', block, re.I | re.S)\n        rating_match = re.search(r'<div class=[\"\\']rating-result[\"\\'][^>]*title=[\"\\'](\\d+)%[\"\\']', block, re.I | re.S)\n        rating_percent = int(rating_match.group(1)) if rating_match else None\n        reviews.append({\n            \"author_name\": _clean(author_match.group(1)) if author_match else None,\n            \"review_title\": _clean(title_match.group(1)) if title_match else None,\n            \"review_content\": _clean(content_match.group(1)) if content_match else None,\n            \"rating_percent\": rating_percent,\n            \"stars\": int(round(rating_percent / 20.0)) if rating_percent is not None else None,\n        })\n\n    return {\n        \"product_id\": product_id,\n        \"reviews\": reviews,\n        \"page_number\": page_number,\n        \"limit\": limit,\n        \"is_complete_for_page\": True,\n    }\n",
+      "owns": [
+        "Construct the Magento review listing endpoint for a product",
+        "Fetch one review-list page from the site",
+        "Parse review items into typed review records",
+        "Return objective review fields including author, title, content, and rating when present"
+      ],
+      "does_not_own": [
+        "Topic or sentiment classification such as customer-service complaints",
+        "Filtering reviews by task-specific predicates",
+        "Deduplicating or aggregating reviewer names across pages",
+        "Claiming whole-corpus completeness beyond the fetched page"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "product_id": {
+            "type": "string",
+            "description": "Site product identifier used by the review listing endpoint"
+          },
+          "page_number": {
+            "type": "integer",
+            "description": "1-based review page number to fetch when supported",
+            "default": 1
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Requested review page size when supported by the endpoint",
+            "default": 50
+          }
+        },
+        "required": [
+          "product_id"
+        ]
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "product_id": {
+            "type": "string",
+            "description": "Requested site product identifier"
+          },
+          "reviews": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "author_name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Displayed review author name"
+                },
+                "review_title": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Displayed review title"
+                },
+                "review_content": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Displayed review body/content"
+                },
+                "rating_percent": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "description": "Displayed Magento rating percentage when present"
+                },
+                "stars": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "description": "Star rating normalized from rating_percent when present"
+                }
+              },
+              "required": [
+                "author_name",
+                "review_title",
+                "review_content",
+                "rating_percent",
+                "stars"
+              ]
+            }
+          },
+          "page_number": {
+            "type": "integer"
+          },
+          "limit": {
+            "type": "integer"
+          },
+          "is_complete_for_page": {
+            "type": "boolean",
+            "description": "True because the returned reviews cover the fetched page only"
+          }
+        },
+        "required": [
+          "product_id",
+          "reviews",
+          "page_number",
+          "limit",
+          "is_complete_for_page"
+        ]
+      },
+      "requires": [],
+      "provides": [
+        "product_review_page"
+      ],
+      "supported_patterns": [
+        "magento_product_review_list_ajax",
+        "review_page_structured_extraction"
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task26_t222",
+          "template_id": "222",
+          "code_quote": "REVIEW_URL = 'http://ec2-18-223-172-69.us-east-2.compute.amazonaws.com:7770/review/product/listAjax/id/34037/?limit=50'\nreview_html = requests.get(REVIEW_URL, timeout=30).text\nblocks = re.findall(r'<li class=\"item review-item\".*?</li>', review_html, re.I|re.S)\n...\ntitle = clean(re.search(r'<div class=\"review-title\"[^>]*>(.*?)</div>', b, re.I|re.S).group(1))\ncontent = clean(re.search(r'<div class=\"review-content\"[^>]*>(.*?)</div>', b, re.I|re.S).group(1))\nauthor = clean(re.search(r'itemprop=\"author\">(.*?)</strong>', b, re.I|re.S).group(1))",
+          "explanation": "Generalized one review-list page retrieval into a parameterized primitive keyed by product_id and page inputs, leaving complaint classification outside the primitive.",
+          "evidence_match_mode": "attributed_nonverbatim"
+        },
+        {
+          "workflow_id": "task166_t136",
+          "template_id": "136",
+          "code_quote": "rr = session.get(review_url, timeout=30)\n... items = re.findall(r'<li class=\"item review-item\".*?<div class=\"review-title\" itemprop=\"name\">\\s*(.*?)\\s*</div>.*?<div class=\"rating-result\"[^>]*title=\"(\\d+)%\".*?<div class=\"review-content\" itemprop=\"description\">\\s*(.*?)</div>', review_html, re.S)\n... reviews.append({'title': title_clean, 'rating_percent': pct_i, 'stars': stars, 'description': desc_clean})",
+          "explanation": "Adds evidence that the same review listing endpoint exposes stable rating percentage and derived stars, so the primitive preserves those objective fields.",
+          "evidence_match_mode": "attributed_nonverbatim"
+        }
+      ],
+      "feature": "reviews"
+    },
+    {
+      "primitive_id": "shopping/catalog/search_products",
+      "method": "search_products",
+      "capability": "Search the shopping catalog and return typed product records from one or more paginated search-result pages.",
+      "method_code": "def search_products(self, query: str, page_number: int = 1, fetch_all_pages: bool = False) -> dict:\n    import re\n    import html as html_lib\n    from urllib.parse import quote, urljoin\n\n    def _clean(text: str) -> str:\n        text = re.sub(r'<[^>]+>', ' ', text)\n        return html_lib.unescape(re.sub(r'\\s+', ' ', text)).strip()\n\n    def _parse_products(page_html: str, current_url: str) -> list:\n        products = []\n        for block in re.findall(r'<li[^>]*class=[\"\\'][^\"\\']*product-item[^\"\\']*[\"\\'][^>]*>(.*?)</li>', page_html, re.I | re.S):\n            name_match = re.search(r'class=[\"\\']product-item-link[\"\\'][^>]*>(.*?)</a>', block, re.I | re.S)\n            href_match = re.search(r'class=[\"\\']product-item-link[\"\\'][^>]*href=[\"\\']([^\"\\']+)[\"\\']', block, re.I | re.S)\n            price_matches = re.findall(r'\\$\\s*([0-9]+(?:\\.[0-9]{2})?)', block)\n            if not name_match or not price_matches:\n                continue\n            products.append({\n                \"name\": _clean(name_match.group(1)),\n                \"product_url\": urljoin(current_url, href_match.group(1)) if href_match else None,\n                \"price\": float(price_matches[0]),\n            })\n        return products\n\n    base_url = \"http://ec2-18-223-172-69.us-east-2.compute.amazonaws.com:7770\"\n    first_url = f\"{base_url}/catalogsearch/result/?q={quote(query)}\"\n    self.page.goto(first_url, wait_until=\"domcontentloaded\")\n    first_html = self.page.content()\n\n    discovered = {1}\n    for p in re.findall(r'catalogsearch/result/(?:index/)?\\?p=(\\d+)&amp;q=', first_html, re.I):\n        discovered.add(int(p))\n\n    fetched = sorted(discovered) if fetch_all_pages else [page_number]\n\n    results = []\n    seen = set()\n    for current_page_number in fetched:\n        current_url = first_url if current_page_number == 1 else f\"{base_url}/catalogsearch/result/index/?p={current_page_number}&q={quote(query)}\"\n        if current_page_number != 1:\n            self.page.goto(current_url, wait_until=\"domcontentloaded\")\n            page_html = self.page.content()\n        else:\n            page_html = first_html\n        for product in _parse_products(page_html, self.page.url):\n            key = (product[\"name\"], product[\"product_url\"], product[\"price\"])\n            if key in seen:\n                continue\n            seen.add(key)\n            results.append(product)\n\n    return {\n        \"query\": query,\n        \"results\": results,\n        \"page_numbers_discovered\": sorted(discovered),\n        \"fetched_page_numbers\": fetched,\n        \"is_complete\": fetch_all_pages and set(fetched) == set(discovered),\n    }\n",
+      "owns": [
+        "Construct catalog search URLs from a free-text query",
+        "Fetch search result pages",
+        "Discover pagination pages from search-result HTML",
+        "Parse product result cards into typed records",
+        "Track fetched versus discovered pagination coverage"
+      ],
+      "does_not_own": [
+        "Filtering results by brand-name containment or other task predicates",
+        "Computing aggregate statistics such as min/max price",
+        "Task-specific ranking, comparison, or final answer formatting"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Free-text catalog search query"
+          },
+          "page_number": {
+            "type": "integer",
+            "description": "Specific results page to fetch when not fetching all pages",
+            "default": 1
+          },
+          "fetch_all_pages": {
+            "type": "boolean",
+            "description": "Whether to fetch all discovered result pages starting from page 1",
+            "default": false
+          }
+        },
+        "required": [
+          "query"
+        ]
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string"
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "description": "Displayed product name from the result card"
+                },
+                "product_url": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Resolved product detail URL from the result card"
+                },
+                "price": {
+                  "type": "number",
+                  "description": "Displayed product price parsed from the result card"
+                }
+              },
+              "required": [
+                "name",
+                "product_url",
+                "price"
+              ]
+            }
+          },
+          "page_numbers_discovered": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "description": "Result page numbers discovered from pagination links"
+          },
+          "fetched_page_numbers": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "description": "Result page numbers fetched for this invocation"
+          },
+          "is_complete": {
+            "type": "boolean",
+            "description": "True when all discovered pages were fetched"
+          }
+        },
+        "required": [
+          "query",
+          "results",
+          "page_numbers_discovered",
+          "fetched_page_numbers",
+          "is_complete"
+        ]
+      },
+      "requires": [],
+      "provides": [
+        "catalog_search_results"
+      ],
+      "supported_patterns": [
+        "catalog_search_results_page",
+        "paginated_catalog_search"
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task230_t370",
+          "template_id": "370",
+          "code_quote": "search_url = f\"{BASE}/catalogsearch/result/?q=\" + urllib.parse.quote(QUERY)\n...\nfor p in re.findall(r'catalogsearch/result/index/\\?p=(\\d+)&amp;q=Perricone\\+MD', first, re.I):\n    page_nums.add(int(p))\n...\nfor block in re.findall(r'<li[^>]*class=\"[^\"]*product-item[^\"]*\"[^>]*>(.*?)</li>', page_html, re.I | re.S):\n    m_name = re.search(r'class=\"product-item-link\"[^>]*>(.*?)</a>', block, re.I | re.S)\n    m_href = re.search(r'class=\"product-item-link\"[^>]*href=\"([^\"]+)\"', block, re.I | re.S)\n    prices = re.findall(r'\\$\\s*([0-9]+(?:\\.[0-9]{2})?)', block)\n...\n        products.append({'name': name, 'href': href, 'price': price})",
+          "explanation": "Generalized the demonstrated site search operation into a query-parameterized catalog-search primitive with structured product records and pagination coverage metadata.",
+          "evidence_match_mode": "attributed_nonverbatim"
+        }
+      ],
+      "feature": "catalog"
+    },
+    {
+      "primitive_id": "shopping/reviews/get_product_review_feed_metadata",
+      "method": "get_product_review_feed_metadata",
+      "capability": "Fetch a shopping product detail page and extract stable review-feed metadata exposed in the product HTML.",
+      "method_code": "def get_product_review_feed_metadata(self, product_url: str) -> dict:\n    import re\n    import html as html_lib\n    from urllib.parse import urljoin\n\n    self.page.goto(product_url, wait_until=\"domcontentloaded\")\n    html = self.page.content()\n\n    title_match = re.search(r'<title>(.*?)</title>', html, re.I | re.S)\n    review_url_match = re.search(r'\"productReviewUrl\"\\s*:\\s*\"(.*?)\"', html)\n    review_count_match = re.search(r'<span[^>]*itemprop=[\"\\']reviewCount[\"\\'][^>]*>(\\d+)</span>', html, re.I)\n\n    review_feed_url = None\n    if review_url_match:\n        review_feed_url = review_url_match.group(1).encode('utf-8').decode('unicode_escape').replace('\\\\/', '/')\n        review_feed_url = urljoin(self.page.url, review_feed_url)\n\n    product_title = None\n    if title_match:\n        product_title = html_lib.unescape(re.sub(r'\\s+', ' ', title_match.group(1))).strip()\n\n    review_count = int(review_count_match.group(1)) if review_count_match else None\n\n    return {\n        \"product_url\": self.page.url,\n        \"product_title\": product_title,\n        \"review_feed_url\": review_feed_url,\n        \"review_count\": review_count,\n    }\n",
+      "owns": [
+        "Open a product detail page URL on the shopping site",
+        "Read product HTML for embedded review-source metadata",
+        "Extract the embedded product review feed URL when present",
+        "Extract the displayed review count when present",
+        "Return page title context from the product page when present"
+      ],
+      "does_not_own": [
+        "Fetching or parsing the review feed response itself",
+        "Filtering reviews by rating or any other task-specific predicate",
+        "Interpreting review percentages into business thresholds",
+        "Formatting a final user answer"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "product_url": {
+            "type": "string",
+            "description": "Absolute or site-relative product detail page URL"
+          }
+        },
+        "required": [
+          "product_url"
+        ]
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "product_url": {
+            "type": "string",
+            "description": "Resolved URL of the inspected product page"
+          },
+          "product_title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Document title of the product page when present"
+          },
+          "review_feed_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Resolved review feed/listing URL exposed in product HTML when present"
+          },
+          "review_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Displayed review count from the product page when present"
+          }
+        },
+        "required": [
+          "product_url",
+          "product_title",
+          "review_feed_url",
+          "review_count"
+        ]
+      },
+      "requires": [],
+      "provides": [
+        "product_review_feed_metadata"
+      ],
+      "supported_patterns": [
+        "product_detail_page_html_metadata",
+        "embedded_review_feed_discovery"
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task165_t136",
+          "template_id": "136",
+          "code_quote": "product_html = fetch(START_URL)\nproduct_title = re.search(r'<title>(.*?)</title>', product_html, re.I | re.S)\nreview_url_match = re.search(r'\"productReviewUrl\"\\s*:\\s*\"(.*?)\"', product_html)\nreview_count_match = re.search(r'<span itemprop=\"reviewCount\">(\\d+)</span>', product_html, re.I)\n...\nreview_url = review_url_match.group(1).encode('utf-8').decode('unicode_escape').replace('\\\\/', '/')",
+          "explanation": "Generalizes the product-page metadata extraction step into a reusable primitive keyed by product URL. The later fetching of the review endpoint and low-rating filtering remain outside this primitive.",
+          "evidence_match_mode": "attributed_nonverbatim"
+        }
+      ],
+      "feature": "reviews"
+    }
+  ],
+  "package_sha256": "sha256:40925be39b7cd90556cc8b03e87f0c7fbb6113de5910c3188b1a8c7cab85205f"
+}

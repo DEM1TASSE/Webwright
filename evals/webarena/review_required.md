@@ -5,7 +5,7 @@ No blocking review items currently.
 ## Retrieve-only split correction
 
 Before formal evaluation, semantic validation found that the original evaluator-only filter had
-admitted one TRAIN and seven T2 state-changing/unavailable-action tasks. They were excluded and
+admitted one TRAIN and eight T2 state-changing/unavailable-action tasks. They were excluded and
 recorded in the split metadata. All 121 TRAIN attempts remain auditable; task 792 was incorrect and
 was never gold-admitted, so neither frozen library required regeneration.
 

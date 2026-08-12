@@ -23,15 +23,15 @@
 
 | site | templates | T2 tasks | fresh |
 |---|---:|---:|---:|
-| gitlab | 6 | 10 | 0 |
+| gitlab | 5 | 9 | 0 |
 | map | 10 | 19 | 5 |
 | reddit | 0 | 0 | 0 |
 | shopping | 10 | 15 | 6 |
 | shopping_admin | 8 | 16 | 3 |
-| **total** | **34** | **60** | **14** |
+| **total** | **33** | **59** | **14** |
 
 ## Clusters and runs
 
 - T1: **35 templates** / 70 tasks -- scratch vs +workflow
-- T2: **34 templates** / 60 tasks -- scratch vs +workflow vs +primitive
-- runs: 120 build + 70x2 + 60x3 = **440**
+- T2: **33 templates** / 59 tasks -- scratch vs +workflow vs +primitive
+- runs: 120 build + 70x2 + 59x3 = **437**

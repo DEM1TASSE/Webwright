@@ -1,0 +1,331 @@
+[
+  {
+    "attempt": 1,
+    "proposal": {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task322_t160::login_customer_account",
+          "proposed_method": "login_customer_account",
+          "capability": "Authenticate a customer into the shopping site with email/password using the Magento login form flow",
+          "owns": [
+            "Open the customer login page",
+            "Extract the hidden form_key required by the login form",
+            "Submit credentials to the login POST endpoint",
+            "Confirm authenticated session from resulting account page/session state"
+          ],
+          "does_not_own": [
+            "Choosing which credentials to use",
+            "Any downstream order-history or refund logic",
+            "Formatting task answers"
+          ],
+          "input_contract": {
+            "email": {
+              "type": "string",
+              "description": "Customer account email"
+            },
+            "password": {
+              "type": "string",
+              "description": "Customer account password"
+            }
+          },
+          "output_contract": {
+            "authenticated": {
+              "type": "boolean",
+              "description": "Whether login succeeded"
+            },
+            "account_email": {
+              "type": "string",
+              "description": "Email used for the authenticated session"
+            }
+          },
+          "source_evidence": {
+            "workflow_id": "task322_t160",
+            "template_id": "160",
+            "code_quote": "login_html=s.get(urljoin(BASE,'customer/account/login/')).text\nform_key=re.search(r'name=\"form_key\" type=\"hidden\" value=\"([^\"]+)\"', login_html).group(1)\nr=s.post(urljoin(BASE,'customer/account/loginPost/'), data={'form_key':form_key,'login[username]':'emma.lopez@gmail.com','login[password]':'Password.123','send':''}, allow_redirects=True)\nassert ('Sign Out' in r.text) or ('customer/account/logout' in r.text)",
+            "explanation": "The workflow demonstrates the full site-specific authentication sequence, including acquisition of the hidden Magento form key and submission to the login endpoint. Hard-coded credentials can be parameterized into email/password inputs.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        },
+        {
+          "candidate_id": "task322_t160::list_customer_orders",
+          "proposed_method": "list_customer_orders",
+          "capability": "Retrieve structured order-history rows from the authenticated customer's My Orders page",
+          "owns": [
+            "Navigate to the order history page",
+            "Parse order table rows from the page HTML",
+            "Extract stable order-list fields shown in each row",
+            "Extract the detail-page link for each order row"
+          ],
+          "does_not_own": [
+            "Filtering to a specific month or status",
+            "Computing refunds or other aggregations",
+            "Parsing detailed totals from individual order pages"
+          ],
+          "input_contract": {},
+          "output_contract": {
+            "orders": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "order_number": {
+                    "type": "string",
+                    "description": "Displayed order identifier"
+                  },
+                  "order_date": {
+                    "type": "string",
+                    "description": "Displayed order date from the history table"
+                  },
+                  "order_total_display": {
+                    "type": "string",
+                    "description": "Displayed order total text from the history table"
+                  },
+                  "status": {
+                    "type": "string",
+                    "description": "Displayed order status"
+                  },
+                  "detail_url": {
+                    "type": "string",
+                    "description": "Link to the order detail page"
+                  }
+                }
+              },
+              "description": "Structured order rows from the My Orders page"
+            }
+          },
+          "source_evidence": {
+            "workflow_id": "task322_t160",
+            "template_id": "160",
+            "code_quote": "history=s.get(urljoin(BASE,'sales/order/history/')).text\ntbody=re.search(r'<tbody>(.*?)</tbody>', history, re.S).group(1)\nrows=re.findall(r'<tr>\\s*(.*?)\\s*</tr>', tbody, re.S)\nfor row in rows:\n    vals={}\n    for key in ['Order #','Date','Order Total','Status']:\n        m=re.search(rf'<td[^>]*data-th=\"{re.escape(key)}\"[^>]*>(.*?)</td>', row, re.S)\n        if m:\n            vals[key]=' '.join(re.sub(r'<[^>]+>',' ',m.group(1)).split())\n    href=re.search(r'href=\"([^\"]*sales/order/view/order_id/\\d+/?)\"', row)\n    vals['view']=href.group(1) if href else None",
+            "explanation": "This is a reusable page-parsing capability that turns the order-history DOM into typed order records with identity, date, status, displayed value, and detail link. The workflow's later May/canceled filtering is task-specific and should be excluded.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        },
+        {
+          "candidate_id": "task322_t160::get_order_details",
+          "proposed_method": "get_order_details",
+          "capability": "Retrieve structured financial and status details from a customer order detail page",
+          "owns": [
+            "Open an order detail page by URL",
+            "Parse stable displayed order facts from the page text",
+            "Extract order status if displayed",
+            "Extract grand total and shipping-and-handling amounts",
+            "Extract the long-form order date if displayed"
+          ],
+          "does_not_own": [
+            "Selecting which orders to inspect",
+            "Computing refund policy assumptions such as excluding shipping",
+            "Aggregating across multiple orders"
+          ],
+          "input_contract": {
+            "detail_url": {
+              "type": "string",
+              "description": "Order detail page URL or path"
+            }
+          },
+          "output_contract": {
+            "order_detail": {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "type": "string",
+                  "description": "Displayed order status if found"
+                },
+                "order_date_long": {
+                  "type": "string",
+                  "description": "Long-form displayed order date if found"
+                },
+                "grand_total": {
+                  "type": "number",
+                  "description": "Grand total amount"
+                },
+                "shipping_and_handling": {
+                  "type": "number",
+                  "description": "Shipping and handling amount"
+                }
+              },
+              "description": "Structured facts parsed from the order detail page"
+            }
+          },
+          "source_evidence": {
+            "workflow_id": "task322_t160",
+            "template_id": "160",
+            "code_quote": "page=s.get(item['view']).text\nplain=normalize_text(page)\ngrand=re.search(r'Grand Total\\s*\\$([0-9,]+\\.[0-9]{2})', plain)\nship=re.search(r'Shipping\\s*&\\s*Handling\\s*\\$([0-9,]+\\.[0-9]{2})', plain)\norder_date=re.search(r'Order Date:\\s*([A-Za-z]+\\s+\\d{1,2},\\s+\\d{4})', plain)\nstatus='Canceled' if 'Canceled' in plain else 'Unknown'",
+            "explanation": "The workflow demonstrates parsing typed order-detail fields from the detail page text rather than returning raw HTML. The reusable boundary is acquisition of objective order facts; the later subtraction of shipping from grand total is task-specific business logic and not part of the primitive.",
+            "evidence_match_mode": "exact"
+          }
+        }
+      ]
+    },
+    "errors": [
+      "candidates[1].input_contract must be non-empty"
+    ]
+  },
+  {
+    "attempt": 2,
+    "proposal": {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task322_t160::login_customer_account",
+          "proposed_method": "login_customer_account",
+          "capability": "Authenticate a customer into the shopping site using the Magento customer login form flow",
+          "owns": [
+            "Open the customer login page",
+            "Extract the hidden form_key required by the Magento login form",
+            "Submit customer email and password to the login endpoint",
+            "Verify whether the session is authenticated from the returned page content"
+          ],
+          "does_not_own": [
+            "Choosing which credentials to use",
+            "Navigating to order history after login",
+            "Any order filtering, refund calculation, aggregation, or answer formatting"
+          ],
+          "input_contract": {
+            "email": {
+              "type": "string",
+              "description": "Customer account email address to sign in with"
+            },
+            "password": {
+              "type": "string",
+              "description": "Customer account password to sign in with"
+            }
+          },
+          "output_contract": {
+            "authenticated": {
+              "type": "boolean",
+              "description": "Whether authentication succeeded for the current session"
+            },
+            "account_email": {
+              "type": "string",
+              "description": "Email address used for the login attempt"
+            }
+          },
+          "source_evidence": {
+            "workflow_id": "task322_t160",
+            "template_id": "160",
+            "code_quote": "login_html=s.get(urljoin(BASE,'customer/account/login/')).text\nform_key=re.search(r'name=\"form_key\" type=\"hidden\" value=\"([^\"]+)\"', login_html).group(1)\nr=s.post(urljoin(BASE,'customer/account/loginPost/'), data={'form_key':form_key,'login[username]':'emma.lopez@gmail.com','login[password]':'Password.123','send':''}, allow_redirects=True)\nassert ('Sign Out' in r.text) or ('customer/account/logout' in r.text)",
+            "explanation": "This demonstrates a complete, site-specific authentication workflow: load login page, extract required hidden form_key, submit credentials to the Magento login POST, and confirm success from authenticated-page indicators. The hard-coded credentials generalize cleanly to email/password inputs.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        },
+        {
+          "candidate_id": "task322_t160::list_customer_orders",
+          "proposed_method": "list_customer_orders",
+          "capability": "Retrieve structured order-history entries from the authenticated customer's My Orders page",
+          "owns": [
+            "Open the authenticated My Orders page",
+            "Parse the order-history table rows",
+            "Extract displayed order identifiers, dates, totals, statuses, and order detail links from each row"
+          ],
+          "does_not_own": [
+            "Filtering orders by month, year, or status",
+            "Opening each order detail page",
+            "Computing refunds or any cross-order aggregation"
+          ],
+          "input_contract": {
+            "history_page": {
+              "type": "string",
+              "description": "Customer order-history page path or URL to fetch, e.g. sales/order/history/",
+              "default": "sales/order/history/"
+            }
+          },
+          "output_contract": {
+            "orders": {
+              "type": "array",
+              "description": "Structured order rows parsed from the My Orders table",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "order_number": {
+                    "type": "string",
+                    "description": "Displayed order identifier from the Order # column"
+                  },
+                  "order_date": {
+                    "type": "string",
+                    "description": "Displayed date from the Date column"
+                  },
+                  "order_total_display": {
+                    "type": "string",
+                    "description": "Displayed order total text from the Order Total column"
+                  },
+                  "status": {
+                    "type": "string",
+                    "description": "Displayed order status from the Status column"
+                  },
+                  "detail_url": {
+                    "type": "string",
+                    "description": "Link to the order detail page for this order, if present"
+                  }
+                }
+              }
+            }
+          },
+          "source_evidence": {
+            "workflow_id": "task322_t160",
+            "template_id": "160",
+            "code_quote": "history=s.get(urljoin(BASE,'sales/order/history/')).text\ntbody=re.search(r'<tbody>(.*?)</tbody>', history, re.S).group(1)\nrows=re.findall(r'<tr>\\s*(.*?)\\s*</tr>', tbody, re.S)\nfor row in rows:\n    vals={}\n    for key in ['Order #','Date','Order Total','Status']:\n        m=re.search(rf'<td[^>]*data-th=\"{re.escape(key)}\"[^>]*>(.*?)</td>', row, re.S)\n        if m:\n            vals[key]=' '.join(re.sub(r'<[^>]+>',' ',m.group(1)).split())\n    href=re.search(r'href=\"([^\"]*sales/order/view/order_id/\\d+/?)\"', row)\n    vals['view']=href.group(1) if href else None",
+            "explanation": "The workflow converts the My Orders HTML table into typed order records rather than returning raw page text. The reusable capability is the site-specific extraction of stable row fields and detail links. The later filtering to canceled May 2023 orders is task logic and should remain outside the primitive.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        },
+        {
+          "candidate_id": "task322_t160::get_order_details",
+          "proposed_method": "get_order_details",
+          "capability": "Retrieve structured order facts from a customer order detail page",
+          "owns": [
+            "Open an order detail page by URL or path",
+            "Normalize page text for parsing",
+            "Extract displayed financial amounts from the totals section",
+            "Extract displayed order date",
+            "Extract displayed order status when present"
+          ],
+          "does_not_own": [
+            "Choosing which order URLs to inspect",
+            "Applying refund-policy assumptions such as excluding shipping",
+            "Aggregating multiple orders into a single result"
+          ],
+          "input_contract": {
+            "detail_url": {
+              "type": "string",
+              "description": "Order detail page URL or site-relative path"
+            }
+          },
+          "output_contract": {
+            "order_detail": {
+              "type": "object",
+              "description": "Structured facts parsed from the order detail page",
+              "properties": {
+                "order_date_long": {
+                  "type": "string",
+                  "description": "Long-form displayed order date, if found"
+                },
+                "status": {
+                  "type": "string",
+                  "description": "Displayed order status, if found"
+                },
+                "grand_total": {
+                  "type": "number",
+                  "description": "Displayed grand total amount"
+                },
+                "shipping_and_handling": {
+                  "type": "number",
+                  "description": "Displayed shipping and handling amount"
+                }
+              }
+            }
+          },
+          "source_evidence": {
+            "workflow_id": "task322_t160",
+            "template_id": "160",
+            "code_quote": "page=s.get(item['view']).text\nplain=normalize_text(page)\ngrand=re.search(r'Grand Total\\s*\\$([0-9,]+\\.[0-9]{2})', plain)\nship=re.search(r'Shipping\\s*&\\s*Handling\\s*\\$([0-9,]+\\.[0-9]{2})', plain)\norder_date=re.search(r'Order Date:\\s*([A-Za-z]+\\s+\\d{1,2},\\s+\\d{4})', plain)\nstatus='Canceled' if 'Canceled' in plain else 'Unknown'",
+            "explanation": "This workflow demonstrates a reusable typed extraction boundary on the order detail page: it opens the page and parses objective displayed facts including totals, shipping, date, and status. The subsequent subtraction of shipping from grand total is task-specific reasoning, so the primitive should stop at returning the parsed order facts.",
+            "evidence_match_mode": "exact"
+          }
+        }
+      ]
+    },
+    "errors": []
+  }
+]

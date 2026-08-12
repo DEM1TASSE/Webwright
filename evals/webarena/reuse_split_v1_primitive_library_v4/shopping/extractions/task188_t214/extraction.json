@@ -1,0 +1,131 @@
+{
+  "decision": "CANDIDATES",
+  "candidates": [
+    {
+      "candidate_id": "task188_t214::list_customer_orders",
+      "proposed_method": "list_customer_orders",
+      "capability": "List a signed-in customer's order history as typed order summary records from the orders history page.",
+      "owns": [
+        "Navigate to the customer order history page on the shopping site",
+        "Read the order table rows from the history page",
+        "Parse stable per-order summary fields exposed in each row, including order status and detail-page link",
+        "Preserve page-scoped ordering as displayed so workflows can select latest/newest entries themselves"
+      ],
+      "does_not_own": [
+        "Logging in",
+        "Choosing only canceled orders",
+        "Assuming the first matching order is the desired one for a task",
+        "Opening an order and extracting detailed totals",
+        "Computing or formatting the final answer"
+      ],
+      "input_contract": {
+        "page": "Playwright page for an already authenticated shopping session",
+        "page_number": {
+          "type": "integer",
+          "required": false,
+          "description": "Order history page number to view, if the site exposes pagination"
+        }
+      },
+      "output_contract": {
+        "orders": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "fields": {
+              "order_identifier": {
+                "type": "string",
+                "description": "Stable displayed order number or identifier from the history row, if present"
+              },
+              "placed_date": {
+                "type": "string",
+                "description": "Displayed order date from the row, if present"
+              },
+              "ship_to": {
+                "type": "string",
+                "description": "Displayed recipient/customer name from the row, if present"
+              },
+              "order_total": {
+                "type": "string",
+                "description": "Displayed order total text from the row, if present"
+              },
+              "status": {
+                "type": "string",
+                "description": "Displayed order status such as Canceled"
+              },
+              "detail_url": {
+                "type": "string",
+                "description": "Href for the row's View Order link, if present"
+              }
+            }
+          }
+        },
+        "page_number": {
+          "type": "integer",
+          "description": "Current page number if known"
+        },
+        "has_next_page": {
+          "type": "boolean",
+          "description": "Whether another history page is available, if determinable"
+        }
+      },
+      "source_evidence": {
+        "workflow_id": "task188_t214",
+        "template_id": "214",
+        "code_quote": "await page.goto(f'{BASE}/sales/order/history/', wait_until='networkidle')\nrows = await page.locator('table tbody tr').all()\nfor row in rows:\n    txt = (await row.inner_text()).strip()\n    if 'Canceled' in txt:\n        chosen = row\n...\nawait chosen.get_by_role('link', name='View Order').click()",
+        "explanation": "The workflow demonstrates reliable acquisition from the authenticated order-history table and use of the stable displayed status plus a per-row detail link. Generalizing this yields a reusable primitive that returns typed order summary records for all rows on a history page, rather than embedding the task-specific filter for only canceled orders.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    },
+    {
+      "candidate_id": "task188_t214::get_order_details",
+      "proposed_method": "get_order_details",
+      "capability": "Open an order details page and parse typed order-detail facts including total amounts.",
+      "owns": [
+        "Navigate to an order detail page by URL or already-open page",
+        "Read page text/structure from the order details view",
+        "Parse stable order total fields demonstrated on the page, including Grand Total or Order Total labels",
+        "Return typed monetary values from the order details page"
+      ],
+      "does_not_own": [
+        "Selecting which order to inspect from history",
+        "Determining latest canceled order",
+        "Returning only a bare number for the end task",
+        "Inferring fields not present on the details page"
+      ],
+      "input_contract": {
+        "page": "Playwright page for an authenticated shopping session",
+        "order_url": {
+          "type": "string",
+          "required": false,
+          "description": "Absolute or site-relative URL for the order details page. If omitted, the current page is assumed to already be the order details page."
+        }
+      },
+      "output_contract": {
+        "order": {
+          "type": "object",
+          "fields": {
+            "grand_total": {
+              "type": "number",
+              "description": "Parsed Grand Total amount, if present"
+            },
+            "order_total": {
+              "type": "number",
+              "description": "Parsed Order Total amount, if present"
+            },
+            "detail_url": {
+              "type": "string",
+              "description": "URL of the order details page actually parsed"
+            }
+          }
+        }
+      },
+      "source_evidence": {
+        "workflow_id": "task188_t214",
+        "template_id": "214",
+        "code_quote": "body = await page.locator('body').inner_text()\nm = re.search(r'Grand Total\\s*\\$([0-9,]+\\.\\d{2})', body.replace('\\n', ' '))\nif not m:\n    m = re.search(r'Order Total\\s*\\$([0-9,]+\\.\\d{2})', body.replace('\\n', ' '))\n...\ntotal_value = float(m.group(1).replace(',', ''))",
+        "explanation": "The workflow demonstrates parsing objective monetary facts from the order details page text into a typed numeric value, with support for two stable labels used by the site. This supports a reusable detail-extraction primitive rather than a task-specific answer formatter.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    }
+  ]
+}

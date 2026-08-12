@@ -30,6 +30,16 @@ def test_prune_removes_mutation_semantics_and_expected_type():
     assert [row["intent_template_id"] for row in corrected["test"]["reddit"]] == [1]
 
 
+def test_open_issue_is_mutation_even_when_expected_as_retrieve_error():
+    split = {"design": {}, "train": {"reddit": []}, "test": {"reddit": [
+        {"intent_template_id": 4, "t2_task_ids": [4], "unseen_in_earlier_splits": True},
+    ]}}
+    corrected, _, removed_t2 = MODULE.prune(
+        split, [task(4, "Open an issue asking for WebAgent support")])
+    assert corrected["test"]["reddit"] == []
+    assert removed_t2 == [4]
+
+
 def test_prune_removes_ineligible_train_source():
     split = {"design": {}, "train": {"reddit": [{
         "intent_template_id": 2, "build_task_ids": [2], "t1_heldout_task_ids": []

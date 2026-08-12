@@ -1,0 +1,165 @@
+[
+  {
+    "attempt": 1,
+    "proposal": {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task204_t366::list_orders_from_admin_order_grid",
+          "proposed_method": "list_orders_from_admin_order_grid",
+          "capability": "List order records from the shopping admin sales order grid with server-side status filtering and pagination metadata",
+          "owns": [
+            "Authenticate with admin session already established",
+            "Open the sales order grid page to obtain the current form key required for AJAX grid rendering",
+            "Submit the Magento UI grid render request for the sales order grid with parameterized status filter and page size",
+            "Parse the x-magento-init payload returned by the grid render response",
+            "Extract typed order records from the grid data source including stable identifiers, timestamps, status, and detail URL",
+            "Return pagination/completeness metadata exposed by the grid response such as returned count and total record count"
+          ],
+          "does_not_own": [
+            "Choosing the latest order",
+            "Sorting or ranking orders",
+            "Task-specific filtering beyond exposed primitive parameters",
+            "Opening order detail pages",
+            "Extracting product line items from an order detail page",
+            "Formatting final answer"
+          ],
+          "input_contract": {
+            "status": {
+              "type": "string",
+              "description": "Optional order status filter passed as filters[status] to the sales order grid, e.g. complete"
+            },
+            "page_size": {
+              "type": "integer",
+              "description": "Number of grid rows to request via paging[pageSize]"
+            },
+            "page_number": {
+              "type": "integer",
+              "description": "Optional grid page number if supported by caller; workflow demonstrates page size but not explicit page selection"
+            }
+          },
+          "output_contract": {
+            "orders": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "entity_id": {
+                    "type": "string",
+                    "description": "Internal order entity identifier from grid item"
+                  },
+                  "increment_id": {
+                    "type": "string",
+                    "description": "Displayed order number from grid item"
+                  },
+                  "created_at": {
+                    "type": "string",
+                    "description": "Order creation timestamp as provided by grid item, format seen: YYYY-MM-DD HH:MM:SS"
+                  },
+                  "status": {
+                    "type": "string",
+                    "description": "Order status from grid item"
+                  },
+                  "view_url": {
+                    "type": "string",
+                    "description": "Admin detail URL from actions.view.href"
+                  }
+                }
+              },
+              "description": "Order records returned by the admin sales order grid"
+            },
+            "returned_count": {
+              "type": "integer",
+              "description": "Number of order items returned in the current grid response"
+            },
+            "total_records": {
+              "type": "integer",
+              "description": "Total matching records reported by the grid data source"
+            }
+          },
+          "source_evidence": {
+            "workflow_id": "task204_t366",
+            "template_id": "366",
+            "code_quote": "render = session.post(BASE + \"/admin/mui/index/render/\", data={\"namespace\": \"sales_order_grid\", \"form_key\": page_fk, \"isAjax\": \"true\", \"filters[status]\": \"complete\", \"paging[pageSize]\": \"200\"}, ...)\n...\nobj = json.loads(scripts[0])[\"*\"][\"Magento_Ui/js/core/app\"]\ndata = obj[\"components\"][\"sales_order_grid\"][\"children\"][\"sales_order_grid_data_source\"][\"config\"][\"data\"]\nitems = data[\"items\"]\ntotal = data[\"totalRecords\"]",
+            "explanation": "The workflow demonstrates a reusable server-side read capability against the shopping admin order grid: it obtains the form key, calls the Magento grid render endpoint with parameterized filters, and parses structured order records plus totalRecords from the returned UI config. Hard-coded status and page size can be generalized into inputs, while task-specific selection of the latest order is excluded.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        },
+        {
+          "candidate_id": "task204_t366::get_order_line_items_from_admin_order_detail",
+          "proposed_method": "get_order_line_items_from_admin_order_detail",
+          "capability": "Extract typed order detail and line items from a shopping admin order detail page",
+          "owns": [
+            "Fetch an admin order detail page by URL using an authenticated session",
+            "Parse stable order-level fields displayed on the page such as title, order date, and order status",
+            "Identify order item tbody blocks corresponding to actual line items",
+            "Extract product name from each line item block",
+            "Extract displayed monetary values from each line item block and return the demonstrated unit/final item price field",
+            "Return typed line item records rather than raw HTML"
+          ],
+          "does_not_own": [
+            "Selecting which order to inspect",
+            "Verifying business rules like requiring Complete status",
+            "Sorting items by price",
+            "Computing values not objectively shown on the page",
+            "Formatting final answer"
+          ],
+          "input_contract": {
+            "order_url": {
+              "type": "string",
+              "description": "Admin order detail page URL to fetch and parse"
+            }
+          },
+          "output_contract": {
+            "order": {
+              "type": "object",
+              "properties": {
+                "title": {
+                  "type": "string",
+                  "description": "Page title text for the order detail"
+                },
+                "order_date": {
+                  "type": "string",
+                  "description": "Displayed order date text from the detail page"
+                },
+                "order_status": {
+                  "type": "string",
+                  "description": "Displayed order status text from the detail page"
+                }
+              }
+            },
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "description": "Product name shown in the line item"
+                  },
+                  "price": {
+                    "type": "number",
+                    "description": "Displayed line-item price parsed from the item block; workflow evidence uses the second currency amount in the block"
+                  }
+                },
+                "required": [
+                  "name",
+                  "price"
+                ]
+              },
+              "description": "Parsed product line items from the order detail page"
+            }
+          },
+          "source_evidence": {
+            "workflow_id": "task204_t366",
+            "template_id": "366",
+            "code_quote": "detail = session.get(order_url)\n...\ndate_m = re.search(r\"Order Date</th>\\s*<td[^>]*>\\s*(.*?)\\s*</td>\", order_html, re.S)\nstatus_m = re.search(r\"Order Status</th>\\s*<td[^>]*>\\s*(.*?)\\s*</td>\", order_html, re.S)\n...\nfor block in re.findall(r\"<tbody[^>]*>(.*?)</tbody>\", order_html, re.S):\n    if 'id=\"order_item_' not in block:\n        continue\n    title_m = re.search(r'<div[^>]*class=\"product-title\"[^>]*>(.*?)</div>', block, re.S)\n    ...\n    nums = re.findall(r\"\\$\\d+[\\d,]*\\.\\d{2}\", strip_tags(block))\n    ...\n    price = money_to_float(nums[1])\n    items.append({\"name\": name, \"price\": price})",
+            "explanation": "The workflow shows a reusable page-parsing capability that converts an order detail page into typed records: order metadata plus line items with product name and displayed price. The task-specific status check and price sorting are separate workflow logic and should not be owned by the primitive.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        }
+      ]
+    },
+    "errors": []
+  }
+]

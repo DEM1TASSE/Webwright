@@ -1,0 +1,394 @@
+{
+  "operations": [
+    {
+      "operation": "ADD",
+      "replacement": {
+        "primitive_id": "map/get_route",
+        "method": "get_route",
+        "capability": "Request a route from the map site's OSRM-compatible service for an ordered waypoint sequence and a caller-specified OSRM endpoint configuration, and return typed route summaries and waypoint metadata.",
+        "method_code": "def get_route(self, profile: str, waypoints: list, base_url: str, overview=False, steps: bool = True, annotations: bool = False, geometries: str = \"polyline\", alternatives: bool = False):\n    import json\n    import urllib.parse\n    import urllib.request\n\n    if not isinstance(profile, str) or not profile.strip():\n        raise ValueError(\"profile is required\")\n    if not isinstance(base_url, str) or not base_url.strip():\n        raise ValueError(\"base_url is required\")\n    if not isinstance(waypoints, list) or len(waypoints) < 2:\n        raise ValueError(\"at least two waypoints are required\")\n\n    encoded_points = []\n    for waypoint in waypoints:\n        if \"longitude\" not in waypoint or \"latitude\" not in waypoint:\n            raise ValueError(\"each waypoint must include latitude and longitude\")\n        encoded_points.append(f\"{waypoint['longitude']},{waypoint['latitude']}\")\n\n    coords = \";\".join(encoded_points)\n    normalized_base = base_url.rstrip(\"/\")\n    request_base = f\"{normalized_base}/route/v1/{profile}/{coords}\"\n    params = {\n        \"overview\": str(overview).lower() if isinstance(overview, bool) else overview,\n        \"steps\": str(steps).lower(),\n        \"annotations\": str(annotations).lower(),\n        \"geometries\": geometries,\n        \"alternatives\": str(alternatives).lower(),\n    }\n    request_url = request_base + \"?\" + urllib.parse.urlencode(params)\n    request = urllib.request.Request(request_url, headers={\"User-Agent\": \"Mozilla/5.0\", \"Accept\": \"application/json\"})\n    with urllib.request.urlopen(request, timeout=30) as response:\n        payload = json.loads(response.read().decode(\"utf-8\"))\n\n    routes = []\n    for route in payload.get(\"routes\", []):\n        routes.append({\n            \"duration_seconds\": route.get(\"duration\"),\n            \"distance_meters\": route.get(\"distance\"),\n            \"weight\": route.get(\"weight\"),\n            \"weight_name\": route.get(\"weight_name\"),\n            \"geometry\": route.get(\"geometry\"),\n            \"legs\": route.get(\"legs\"),\n        })\n\n    returned_waypoints = []\n    for waypoint in payload.get(\"waypoints\", []):\n        location = waypoint.get(\"location\") or [None, None]\n        returned_waypoints.append({\n            \"name\": waypoint.get(\"name\"),\n            \"longitude\": location[0],\n            \"latitude\": location[1],\n            \"distance_meters\": waypoint.get(\"distance\"),\n        })\n\n    return {\n        \"profile\": profile,\n        \"base_url\": normalized_base,\n        \"code\": payload.get(\"code\"),\n        \"routes\": routes,\n        \"waypoints\": returned_waypoints,\n        \"route_count\": len(routes),\n        \"request_waypoint_count\": len(waypoints),\n        \"request_url\": request_url,\n    }\n",
+        "owns": [
+          "Constructing OSRM-compatible route requests from ordered coordinates using caller-supplied endpoint base URL and profile path",
+          "Calling the site's demonstrated OSRM-compatible route endpoint",
+          "Passing through stable request options such as overview, steps, annotations, geometries, and alternatives",
+          "Parsing route-level summary metrics returned by OSRM",
+          "Preserving returned route order and top-level response code",
+          "Parsing snapped waypoint metadata returned by the service",
+          "Returning the exact endpoint configuration used for traceability"
+        ],
+        "does_not_own": [
+          "Geocoding place names into coordinates",
+          "Inferring which site port corresponds to a transportation method",
+          "Choosing which transportation methods or endpoints to compare for a task",
+          "Formatting durations into HH:MM:SS strings",
+          "Applying thresholds such as within one hour",
+          "Aggregating multiple route calls into a final answer"
+        ],
+        "input_contract": {
+          "type": "object",
+          "properties": {
+            "profile": {
+              "type": "string",
+              "description": "OSRM profile path segment to use in the request, such as driving or walking, as required by the chosen endpoint."
+            },
+            "waypoints": {
+              "type": "array",
+              "description": "Ordered route waypoints.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "latitude": {
+                    "type": "number"
+                  },
+                  "longitude": {
+                    "type": "number"
+                  },
+                  "label": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "latitude",
+                  "longitude"
+                ]
+              },
+              "minItems": 2
+            },
+            "base_url": {
+              "type": "string",
+              "description": "OSRM service base URL including scheme, host, and optional port, without the /route/v1/... suffix."
+            },
+            "overview": {
+              "type": [
+                "boolean",
+                "string"
+              ],
+              "default": false,
+              "description": "OSRM overview parameter."
+            },
+            "steps": {
+              "type": "boolean",
+              "default": true,
+              "description": "Whether to request turn-by-turn steps."
+            },
+            "annotations": {
+              "type": "boolean",
+              "default": false,
+              "description": "Whether to request annotations."
+            },
+            "geometries": {
+              "type": "string",
+              "default": "polyline",
+              "description": "Requested route geometry encoding."
+            },
+            "alternatives": {
+              "type": "boolean",
+              "default": false,
+              "description": "Whether to request alternative routes."
+            }
+          },
+          "required": [
+            "profile",
+            "waypoints",
+            "base_url"
+          ]
+        },
+        "output_contract": {
+          "type": "object",
+          "properties": {
+            "profile": {
+              "type": "string"
+            },
+            "base_url": {
+              "type": "string"
+            },
+            "code": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "routes": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "duration_seconds": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "distance_meters": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "weight": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "weight_name": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "geometry": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "legs": {
+                    "type": [
+                      "array",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "duration_seconds",
+                  "distance_meters"
+                ]
+              }
+            },
+            "waypoints": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "longitude": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "latitude": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "distance_meters": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "longitude",
+                  "latitude"
+                ]
+              }
+            },
+            "route_count": {
+              "type": "integer"
+            },
+            "request_waypoint_count": {
+              "type": "integer"
+            },
+            "request_url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "profile",
+            "base_url",
+            "code",
+            "routes",
+            "waypoints",
+            "route_count",
+            "request_waypoint_count",
+            "request_url"
+          ]
+        },
+        "requires": [
+          "map coordinates for each waypoint"
+        ],
+        "provides": [
+          "map.route_summary"
+        ],
+        "supported_patterns": [
+          "Get a route between an origin and destination using a caller-specified OSRM-compatible endpoint configuration",
+          "Retrieve duration and distance for workflow-side comparison across multiple endpoint/profile combinations",
+          "Preserve optional geometry, leg, and waypoint data when requested by the service",
+          "Use site-discovered route service base URLs without baking unstable port-to-mode assumptions into the primitive"
+        ],
+        "source_evidence": [
+          {
+            "workflow_id": "task52_t68",
+            "template_id": "68",
+            "code_quote": "OSRM_BASE = 'http://18.208.187.221:'\nosrm_url = f\"{OSRM_BASE}5002/route/v1/driving/{origin_lon},{origin_lat};{dest_lon},{dest_lat}\"\nroute_resp = session.get(osrm_url, params={'overview': 'false', 'steps': 'true', 'annotations': 'false'}, timeout=30)\nroute_data = route_resp.json()",
+            "explanation": "Generalized the site's OSRM request shape into inputs for base_url and profile rather than hard-coding a disputed transport-method mapping. This workflow shows a non-default endpoint base and explicit query options with the standard OSRM response structure."
+          },
+          {
+            "workflow_id": "task16_t73",
+            "template_id": "73",
+            "code_quote": "MODE_PORTS = {\"driving\": 5001, \"walking\": 5002}\nroute_url = f\"http://18.208.187.221:{port}/route/v1/{mode}/{coord}?overview=false\"\nroute = fetch_json(route_url)\nduration = route[\"routes\"][0][\"duration\"]\nroute['routes'][0]['distance']\nroute['waypoints'][0]['name']\nroute['code']",
+            "explanation": "Shows that workflows vary endpoint port and profile path independently and still parse the same stable OSRM route and waypoint fields. The primitive therefore accepts explicit endpoint configuration instead of asserting one universal site mapping."
+          },
+          {
+            "workflow_id": "task221_t35",
+            "template_id": "35",
+            "code_quote": "def route_osrm(src, dst, port):\n    url = f\"{OSRM_BASE}{port}/route/v1/driving/{src[1]},{src[0]};{dst[1]},{dst[0]}\"\n    params = {\"overview\":\"false\",\"steps\":\"true\",\"annotations\":\"false\",\"geometries\":\"polyline\"}\n    ...\n    route = data[\"routes\"][0]\n    ... route[\"duration\"] ... route[\"distance\"]",
+            "explanation": "Confirms the same OSRM-compatible response boundary and request-option pattern from another site-discovered endpoint configuration, supporting a generalized route primitive that preserves route summaries and avoids overclaiming a stable transport-method-to-port mapping."
+          }
+        ]
+      }
+    }
+  ],
+  "workflow_attribution": [
+    {
+      "workflow_id": "task85_t64",
+      "decision": "SKIP",
+      "reason": "Its Photon geocoding evidence is outside the site-configured primitive boundary, and its driving-route evidence is already covered by existing map/get_driving_route."
+    },
+    {
+      "workflow_id": "task40_t77",
+      "decision": "SKIP",
+      "reason": "Its geocoding evidence uses external providers outside the site boundary, and its driving-route evidence is already covered by existing map/get_driving_route."
+    },
+    {
+      "workflow_id": "task52_t68",
+      "decision": "CONTRIBUTED",
+      "operation_indices": [
+        0
+      ]
+    },
+    {
+      "workflow_id": "task16_t73",
+      "decision": "CONTRIBUTED",
+      "operation_indices": [
+        0
+      ]
+    },
+    {
+      "workflow_id": "task87_t64",
+      "decision": "SKIP",
+      "reason": "Its Nominatim search and driving-route capabilities are already covered by existing map/search_places and map/get_driving_route primitives."
+    },
+    {
+      "workflow_id": "task221_t35",
+      "decision": "CONTRIBUTED",
+      "operation_indices": [
+        0
+      ]
+    },
+    {
+      "workflow_id": "task84_t64",
+      "decision": "SKIP",
+      "reason": "Its local search flow is already covered by existing map/search_local_geocoder_results, and its driving-route evidence is already covered by existing map/get_driving_route."
+    },
+    {
+      "workflow_id": "task151_t36",
+      "decision": "SKIP",
+      "reason": "Its Nominatim search and driving-route capabilities are already covered by existing map/search_places and map/get_driving_route primitives."
+    }
+  ],
+  "candidate_attribution": [
+    {
+      "candidate_id": "task85_t64::search_places_by_text",
+      "decision": "REJECT",
+      "target_id": null,
+      "reason": "Evidence uses external Photon geocoding rather than the map site's configured geocoder, so it is outside the site primitive boundary."
+    },
+    {
+      "candidate_id": "task85_t64::get_driving_route_summary",
+      "decision": "COVERED",
+      "target_id": "map/get_driving_route",
+      "reason": "Covered by the existing driving-route primitive; this candidate does not justify a contract-stable update."
+    },
+    {
+      "candidate_id": "task40_t77::geocode_place_search",
+      "decision": "REJECT",
+      "target_id": null,
+      "reason": "Evidence uses external maps.co and public nominatim.openstreetmap.org providers rather than the site's configured geocoder, so it falls outside the site primitive boundary."
+    },
+    {
+      "candidate_id": "task40_t77::get_driving_route",
+      "decision": "COVERED",
+      "target_id": "map/get_driving_route",
+      "reason": "Covered by the existing driving-route primitive; fallback-provider behavior would change capability identity if forced into the existing site primitive."
+    },
+    {
+      "candidate_id": "task52_t68::geocode_place_search",
+      "decision": "COVERED",
+      "target_id": "map/search_places",
+      "reason": "Covered by the existing site Nominatim search primitive."
+    },
+    {
+      "candidate_id": "task52_t68::get_route_summary",
+      "decision": "ADD",
+      "operation_index": 0
+    },
+    {
+      "candidate_id": "task16_t73::geocode_place_search",
+      "decision": "COVERED",
+      "target_id": "map/search_places",
+      "reason": "Covered by the existing site Nominatim search primitive."
+    },
+    {
+      "candidate_id": "task16_t73::get_osrm_route_summary",
+      "decision": "ADD",
+      "operation_index": 0
+    },
+    {
+      "candidate_id": "task87_t64::search_places_by_text",
+      "decision": "COVERED",
+      "target_id": "map/search_places",
+      "reason": "Covered by the existing site Nominatim search primitive."
+    },
+    {
+      "candidate_id": "task87_t64::get_driving_route",
+      "decision": "COVERED",
+      "target_id": "map/get_driving_route",
+      "reason": "Covered by the existing driving-route primitive."
+    },
+    {
+      "candidate_id": "task221_t35::search_places_with_nominatim",
+      "decision": "COVERED",
+      "target_id": "map/search_places",
+      "reason": "Covered by the existing site Nominatim search primitive; task-specific nearest-USPS filtering remains workflow logic."
+    },
+    {
+      "candidate_id": "task221_t35::get_route_summary_with_osrm",
+      "decision": "ADD",
+      "operation_index": 0
+    },
+    {
+      "candidate_id": "task84_t64::search_place_to_coordinates",
+      "decision": "COVERED",
+      "target_id": "map/search_local_geocoder_results",
+      "reason": "Covered by existing primitive map/search_local_geocoder_results, which already owns the site's CSRF-protected local geocoder flow and typed HTML result parsing."
+    },
+    {
+      "candidate_id": "task84_t64::get_osrm_driving_route_duration",
+      "decision": "COVERED",
+      "target_id": "map/get_driving_route",
+      "reason": "Covered by the existing driving-route primitive; returning formatted HH:MM:SS is workflow logic rather than primitive logic."
+    },
+    {
+      "candidate_id": "task151_t36::search_places_via_nominatim",
+      "decision": "COVERED",
+      "target_id": "map/search_places",
+      "reason": "Covered by the existing site Nominatim search primitive."
+    },
+    {
+      "candidate_id": "task151_t36::get_driving_route_via_osrm",
+      "decision": "COVERED",
+      "target_id": "map/get_driving_route",
+      "reason": "Covered by the existing driving-route primitive."
+    }
+  ]
+}

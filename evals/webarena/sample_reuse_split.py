@@ -47,7 +47,8 @@ MAX_BUILD = 3        # solves per template that feed the workflow library
 MAX_HELDOUT = 2      # instances reserved for evaluation
 MUTATION_PREFIX = re.compile(
     r"^\s*(add|approve|assign|buy|cancel|change|close|create|delete|dislike|edit|like|"
-    r"notify|post|purchase|refund|remove|reopen|set|submit|update|vote)\b", re.IGNORECASE,
+    r"notify|open\s+(?:an?\s+)?(?:issue|merge request)|post|purchase|refund|remove|"
+    r"reopen|set|submit|update|vote)\b", re.IGNORECASE,
 )
 
 

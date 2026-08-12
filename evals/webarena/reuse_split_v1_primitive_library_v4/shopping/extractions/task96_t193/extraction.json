@@ -1,0 +1,127 @@
+{
+  "decision": "CANDIDATES",
+  "candidates": [
+    {
+      "candidate_id": "task96_t193::list_customer_orders",
+      "proposed_method": "list_customer_orders",
+      "capability": "Retrieve and parse the authenticated customer's order history page into typed order records, including stable order identity, displayed order date, normalized order date, displayed status, and order detail link.",
+      "owns": [
+        "Open the authenticated customer order history page",
+        "Parse each displayed order-history row into a structured order record",
+        "Extract the website order number from each row",
+        "Extract the displayed order date string from each row",
+        "Normalize the displayed order date to YYYY-MM-DD",
+        "Extract the displayed order status from each row",
+        "Extract the order detail URL from each row"
+      ],
+      "does_not_own": [
+        "Authenticating the customer session",
+        "Choosing which order is relevant to the task",
+        "Sorting, filtering, or selecting the latest order",
+        "Opening an order detail page",
+        "Extracting arrival or delivery dates from an order detail page",
+        "Formatting the final task response"
+      ],
+      "input_contract": {
+        "account_orders_url": {
+          "type": "string",
+          "description": "Authenticated URL for the customer's order history page, such as the site's sales/order/history page."
+        }
+      },
+      "output_contract": {
+        "orders": {
+          "type": "array",
+          "description": "Order records parsed from the authenticated order history page.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "order_number": {
+                "type": "string",
+                "description": "Website order number shown for the order."
+              },
+              "order_date": {
+                "type": "string",
+                "description": "Displayed order date normalized to YYYY-MM-DD."
+              },
+              "order_date_raw": {
+                "type": "string",
+                "description": "Original order date string as displayed on the page."
+              },
+              "status": {
+                "type": "string",
+                "description": "Displayed order status from the history row."
+              },
+              "detail_url": {
+                "type": "string",
+                "description": "Link to the order's detail page."
+              }
+            }
+          }
+        }
+      },
+      "source_evidence": {
+        "workflow_id": "task96_t193",
+        "template_id": "193",
+        "code_quote": "orders_url, orders_html = sess.open(BASE + '/sales/order/history/')\nrows = re.findall(r'<tr>(.*?)</tr>', orders_html, re.I | re.S)\nparsed = []\nfor row in rows:\n    txt = strip_text(row)\n    m = re.search(r'(\\d{9})\\s+(\\d{1,2}/\\d{1,2}/\\d{2})\\s+\\$.*?\\s+([A-Za-z]+)\\s+View Order', txt)\n    link = re.search(r'href=\"([^\"]*sales/order/view/order_id/\\d+/[^\"]*)\"', row, re.I)\n    if m and link:\n        parsed.append({\n            'order_number': m.group(1),\n            'date_raw': m.group(2),\n            'date_obj': parse_date_mmddyy(m.group(2)),\n            'status': m.group(3),\n            'detail_url': link.group(1)\n        })",
+        "explanation": "This is a reusable authenticated read capability over the shopping site's order-history page. The workflow clearly demonstrates row parsing into typed records with order identity, displayed date, normalized date, status, and detail link. The later step that sorts records and selects the latest order is task-specific and excluded from the primitive. The hard-coded site path is generalized into a parameterized authenticated order-history URL.",
+        "evidence_match_mode": "exact"
+      }
+    },
+    {
+      "candidate_id": "task96_t193::get_order_detail_status_and_arrival",
+      "proposed_method": "get_order_detail_status_and_arrival",
+      "capability": "Open an authenticated order detail page and extract the order's displayed status and any displayed arrival or delivery date in normalized form.",
+      "owns": [
+        "Open the authenticated order detail page",
+        "Extract the order status from the order detail content",
+        "Detect arrival or delivery date text using stable delivery-related labels shown on the page",
+        "Normalize a displayed arrival or delivery date to YYYY-MM-DD",
+        "Return null when no arrival or delivery date is displayed"
+      ],
+      "does_not_own": [
+        "Authenticating the customer session",
+        "Finding or choosing which order detail URL to inspect",
+        "Listing orders from the order history page",
+        "Inferring delivery dates not shown on the page",
+        "Formatting the final task response"
+      ],
+      "input_contract": {
+        "order_detail_url": {
+          "type": "string",
+          "description": "Authenticated URL for a specific order detail page."
+        },
+        "order_number": {
+          "type": "string",
+          "description": "Website order number expected on the detail page, used to anchor status extraction as demonstrated by the workflow."
+        }
+      },
+      "output_contract": {
+        "order": {
+          "type": "object",
+          "description": "Structured fields extracted from the order detail page.",
+          "properties": {
+            "order_number": {
+              "type": "string",
+              "description": "Website order number associated with the inspected detail page."
+            },
+            "status": {
+              "type": "string",
+              "description": "Displayed order status extracted from the order detail page, or the page-associated order status if present."
+            },
+            "arrival_date": {
+              "type": "string|null",
+              "description": "Displayed arrival or delivery date normalized to YYYY-MM-DD, or null if no such date is found."
+            }
+          }
+        }
+      },
+      "source_evidence": {
+        "workflow_id": "task96_t193",
+        "template_id": "193",
+        "code_quote": "detail_url, detail_html = sess.open(latest['detail_url'])\ndetail_text = strip_text(detail_html)\ndetail_status = None\nm = re.search(r'Order\\s+#\\s*' + re.escape(latest['order_number']) + r'\\s+([A-Za-z]+)\\s+Order Date:', detail_text, re.I)\nif m:\n    detail_status = m.group(1)\narrival_date = parse_arrival_date(detail_text)\n...\ndef parse_arrival_date(detail_text):\n    patterns = [\n        r'(?:Arrival|Arrives|Estimated Delivery|Delivery Date|Delivered on|Expected by|Expected delivery)[:\\s]+([A-Za-z]+\\s+\\d{1,2},\\s*\\d{4})',\n        r'(?:Arrival|Arrives|Estimated Delivery|Delivery Date|Delivered on|Expected by|Expected delivery)[:\\s]+(\\d{1,2}/\\d{1,2}/\\d{2,4})',\n    ]",
+        "explanation": "This workflow demonstrates a second reusable authenticated read capability on an order detail page. It extracts a typed status field anchored to the order header text and parses delivery-related labels into a normalized arrival_date. The demonstrated labels and date formats justify a generalized primitive that reads one order detail page and returns structured status and arrival information, without including task logic for selecting the order.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    }
+  ]
+}

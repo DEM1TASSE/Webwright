@@ -1,0 +1,114 @@
+{
+  "decision": "CANDIDATES",
+  "candidates": [
+    {
+      "candidate_id": "task293_t329::authenticate_gitlab_session",
+      "proposed_method": "authenticate_gitlab_session",
+      "capability": "log into a GitLab website and establish an authenticated session",
+      "owns": [
+        "Fetch the GitLab sign-in page",
+        "Extract CSRF/authenticity token from login HTML",
+        "Submit username and password to the GitLab sign-in endpoint",
+        "Return authenticated session state and landing URL",
+        "Validate that login appears successful from resulting page/url"
+      ],
+      "does_not_own": [
+        "Choosing which account credentials to use for a broader task",
+        "Searching for a specific repository after login",
+        "Extracting repository-specific data like clone URLs",
+        "Any task-level interpretation of post-login content beyond basic success detection"
+      ],
+      "input_contract": {
+        "base_url": "string; root URL of the GitLab instance",
+        "username": "string; GitLab username or login",
+        "password": "string; GitLab password"
+      },
+      "output_contract": {
+        "authenticated": "boolean; whether login appears successful",
+        "landing_url": "string; URL after login submission and redirects",
+        "session_established": "boolean; whether authenticated cookies/session are available for subsequent requests"
+      },
+      "source_evidence": {
+        "workflow_id": "task293_t329",
+        "template_id": "329",
+        "code_quote": "login_page = session.get(BASE, timeout=20) ... re.search(r'name=[\"\\']authenticity_token[\"\\'][^>]*value=[\"\\']([^\"\\']+)', login_page.text ...) ... session.post(urljoin(BASE, '/users/sign_in'), data={'authenticity_token': token, 'user[login]': USERNAME, 'user[password]': PASSWORD, 'user[remember_me]': '0'}, headers={'Referer': login_page.url}, allow_redirects=True, timeout=20) ... if USERNAME.lower() not in body.lower() and 'dashboard' not in resp.url: raise RuntimeError('Login did not appear successful')",
+        "explanation": "The workflow demonstrates a complete GitLab web login sequence using the sign-in page, CSRF token extraction, POST to /users/sign_in, and basic success verification. Hard-coded instance URL and credentials can be parameterized into a reusable authentication primitive.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    },
+    {
+      "candidate_id": "task293_t329::search_gitlab_projects",
+      "proposed_method": "search_gitlab_projects",
+      "capability": "search GitLab projects through the website and return typed project search results",
+      "owns": [
+        "Construct the GitLab project search URL from a query string",
+        "Fetch the project search results page",
+        "Parse project result links from HTML",
+        "Return typed project records with stable identity fields exposed by the results page",
+        "Indicate the search URL used"
+      ],
+      "does_not_own": [
+        "Selecting the single best project for a user task",
+        "Applying task-specific exact-match heuristics for one repository name/path",
+        "Opening a repository page after search",
+        "Aggregating or ranking beyond page order shown by the site"
+      ],
+      "input_contract": {
+        "base_url": "string; root URL of the GitLab instance",
+        "query": "string; project search text"
+      },
+      "output_contract": {
+        "search_url": "string; fully resolved search URL used",
+        "results": [
+          {
+            "project_path": "string; repository path like /group/project",
+            "project_url": "string; absolute or site-relative URL to the project",
+            "label": "string; visible anchor text for the result as displayed in search results"
+          }
+        ],
+        "page_number": "integer|null; page number if explicitly requested or detectable, otherwise null",
+        "is_complete_page": "boolean; true for the fetched page of results, not a claim about all pages"
+      },
+      "source_evidence": {
+        "workflow_id": "task293_t329",
+        "template_id": "329",
+        "code_quote": "search_url = urljoin(BASE, '/search?scope=projects&search=' + quote(TARGET_NAME))\nsearch_resp = session.get(search_url, timeout=20)\nlinks = re.findall(r'<a\\b[^>]*href=[\"\\']([^\"\\']*)[\"\\'][^>]*>(.*?)</a>', search_resp.text, re.I|re.S)\nfor href, inner in links:\n    txt = html.unescape(' '.join(re.sub(r'<.*?>', ' ', inner, flags=re.S).split()))",
+        "explanation": "The workflow demonstrates the GitLab website search endpoint for project scope and parses anchor-based result entries from the returned HTML. The task then filters for one target path, but the reusable capability is the broader operation of retrieving typed project search results from that page.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    },
+    {
+      "candidate_id": "task293_t329::get_gitlab_repository_clone_urls",
+      "proposed_method": "get_gitlab_repository_clone_urls",
+      "capability": "open a GitLab repository page and extract clone URL information exposed in the website UI",
+      "owns": [
+        "Fetch a GitLab repository page by repository path or URL",
+        "Parse clone URL fields from repository HTML",
+        "Return SSH clone URL when present",
+        "Preserve repository page URL and repository path used for acquisition"
+      ],
+      "does_not_own": [
+        "Finding the repository via search or other navigation",
+        "Cloning the repository itself",
+        "Verifying repository contents or permissions beyond what the page exposes",
+        "Task-level choice of which repository to inspect"
+      ],
+      "input_contract": {
+        "base_url": "string; root URL of the GitLab instance",
+        "project_path": "string; repository path like /group/project"
+      },
+      "output_contract": {
+        "project_path": "string; repository path requested",
+        "repository_url": "string; resolved repository page URL fetched",
+        "ssh_clone_url": "string|null; SSH clone URL if exposed on the page"
+      },
+      "source_evidence": {
+        "workflow_id": "task293_t329",
+        "template_id": "329",
+        "code_quote": "repo_resp = session.get(urljoin(BASE, match_path), timeout=20)\nssh_match = re.search(r'name=[\"\\']ssh_project_clone[\"\\'][^>]*value=[\"\\']([^\"\\']+)', repo_resp.text, re.I|re.S)\nif not ssh_match:\n    ssh_match = re.search(r'value=[\"\\'](ssh://git@[^\"\\']+?\\.git)[\"\\']', repo_resp.text, re.I|re.S)\nif not ssh_match:\n    ssh_match = re.search(r'(git@[^\"\\'\\s<>]+?\\.git)', repo_resp.text, re.I)",
+        "explanation": "The workflow clearly demonstrates that a GitLab repository page exposes clone URL data in HTML, including a named field for the SSH clone URL. Generalizing the hard-coded repository path yields a reusable primitive for retrieving clone URL information from repository pages.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    }
+  ]
+}

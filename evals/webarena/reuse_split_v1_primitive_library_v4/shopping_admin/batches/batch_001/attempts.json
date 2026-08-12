@@ -1,0 +1,2205 @@
+[
+  {
+    "attempt": 1,
+    "proposal": {
+      "operations": [
+        {
+          "operation": "ADD",
+          "replacement": {
+            "primitive_id": "shopping_admin/list_sales_orders_from_grid",
+            "method": "list_sales_orders_from_grid",
+            "capability": "List sales order records from the shopping admin sales order grid with optional status filtering, sorting, and pagination metadata.",
+            "method_code": "async def list_sales_orders_from_grid(self, status: str | None = None, page_number: int = 1, page_size: int = 200, sort_field: str | None = None, sort_direction: str | None = None) -> dict:\n    import json\n    import re\n    from urllib.parse import urlencode, urljoin\n\n    if page_number < 1:\n        raise ValueError('page_number must be >= 1')\n    if page_size < 1:\n        raise ValueError('page_size must be >= 1')\n    if sort_direction is not None and sort_direction not in ('asc', 'desc'):\n        raise ValueError(\"sort_direction must be 'asc' or 'desc'\")\n\n    params = {\n        'namespace': 'sales_order_grid',\n        'paging[pageSize]': str(page_size),\n        'paging[current]': str(page_number),\n        'isAjax': 'true',\n    }\n    if status is not None:\n        params['filters[status]'] = status\n    if sort_field is not None:\n        params['sorting[field]'] = sort_field\n    if sort_direction is not None:\n        params['sorting[direction]'] = sort_direction\n\n    render_url = '/admin/mui/index/render/?' + urlencode(params)\n    response = await self.page.context.request.get(\n        urljoin(self.page.url or '/', render_url),\n        headers={'X-Requested-With': 'XMLHttpRequest'}\n    )\n    if not response.ok:\n        raise RuntimeError(f'Failed to fetch sales order grid: HTTP {response.status}')\n\n    content_type = (response.headers.get('content-type') or '').lower()\n    raw_text = await response.text()\n\n    payload = None\n    if 'application/json' in content_type:\n        payload = json.loads(raw_text)\n    else:\n        script_match = re.search(r'<script type=\"text/x-magento-init\">(.*?)</script>', raw_text, re.S)\n        if script_match:\n            app = json.loads(script_match.group(1))[\"*\"][\"Magento_Ui/js/core/app\"]\n            payload = app['components']['sales_order_grid']['children']['sales_order_grid_data_source']['config']['data']\n        else:\n            start_token = '\"sales_order_grid_data_source\":'\n            start = raw_text.find(start_token)\n            if start == -1:\n                raise RuntimeError('Could not locate sales_order_grid_data_source in grid response.')\n            i = start + len(start_token)\n            while i < len(raw_text) and raw_text[i].isspace():\n                i += 1\n            if i >= len(raw_text) or raw_text[i] != '{':\n                raise RuntimeError('Malformed sales order grid payload.')\n            depth = 0\n            end = None\n            for j in range(i, len(raw_text)):\n                ch = raw_text[j]\n                if ch == '{':\n                    depth += 1\n                elif ch == '}':\n                    depth -= 1\n                    if depth == 0:\n                        end = j + 1\n                        break\n            if end is None:\n                raise RuntimeError('Unterminated sales order grid payload.')\n            payload = json.loads(raw_text[i:end]).get('config', {}).get('data', {})\n\n    items = payload.get('items', []) if isinstance(payload, dict) else []\n    total_records = payload.get('totalRecords') if isinstance(payload, dict) else None\n\n    orders = []\n    for item in items:\n        actions = item.get('actions') or {}\n        view = actions.get('view') or {}\n        view_url = view.get('href')\n        if view_url:\n            view_url = urljoin(self.page.url or '/', view_url)\n        orders.append({\n            'entity_id': str(item.get('entity_id')) if item.get('entity_id') is not None else None,\n            'increment_id': str(item.get('increment_id')) if item.get('increment_id') is not None else None,\n            'created_at': item.get('created_at'),\n            'status': item.get('status'),\n            'billing_name': item.get('billing_name'),\n            'view_url': view_url,\n        })\n\n    is_complete_page = False\n    if isinstance(total_records, int):\n        is_complete_page = page_number == 1 and total_records <= len(orders)\n\n    return {\n        'orders': orders,\n        'page_number': page_number,\n        'page_size': page_size,\n        'total_records': total_records,\n        'is_complete_page': is_complete_page,\n        'sort_field': sort_field,\n        'sort_direction': sort_direction,\n        'status': status,\n    }\n",
+            "owns": [
+              "Issue authenticated requests to the shopping admin sales order grid endpoint",
+              "Apply optional server-side status filtering",
+              "Apply requested pagination and optional sorting parameters",
+              "Parse Magento grid payloads returned either as JSON or embedded in HTML/x-magento-init responses",
+              "Return typed order records with stable identifiers, timestamps, status, billing name, and detail URL",
+              "Return page-level pagination metadata and whether the returned first page fully covers the filtered result set"
+            ],
+            "does_not_own": [
+              "Logging into the admin site",
+              "Choosing which order is latest or otherwise task-relevant",
+              "Aggregating orders by month or by customer",
+              "Counting cancellations or selecting a customer with the most cancellations",
+              "Opening an order detail page",
+              "Formatting final task answers"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Optional order status filter passed to the sales order grid, for example 'complete' or 'canceled'."
+                },
+                "page_number": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "1-based sales order grid results page to request.",
+                  "default": 1
+                },
+                "page_size": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "Number of grid rows to request.",
+                  "default": 200
+                },
+                "sort_field": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Optional sales order grid field name to sort by, such as 'created_at'."
+                },
+                "sort_direction": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "enum": [
+                    "asc",
+                    "desc",
+                    null
+                  ],
+                  "description": "Optional sort direction for sort_field."
+                }
+              },
+              "required": []
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "orders": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "entity_id": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "Internal admin order entity identifier from the grid item."
+                      },
+                      "increment_id": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "Displayed order number from the grid item."
+                      },
+                      "created_at": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "Order creation timestamp from the grid payload."
+                      },
+                      "status": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "Order status from the grid payload."
+                      },
+                      "billing_name": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "Billing customer name from the grid payload when present."
+                      },
+                      "view_url": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "Resolved admin order detail URL from the grid item when present."
+                      }
+                    },
+                    "required": [
+                      "entity_id",
+                      "increment_id",
+                      "created_at",
+                      "status",
+                      "billing_name",
+                      "view_url"
+                    ]
+                  }
+                },
+                "page_number": {
+                  "type": "integer"
+                },
+                "page_size": {
+                  "type": "integer"
+                },
+                "total_records": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "description": "Total matching records reported by the grid payload when available."
+                },
+                "is_complete_page": {
+                  "type": "boolean",
+                  "description": "True only when the returned first page is known to include the full filtered result set based on total_records."
+                },
+                "sort_field": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "sort_direction": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "enum": [
+                    "asc",
+                    "desc",
+                    null
+                  ]
+                },
+                "status": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "orders",
+                "page_number",
+                "page_size",
+                "total_records",
+                "is_complete_page",
+                "sort_field",
+                "sort_direction",
+                "status"
+              ]
+            },
+            "requires": [
+              "Authenticated shopping_admin admin browser session"
+            ],
+            "provides": [
+              "Typed sales order grid records with stable page metadata"
+            ],
+            "supported_patterns": [
+              "List orders filtered by status from the sales order grid",
+              "Inspect one page of orders sorted by a requested grid field",
+              "Obtain total matching record count reported by the grid",
+              "Select latest or task-relevant orders in workflow logic using returned timestamps"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task107_t270",
+                "template_id": "270",
+                "code_quote": "url = BASE + '/admin/sales/order/index/?namespace=sales_order_grid&paging%5BpageSize%5D=200&paging%5Bcurrent%5D=1&filters%5Bstatus%5D=complete' ... obj = json.loads(body[start + len('\"sales_order_grid_data_source\":'):end]) ... items = obj['config']['data']['items'] ... obj['config']['data'].get('totalRecords')",
+                "explanation": "Generalized direct retrieval of the sales order grid data source from HTML into a parameterized listing primitive with status filter, paging inputs, typed order records, and total_records metadata."
+              },
+              {
+                "workflow_id": "task204_t366",
+                "template_id": "366",
+                "code_quote": "render = session.post(BASE + '/admin/mui/index/render/', data={'namespace': 'sales_order_grid', 'form_key': page_fk, 'isAjax': 'true', 'filters[status]': 'complete', 'paging[pageSize]': '200'}, ... ) ... data = obj['components']['sales_order_grid']['children']['sales_order_grid_data_source']['config']['data'] ... items = data['items'] ... total = data['totalRecords']",
+                "explanation": "Generalized the Magento UI render endpoint variant into the same stable capability, preserving fields demonstrated there such as entity_id, increment_id, created_at, status, and view_url."
+              },
+              {
+                "workflow_id": "task290_t234",
+                "template_id": "234",
+                "code_quote": "ORDER_GRID = BASE + '/mui/index/render/?namespace=sales_order_grid...&paging%5BpageSize%5D=200&paging%5Bcurrent%5D={page}&sorting%5Bfield%5D=created_at&sorting%5Bdirection%5D=desc&isAjax=true' ... page1 = await fetch_grid(reqctx, 1) ... items = page1['items'] + page2['items']",
+                "explanation": "Added explicit page_number, sort_field, and sort_direction support because the workflow demonstrates paginated JSON retrieval sorted by created_at descending."
+              }
+            ]
+          }
+        },
+        {
+          "operation": "ADD",
+          "replacement": {
+            "primitive_id": "shopping_admin/get_order_detail",
+            "method": "get_order_detail",
+            "capability": "Open a shopping admin order detail page and extract stable order-level facts plus typed line-item records shown on the page.",
+            "method_code": "async def get_order_detail(self, order_url: str | None = None, order_id: str | int | None = None) -> dict:\n    import re\n    from urllib.parse import urljoin\n\n    if not order_url and order_id is None:\n        raise ValueError('Provide order_url or order_id')\n\n    target_url = order_url if order_url else f'/admin/sales/order/view/order_id/{order_id}/'\n    await self.page.goto(target_url, wait_until='domcontentloaded')\n    await self.page.wait_for_load_state('networkidle')\n\n    current_url = self.page.url\n    html = await self.page.content()\n    body_text = await self.page.locator('body').inner_text()\n\n    def _strip_tags(text: str) -> str:\n        text = re.sub(r'<br\\s*/?>', ' ', text, flags=re.I)\n        text = re.sub(r'<.*?>', ' ', text, flags=re.S)\n        text = text.replace('&nbsp;', ' ').replace('&amp;', '&')\n        return ' '.join(text.split())\n\n    def _money_to_float(value: str) -> float:\n        return float(value.replace('$', '').replace(',', '').strip())\n\n    title_match = re.search(r'<title>(.*?)</title>', html, re.S | re.I)\n    order_title = _strip_tags(title_match.group(1)) if title_match else None\n\n    date_match = re.search(r'Order Date</th>\\s*<td[^>]*>\\s*(.*?)\\s*</td>', html, re.S | re.I)\n    order_date = _strip_tags(date_match.group(1)) if date_match else None\n\n    status_match = re.search(r'Order Status</th>\\s*<td[^>]*>\\s*(.*?)\\s*</td>', html, re.S | re.I)\n    order_status = _strip_tags(status_match.group(1)) if status_match else None\n\n    customer_name = None\n    customer_match = re.search(r'Customer Name\\s+([^\\n\\r]+)', body_text)\n    if customer_match:\n        customer_name = customer_match.group(1).strip()\n\n    sku_values = re.findall(r'SKU:\\s*([^\\n\\r]+)', body_text)\n    sku_records = [{'sku': sku.strip()} for sku in sku_values if sku.strip()]\n\n    items = []\n    for block in re.findall(r'<tbody[^>]*>(.*?)</tbody>', html, re.S | re.I):\n        if 'id=\"order_item_' not in block:\n            continue\n        name_match = re.search(r'<div[^>]*class=\"product-title\"[^>]*>(.*?)</div>', block, re.S | re.I)\n        if not name_match:\n            continue\n        name = _strip_tags(name_match.group(1))\n        money_values = re.findall(r'\\$\\d+[\\d,]*\\.\\d{2}', _strip_tags(block))\n        price = None\n        if len(money_values) >= 2:\n            try:\n                price = _money_to_float(money_values[1])\n            except Exception:\n                price = None\n        item_record = {\n            'name': name,\n            'price': price,\n        }\n        if len(items) < len(sku_records):\n            item_record['sku'] = sku_records[len(items)]['sku']\n        else:\n            item_record['sku'] = None\n        items.append(item_record)\n\n    return {\n        'order_url': current_url,\n        'order_id': str(order_id) if order_id is not None else None,\n        'title': order_title,\n        'order_date': order_date,\n        'order_status': order_status,\n        'customer_name': customer_name,\n        'items': items,\n        'skus': sku_records,\n    }\n",
+            "owns": [
+              "Navigate to an admin order detail page by URL or order_id",
+              "Extract stable order-level facts displayed on the order detail page",
+              "Parse product line-item blocks into typed item records",
+              "Extract SKU occurrences shown on the order detail page into typed SKU records",
+              "Return structured order detail data rather than raw HTML or page text"
+            ],
+            "does_not_own": [
+              "Selecting which order to inspect",
+              "Verifying business rules such as requiring complete or canceled status",
+              "Sorting items by price for a final answer",
+              "Comparing orders across multiple results",
+              "Formatting final task outputs"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "order_url": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Absolute or relative admin order detail URL to open."
+                },
+                "order_id": {
+                  "type": [
+                    "string",
+                    "integer",
+                    "null"
+                  ],
+                  "description": "Admin order entity ID used to build /admin/sales/order/view/order_id/{order_id}/ when order_url is not supplied."
+                }
+              },
+              "anyOf": [
+                {
+                  "required": [
+                    "order_url"
+                  ]
+                },
+                {
+                  "required": [
+                    "order_id"
+                  ]
+                }
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "order_url": {
+                  "type": "string",
+                  "description": "Resolved admin order detail URL that was opened."
+                },
+                "order_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Caller-supplied order_id when the page was opened by ID."
+                },
+                "title": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Order page title text when present."
+                },
+                "order_date": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Displayed order date text from the detail page."
+                },
+                "order_status": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Displayed order status text from the detail page."
+                },
+                "customer_name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Displayed customer name when parsable from page text."
+                },
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string",
+                        "description": "Product name shown in the line item."
+                      },
+                      "price": {
+                        "type": [
+                          "number",
+                          "null"
+                        ],
+                        "description": "Displayed line-item monetary value demonstrated by the workflow's parsed item price extraction."
+                      },
+                      "sku": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "Associated SKU when one can be aligned from the page's visible SKU occurrences."
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "price",
+                      "sku"
+                    ]
+                  }
+                },
+                "skus": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "sku": {
+                        "type": "string",
+                        "description": "SKU occurrence extracted from the order detail page text."
+                      }
+                    },
+                    "required": [
+                      "sku"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "order_url",
+                "order_id",
+                "title",
+                "order_date",
+                "order_status",
+                "customer_name",
+                "items",
+                "skus"
+              ]
+            },
+            "requires": [
+              "Authenticated shopping_admin admin browser session"
+            ],
+            "provides": [
+              "Typed order detail facts and line-item records from an order detail page"
+            ],
+            "supported_patterns": [
+              "Extract order detail line items with displayed prices",
+              "Extract SKU list from an order detail page",
+              "Verify order status and date in workflow logic",
+              "Use either a known order detail URL or order_id"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task204_t366",
+                "template_id": "366",
+                "code_quote": "detail = session.get(order_url) ... date_m = re.search(r'Order Date</th>\\\\s*<td[^>]*>\\\\s*(.*?)\\\\s*</td>', order_html, re.S) ... status_m = re.search(r'Order Status</th>\\\\s*<td[^>]*>\\\\s*(.*?)\\\\s*</td>', order_html, re.S) ... for block in re.findall(r'<tbody[^>]*>(.*?)</tbody>', order_html, re.S): ... title_m = re.search(r'<div[^>]*class=\"product-title\"[^>]*>(.*?)</div>', block, re.S) ... price = money_to_float(nums[1])",
+                "explanation": "Generalized parsing of order-level fields and line items from an order detail page into a reusable typed read primitive keyed by order URL or order_id."
+              },
+              {
+                "workflow_id": "task290_t234",
+                "template_id": "234",
+                "code_quote": "await page.goto(f\"{BASE}/sales/order/view/order_id/{order_id}/\", wait_until=\"networkidle\") ... body_text = await page.locator(\"body\").inner_text() ... sku_matches = re.findall(r\"SKU:\\s*([^\\\\n\\\\r]+)\", body_text)",
+                "explanation": "Extended the same order-detail acquisition boundary to include typed SKU records because the workflow demonstrates objective SKU extraction from the rendered order detail page."
+              }
+            ]
+          }
+        },
+        {
+          "operation": "ADD",
+          "replacement": {
+            "primitive_id": "shopping_admin/list_catalog_products",
+            "method": "list_catalog_products",
+            "capability": "List product records from the shopping admin catalog products grid for a requested page, including stable row facts and page-level completeness metadata.",
+            "method_code": "async def list_catalog_products(self, page_number: int = 1) -> dict:\n    import re\n\n    if page_number < 1:\n        raise ValueError('page_number must be >= 1')\n\n    url = '/admin/catalog/product/index/' if page_number == 1 else f'/admin/catalog/product/index/?p={page_number}'\n    await self.page.goto(url, wait_until='domcontentloaded')\n    await self.page.wait_for_load_state('networkidle')\n\n    body_text = await self.page.locator('body').inner_text()\n    rows = self.page.locator('table tbody tr')\n    row_count = await rows.count()\n\n    def _parse_row_text(text: str):\n        clean = ' '.join(text.split())\n        match = re.match(r'^(\\d+)\\s+(.+?)\\s+(Simple Product|Configurable Product|Virtual Product)\\s+', clean)\n        if not match:\n            return None\n        product_id, name, product_type = match.groups()\n        remainder = clean[match.end():]\n        qty_match = re.search(r'\\$[\\d,.]+\\s+(-?\\d+(?:\\.\\d+)?)\\s+', remainder)\n        quantity = float(qty_match.group(1)) if qty_match else None\n        return {\n            'product_id': product_id,\n            'name': name.strip(),\n            'product_type': product_type,\n            'quantity': quantity,\n            'raw_row_text': clean,\n        }\n\n    records = []\n    for i in range(row_count):\n        row_text = await rows.nth(i).inner_text()\n        parsed = _parse_row_text(row_text)\n        if parsed:\n            records.append(parsed)\n\n    total_records = None\n    match = re.search(r'(\\d+)\\s+records found', body_text)\n    if match:\n        total_records = int(match.group(1))\n\n    has_next_page = False\n    next_link = self.page.locator('.admin__data-grid-pager a[title=\"Next\"], .pages-item-next a').first\n    if await next_link.count():\n        disabled = await next_link.get_attribute('disabled')\n        aria_disabled = await next_link.get_attribute('aria-disabled')\n        has_next_page = not (disabled is not None or aria_disabled == 'true')\n\n    completeness = 'PAGE_ONLY'\n    if total_records is not None and page_number == 1 and total_records <= len(records):\n        completeness = 'COMPLETE_RESULT_SET'\n\n    return {\n        'records': records,\n        'page_number': page_number,\n        'has_next_page': has_next_page,\n        'total_records': total_records,\n        'completeness': completeness,\n    }\n",
+            "owns": [
+              "Navigate to the shopping admin catalog products grid for a requested page",
+              "Parse visible catalog product rows into typed records with stable row fields demonstrated by the workflow",
+              "Extract page-level total record count when shown by the grid",
+              "Return page-scoped completeness and next-page availability metadata"
+            ],
+            "does_not_own": [
+              "Logging into the admin site",
+              "Filtering to zero-quantity products",
+              "Restricting to specific product types",
+              "Deriving product color from naming conventions",
+              "Stopping early based on task-specific observations",
+              "Formatting final task answers"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "page_number": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "1-based catalog products grid page number to fetch.",
+                  "default": 1
+                }
+              },
+              "required": []
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "records": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "product_id": {
+                        "type": "string",
+                        "description": "Entity ID shown in the grid row."
+                      },
+                      "name": {
+                        "type": "string",
+                        "description": "Product name shown in the grid row."
+                      },
+                      "product_type": {
+                        "type": "string",
+                        "description": "Product type shown in the grid row, such as Simple Product or Configurable Product."
+                      },
+                      "quantity": {
+                        "type": [
+                          "number",
+                          "null"
+                        ],
+                        "description": "Inventory quantity parsed from the grid row when detected."
+                      },
+                      "raw_row_text": {
+                        "type": "string",
+                        "description": "Normalized visible row text from which the structured fields were parsed."
+                      }
+                    },
+                    "required": [
+                      "product_id",
+                      "name",
+                      "product_type",
+                      "quantity",
+                      "raw_row_text"
+                    ]
+                  }
+                },
+                "page_number": {
+                  "type": "integer"
+                },
+                "has_next_page": {
+                  "type": "boolean",
+                  "description": "Whether the pager indicates another page may be available."
+                },
+                "total_records": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "description": "Overall result count reported by the grid when present."
+                },
+                "completeness": {
+                  "type": "string",
+                  "enum": [
+                    "PAGE_ONLY",
+                    "COMPLETE_RESULT_SET"
+                  ],
+                  "description": "Whether the returned page is only a page slice or known to cover the full result set."
+                }
+              },
+              "required": [
+                "records",
+                "page_number",
+                "has_next_page",
+                "total_records",
+                "completeness"
+              ]
+            },
+            "requires": [
+              "Authenticated shopping_admin admin browser session"
+            ],
+            "provides": [
+              "Typed catalog product grid records for a requested page"
+            ],
+            "supported_patterns": [
+              "Inspect one page of catalog products",
+              "Find products with specific quantities in workflow logic",
+              "Traverse catalog pagination in workflow logic using has_next_page",
+              "Use raw_row_text only as normalized row evidence while relying on typed fields for decisions"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task184_t368",
+                "template_id": "368",
+                "code_quote": "url = BASE_PRODUCTS_URL if current_page == 1 else BASE_PRODUCTS_URL + f'?p={current_page}' ... rows = page.locator('table tbody tr') ... parsed = parse_row_text(txt) ... return {'id': entity_id, 'name': name.strip(), 'type': ptype, 'qty': qty, 'raw': clean} ... body = await page.locator('body').inner_text() ... if 'records found' not in body",
+                "explanation": "Generalized authenticated retrieval of catalog grid pages and row parsing into a page-scoped listing primitive that returns stable product row fields and grid-level total metadata when present."
+              }
+            ]
+          }
+        },
+        {
+          "operation": "SKIP",
+          "reason": "Existing primitives already cover the review-grid and review-detail capabilities demonstrated by the review workflows. task120_t250::list_product_reviews and task119_t250::list_product_reviews_with_ratings are covered by shopping_admin/search_product_reviews plus shopping_admin/get_product_review_detail; task12_t288::search_product_reviews_and_get_result_count is covered by shopping_admin/search_product_reviews. No stable-contract UPDATE is necessary."
+        }
+      ],
+      "workflow_attribution": [
+        {
+          "workflow_id": "task120_t250",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            3
+          ]
+        },
+        {
+          "workflow_id": "task12_t288",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            3
+          ]
+        },
+        {
+          "workflow_id": "task107_t270",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0
+          ]
+        },
+        {
+          "workflow_id": "task204_t366",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0,
+            1
+          ]
+        },
+        {
+          "workflow_id": "task184_t368",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            2
+          ]
+        },
+        {
+          "workflow_id": "task290_t234",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0,
+            1
+          ]
+        },
+        {
+          "workflow_id": "task119_t250",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            3
+          ]
+        }
+      ],
+      "candidate_attribution": [
+        {
+          "candidate_id": "task120_t250::list_product_reviews",
+          "decision": "COVERED",
+          "target_id": "shopping_admin/search_product_reviews",
+          "reason": "Covered by composing existing shopping_admin/search_product_reviews for grid discovery with existing shopping_admin/get_product_review_detail for per-review title, rating, and product_name extraction; candidate does not justify a new public primitive that bundles two public capabilities."
+        },
+        {
+          "candidate_id": "task12_t288::search_product_reviews_and_get_result_count",
+          "decision": "COVERED",
+          "target_id": "shopping_admin/search_product_reviews",
+          "reason": "Existing shopping_admin/search_product_reviews already accepts detail_query and returns reported_total_matches from the grid summary, which covers this candidate without needing a count-specific primitive."
+        },
+        {
+          "candidate_id": "task107_t270::list_sales_orders",
+          "decision": "ADD",
+          "operation_index": 0
+        },
+        {
+          "candidate_id": "task204_t366::list_orders_from_admin_order_grid",
+          "decision": "ADD",
+          "operation_index": 0
+        },
+        {
+          "candidate_id": "task204_t366::get_order_line_items_from_admin_order_detail",
+          "decision": "ADD",
+          "operation_index": 1
+        },
+        {
+          "candidate_id": "task184_t368::list_catalog_products",
+          "decision": "ADD",
+          "operation_index": 2
+        },
+        {
+          "candidate_id": "task290_t234::list_sales_orders_from_admin_grid",
+          "decision": "ADD",
+          "operation_index": 0
+        },
+        {
+          "candidate_id": "task290_t234::get_order_detail_skus",
+          "decision": "ADD",
+          "operation_index": 1
+        },
+        {
+          "candidate_id": "task119_t250::list_product_reviews_with_ratings",
+          "decision": "COVERED",
+          "target_id": "shopping_admin/get_product_review_detail",
+          "reason": "Per-review rating and title extraction is already covered by shopping_admin/get_product_review_detail, while review enumeration is already covered by shopping_admin/search_product_reviews; adding a bundled public primitive would violate the no-public-primitive-composition boundary."
+        }
+      ]
+    },
+    "quality_verdicts": null,
+    "errors": [
+      "workflow_attribution[0] operation 3 lacks matching evidence",
+      "workflow_attribution[1] operation 3 lacks matching evidence",
+      "workflow_attribution[6] operation 3 lacks matching evidence",
+      "every ADD/UPDATE operation must be attributed to a batch workflow"
+    ]
+  },
+  {
+    "attempt": 2,
+    "proposal": {
+      "operations": [
+        {
+          "operation": "ADD",
+          "replacement": {
+            "primitive_id": "shopping_admin/list_sales_orders_from_grid",
+            "method": "list_sales_orders_from_grid",
+            "capability": "Retrieve typed sales order records from the shopping admin sales order grid with optional status filtering, pagination, and stable grid-exposed order metadata.",
+            "method_code": "async def list_sales_orders_from_grid(self, status: str | None = None, page_number: int = 1, page_size: int = 200) -> dict:\n    import json\n    import re\n    from urllib.parse import urlencode, urljoin\n\n    if page_number < 1:\n        raise ValueError(\"page_number must be >= 1\")\n    if page_size < 1:\n        raise ValueError(\"page_size must be >= 1\")\n\n    params = {\n        \"namespace\": \"sales_order_grid\",\n        \"paging[pageSize]\": str(page_size),\n        \"paging[current]\": str(page_number),\n        \"isAjax\": \"true\",\n    }\n    if status is not None:\n        params[\"filters[status]\"] = status\n\n    render_url = \"/admin/mui/index/render/?\" + urlencode(params)\n    response = await self.page.context.request.get(\n        urljoin(self.page.url or \"/\", render_url),\n        headers={\"X-Requested-With\": \"XMLHttpRequest\"},\n    )\n    if not response.ok:\n        raise RuntimeError(f\"Failed to fetch sales order grid: HTTP {response.status}\")\n\n    content_type = (response.headers.get(\"content-type\") or \"\").lower()\n    raw_text = await response.text()\n\n    payload = None\n    if \"application/json\" in content_type:\n        payload = json.loads(raw_text)\n    else:\n        script_match = re.search(r'<script type=\"text/x-magento-init\">(.*?)</script>', raw_text, re.S)\n        if not script_match:\n            raise RuntimeError(\"Could not locate sales order grid payload in response.\")\n        app = json.loads(script_match.group(1))[\"*\"][\"Magento_Ui/js/core/app\"]\n        payload = app[\"components\"][\"sales_order_grid\"][\"children\"][\"sales_order_grid_data_source\"][\"config\"][\"data\"]\n\n    items = payload.get(\"items\", [])\n    total_records = payload.get(\"totalRecords\")\n    orders = []\n    for item in items:\n        actions = item.get(\"actions\") or {}\n        view = actions.get(\"view\") or {}\n        href = view.get(\"href\")\n        orders.append({\n            \"entity_id\": str(item.get(\"entity_id\")) if item.get(\"entity_id\") is not None else None,\n            \"increment_id\": str(item.get(\"increment_id\")) if item.get(\"increment_id\") is not None else None,\n            \"created_at\": item.get(\"created_at\"),\n            \"status\": item.get(\"status\"),\n            \"billing_name\": item.get(\"billing_name\"),\n            \"view_url\": urljoin(self.page.url or \"/\", href) if href else None,\n        })\n\n    is_complete_page = False\n    if isinstance(total_records, int) and page_number == 1 and total_records <= len(orders):\n        is_complete_page = True\n\n    return {\n        \"orders\": orders,\n        \"page_number\": page_number,\n        \"page_size\": page_size,\n        \"total_records\": total_records,\n        \"is_complete_page\": is_complete_page,\n        \"status\": status,\n    }\n",
+            "owns": [
+              "Issue authenticated requests to the shopping admin sales order grid endpoint",
+              "Apply optional server-side status filtering via grid parameters",
+              "Apply requested page_number and page_size to the grid request",
+              "Parse Magento sales order grid payloads returned either as JSON or embedded x-magento-init HTML",
+              "Return typed order records with stable identifiers, timestamps, status, billing name, and detail URL when present",
+              "Return page-level pagination metadata exposed by the grid including total_records"
+            ],
+            "does_not_own": [
+              "Logging into the admin site",
+              "Selecting the latest or otherwise task-relevant order",
+              "Aggregating orders by month or customer",
+              "Counting cancellations or ranking customers",
+              "Opening order detail pages",
+              "Formatting final task answers"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Optional order status filter passed to the sales order grid, for example 'complete' or 'canceled'."
+                },
+                "page_number": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "1-based sales order grid results page to request.",
+                  "default": 1
+                },
+                "page_size": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "Number of grid rows to request.",
+                  "default": 200
+                }
+              },
+              "required": []
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "orders": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "entity_id": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "Internal admin order entity identifier from the grid item."
+                      },
+                      "increment_id": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "Displayed order number from the grid item."
+                      },
+                      "created_at": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "Order creation timestamp from the grid payload."
+                      },
+                      "status": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "Order status from the grid payload."
+                      },
+                      "billing_name": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "Billing customer name from the grid payload when present."
+                      },
+                      "view_url": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "Resolved admin order detail URL from the grid item when present."
+                      }
+                    },
+                    "required": [
+                      "entity_id",
+                      "increment_id",
+                      "created_at",
+                      "status",
+                      "billing_name",
+                      "view_url"
+                    ]
+                  }
+                },
+                "page_number": {
+                  "type": "integer"
+                },
+                "page_size": {
+                  "type": "integer"
+                },
+                "total_records": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "description": "Total matching records reported by the grid payload when available."
+                },
+                "is_complete_page": {
+                  "type": "boolean",
+                  "description": "True only when the returned first page is known to include the full filtered result set based on total_records."
+                },
+                "status": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "orders",
+                "page_number",
+                "page_size",
+                "total_records",
+                "is_complete_page",
+                "status"
+              ]
+            },
+            "requires": [
+              "Authenticated shopping_admin admin browser session"
+            ],
+            "provides": [
+              "Typed sales order grid records with stable page metadata"
+            ],
+            "supported_patterns": [
+              "List orders filtered by status from the sales order grid",
+              "Inspect one page of orders using returned created_at timestamps in workflow logic",
+              "Obtain total matching record count reported by the grid",
+              "Retrieve order detail URLs for later workflow-side follow-up"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task107_t270",
+                "template_id": "270",
+                "code_quote": "url = BASE + '/admin/sales/order/index/?namespace=sales_order_grid&paging%5BpageSize%5D=200&paging%5Bcurrent%5D=1&filters%5Bstatus%5D=complete' ... obj = json.loads(body[start + len('\"sales_order_grid_data_source\":'):end]) ... items = obj['config']['data']['items'] ... obj['config']['data'].get('totalRecords')",
+                "explanation": "Generalized direct retrieval of the sales order grid data source from HTML into a parameterized listing primitive with status filter, paging inputs, typed order records, and total_records metadata."
+              },
+              {
+                "workflow_id": "task204_t366",
+                "template_id": "366",
+                "code_quote": "render = session.post(BASE + \"/admin/mui/index/render/\", data={\"namespace\": \"sales_order_grid\", \"form_key\": page_fk, \"isAjax\": \"true\", \"filters[status]\": \"complete\", \"paging[pageSize]\": \"200\"}, ...)\n...\ndata = obj[\"components\"][\"sales_order_grid\"][\"children\"][\"sales_order_grid_data_source\"][\"config\"][\"data\"]\nitems = data[\"items\"]\ntotal = data[\"totalRecords\"]",
+                "explanation": "Confirmed the same stable capability through the Magento UI render endpoint, including typed order records and totalRecords."
+              },
+              {
+                "workflow_id": "task290_t234",
+                "template_id": "234",
+                "code_quote": "ORDER_GRID = BASE + \"/mui/index/render/?namespace=sales_order_grid&filters%5Bplaceholder%5D=true&search=&keywordUpdated=false&paging%5BpageSize%5D=200&paging%5Bcurrent%5D={page}&sorting%5Bfield%5D=created_at&sorting%5Bdirection%5D=desc&isAjax=true\" ... page1 = await fetch_grid(reqctx, 1) ... return await resp.json()",
+                "explanation": "Confirmed paginated authenticated access to the same sales order grid JSON endpoint with page_number as a stable input."
+              }
+            ]
+          }
+        },
+        {
+          "operation": "ADD",
+          "replacement": {
+            "primitive_id": "shopping_admin/get_order_detail",
+            "method": "get_order_detail",
+            "capability": "Open a shopping admin order detail page and extract stable order-level facts plus typed line-item and SKU records shown on the page.",
+            "method_code": "async def get_order_detail(self, order_url: str | None = None, order_id: str | int | None = None) -> dict:\n    import re\n\n    if not order_url and order_id is None:\n        raise ValueError(\"Provide order_url or order_id\")\n\n    target_url = order_url if order_url else f\"/admin/sales/order/view/order_id/{order_id}/\"\n    await self.page.goto(target_url, wait_until=\"domcontentloaded\")\n    await self.page.wait_for_load_state(\"networkidle\")\n\n    current_url = self.page.url\n    html = await self.page.content()\n    body_text = await self.page.locator(\"body\").inner_text()\n\n    def _strip_tags(text: str) -> str:\n        text = re.sub(r\"<br\\s*/?>\", \" \", text, flags=re.I)\n        text = re.sub(r\"<.*?>\", \" \", text, flags=re.S)\n        text = text.replace(\"&nbsp;\", \" \").replace(\"&amp;\", \"&\")\n        return \" \".join(text.split())\n\n    def _money_to_float(value: str) -> float:\n        return float(value.replace(\"$\", \"\").replace(\",\", \"\").strip())\n\n    title_match = re.search(r\"<title>(.*?)</title>\", html, re.S | re.I)\n    title = _strip_tags(title_match.group(1)) if title_match else None\n\n    date_match = re.search(r\"Order Date</th>\\s*<td[^>]*>\\s*(.*?)\\s*</td>\", html, re.S | re.I)\n    order_date = _strip_tags(date_match.group(1)) if date_match else None\n\n    status_match = re.search(r\"Order Status</th>\\s*<td[^>]*>\\s*(.*?)\\s*</td>\", html, re.S | re.I)\n    order_status = _strip_tags(status_match.group(1)) if status_match else None\n\n    customer_name = None\n    customer_match = re.search(r\"Customer Name\\s+([^\\n\\r]+)\", body_text)\n    if customer_match:\n        customer_name = customer_match.group(1).strip()\n\n    sku_records = []\n    for sku in re.findall(r\"SKU:\\s*([^\\n\\r]+)\", body_text):\n        sku = sku.strip()\n        if sku:\n            sku_records.append({\"sku\": sku})\n\n    items = []\n    for block in re.findall(r\"<tbody[^>]*>(.*?)</tbody>\", html, re.S | re.I):\n        if 'id=\"order_item_' not in block:\n            continue\n        name_match = re.search(r'<div[^>]*class=\"product-title\"[^>]*>(.*?)</div>', block, re.S | re.I)\n        if not name_match:\n            continue\n        name = _strip_tags(name_match.group(1))\n        money_values = re.findall(r\"\\$\\d+[\\d,]*\\.\\d{2}\", _strip_tags(block))\n        displayed_price = None\n        if len(money_values) >= 2:\n            try:\n                displayed_price = _money_to_float(money_values[1])\n            except Exception:\n                displayed_price = None\n        items.append({\n            \"name\": name,\n            \"displayed_price\": displayed_price,\n        })\n\n    return {\n        \"order_url\": current_url,\n        \"order_id\": str(order_id) if order_id is not None else None,\n        \"title\": title,\n        \"order_date\": order_date,\n        \"order_status\": order_status,\n        \"customer_name\": customer_name,\n        \"items\": items,\n        \"skus\": sku_records,\n    }\n",
+            "owns": [
+              "Navigate to an admin order detail page by URL or order_id",
+              "Extract stable order-level facts displayed on the order detail page",
+              "Parse product line-item blocks into typed item records",
+              "Extract SKU occurrences shown on the order detail page into typed SKU records",
+              "Return structured order detail data rather than raw HTML or page text"
+            ],
+            "does_not_own": [
+              "Selecting which order to inspect",
+              "Verifying business rules such as requiring complete or canceled status",
+              "Sorting items by price for a final answer",
+              "Comparing orders across multiple results",
+              "Formatting final task outputs"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "order_url": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Absolute or relative admin order detail URL to open."
+                },
+                "order_id": {
+                  "type": [
+                    "string",
+                    "integer",
+                    "null"
+                  ],
+                  "description": "Admin order entity ID used to build /admin/sales/order/view/order_id/{order_id}/ when order_url is not supplied."
+                }
+              },
+              "anyOf": [
+                {
+                  "required": [
+                    "order_url"
+                  ]
+                },
+                {
+                  "required": [
+                    "order_id"
+                  ]
+                }
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "order_url": {
+                  "type": "string",
+                  "description": "Resolved admin order detail URL that was opened."
+                },
+                "order_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Caller-supplied order_id when the page was opened by ID."
+                },
+                "title": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Order page title text when present."
+                },
+                "order_date": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Displayed order date text from the detail page."
+                },
+                "order_status": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Displayed order status text from the detail page."
+                },
+                "customer_name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Displayed customer name when parsable from page text."
+                },
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string",
+                        "description": "Product name shown in the line item."
+                      },
+                      "displayed_price": {
+                        "type": [
+                          "number",
+                          "null"
+                        ],
+                        "description": "Displayed line-item monetary value demonstrated by the workflow's parsed item-price extraction."
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "displayed_price"
+                    ]
+                  }
+                },
+                "skus": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "sku": {
+                        "type": "string",
+                        "description": "SKU occurrence extracted from the order detail page text."
+                      }
+                    },
+                    "required": [
+                      "sku"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "order_url",
+                "order_id",
+                "title",
+                "order_date",
+                "order_status",
+                "customer_name",
+                "items",
+                "skus"
+              ]
+            },
+            "requires": [
+              "Authenticated shopping_admin admin browser session"
+            ],
+            "provides": [
+              "Typed order detail facts and line-item/SKU records from an order detail page"
+            ],
+            "supported_patterns": [
+              "Extract order detail line items with displayed prices",
+              "Extract SKU list from an order detail page",
+              "Verify order status and date in workflow logic",
+              "Use either a known order detail URL or order_id"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task204_t366",
+                "template_id": "366",
+                "code_quote": "detail = session.get(order_url)\n...\ndate_m = re.search(r\"Order Date</th>\\s*<td[^>]*>\\s*(.*?)\\s*</td>\", order_html, re.S)\nstatus_m = re.search(r\"Order Status</th>\\s*<td[^>]*>\\s*(.*?)\\s*</td>\", order_html, re.S)\n...\nfor block in re.findall(r\"<tbody[^>]*>(.*?)</tbody>\", order_html, re.S):\n    if 'id=\"order_item_' not in block:\n        continue\n    title_m = re.search(r'<div[^>]*class=\"product-title\"[^>]*>(.*?)</div>', block, re.S)\n    ...\n    price = money_to_float(nums[1])",
+                "explanation": "Generalized parsing of order-level fields and line items from an order detail page into a reusable typed read primitive keyed by order URL or order_id."
+              },
+              {
+                "workflow_id": "task290_t234",
+                "template_id": "234",
+                "code_quote": "await page.goto(f\"{BASE}/sales/order/view/order_id/{order_id}/\", wait_until=\"networkidle\")\nbody_text = await page.locator(\"body\").inner_text()\nsku_matches = re.findall(r\"SKU:\\s*([^\\n\\r]+)\", body_text)",
+                "explanation": "Extended the same order-detail acquisition boundary to include typed SKU records because the workflow demonstrates objective SKU extraction from the rendered order detail page."
+              }
+            ]
+          }
+        },
+        {
+          "operation": "ADD",
+          "replacement": {
+            "primitive_id": "shopping_admin/list_catalog_products",
+            "method": "list_catalog_products",
+            "capability": "List product records from the shopping admin catalog products grid for a requested page, including stable row facts and page-level completeness metadata.",
+            "method_code": "async def list_catalog_products(self, page_number: int = 1) -> dict:\n    import re\n\n    if page_number < 1:\n        raise ValueError(\"page_number must be >= 1\")\n\n    url = \"/admin/catalog/product/index/\" if page_number == 1 else f\"/admin/catalog/product/index/?p={page_number}\"\n    await self.page.goto(url, wait_until=\"domcontentloaded\")\n    await self.page.wait_for_load_state(\"networkidle\")\n\n    body_text = await self.page.locator(\"body\").inner_text()\n    rows = self.page.locator(\"table tbody tr\")\n    row_count = await rows.count()\n\n    def _parse_row_text(text: str):\n        clean = \" \".join(text.split())\n        match = re.match(r\"^(\\d+)\\s+(.+?)\\s+(Simple Product|Configurable Product|Virtual Product)\\s+\", clean)\n        if not match:\n            return None\n        product_id, name, product_type = match.groups()\n        remainder = clean[match.end():]\n        qty_match = re.search(r\"\\$[\\d,.]+\\s+(-?\\d+(?:\\.\\d+)?)\\s+\", remainder)\n        quantity = float(qty_match.group(1)) if qty_match else None\n        return {\n            \"product_id\": product_id,\n            \"name\": name.strip(),\n            \"product_type\": product_type,\n            \"quantity\": quantity,\n        }\n\n    records = []\n    for i in range(row_count):\n        row_text = await rows.nth(i).inner_text()\n        parsed = _parse_row_text(row_text)\n        if parsed:\n            records.append(parsed)\n\n    total_records = None\n    total_match = re.search(r\"(\\d+)\\s+records found\", body_text)\n    if total_match:\n        total_records = int(total_match.group(1))\n\n    has_next_page = False\n    next_link = self.page.locator('.admin__data-grid-pager a[title=\"Next\"], .pages-item-next a').first\n    if await next_link.count():\n        disabled = await next_link.get_attribute(\"disabled\")\n        aria_disabled = await next_link.get_attribute(\"aria-disabled\")\n        has_next_page = not (disabled is not None or aria_disabled == \"true\")\n\n    completeness = \"PAGE_ONLY\"\n    if total_records is not None and page_number == 1 and total_records <= len(records):\n        completeness = \"COMPLETE_RESULT_SET\"\n\n    return {\n        \"records\": records,\n        \"page_number\": page_number,\n        \"has_next_page\": has_next_page,\n        \"total_records\": total_records,\n        \"completeness\": completeness,\n    }\n",
+            "owns": [
+              "Navigate to the shopping admin catalog products grid for a requested page",
+              "Parse visible catalog product rows into typed records with stable row fields demonstrated by the workflow",
+              "Extract page-level total record count when shown by the grid",
+              "Return page-scoped completeness and next-page availability metadata"
+            ],
+            "does_not_own": [
+              "Logging into the admin site",
+              "Filtering to zero-quantity products",
+              "Restricting to specific product types",
+              "Deriving product color from naming conventions",
+              "Stopping early based on task-specific observations",
+              "Formatting final task answers"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "page_number": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "1-based catalog products grid page number to fetch.",
+                  "default": 1
+                }
+              },
+              "required": []
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "records": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "product_id": {
+                        "type": "string",
+                        "description": "Entity ID shown in the grid row."
+                      },
+                      "name": {
+                        "type": "string",
+                        "description": "Product name shown in the grid row."
+                      },
+                      "product_type": {
+                        "type": "string",
+                        "description": "Product type shown in the grid row, such as Simple Product or Configurable Product."
+                      },
+                      "quantity": {
+                        "type": [
+                          "number",
+                          "null"
+                        ],
+                        "description": "Inventory quantity parsed from the grid row when detected."
+                      }
+                    },
+                    "required": [
+                      "product_id",
+                      "name",
+                      "product_type",
+                      "quantity"
+                    ]
+                  }
+                },
+                "page_number": {
+                  "type": "integer"
+                },
+                "has_next_page": {
+                  "type": "boolean",
+                  "description": "Whether the pager indicates another page may be available."
+                },
+                "total_records": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "description": "Overall result count reported by the grid when present."
+                },
+                "completeness": {
+                  "type": "string",
+                  "enum": [
+                    "PAGE_ONLY",
+                    "COMPLETE_RESULT_SET"
+                  ],
+                  "description": "Whether the returned page is only a page slice or known to cover the full result set."
+                }
+              },
+              "required": [
+                "records",
+                "page_number",
+                "has_next_page",
+                "total_records",
+                "completeness"
+              ]
+            },
+            "requires": [
+              "Authenticated shopping_admin admin browser session"
+            ],
+            "provides": [
+              "Typed catalog product grid records for a requested page"
+            ],
+            "supported_patterns": [
+              "Inspect one page of catalog products",
+              "Find products with specific quantities in workflow logic",
+              "Traverse catalog pagination in workflow logic using has_next_page"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task184_t368",
+                "template_id": "368",
+                "code_quote": "url = BASE_PRODUCTS_URL if current_page == 1 else BASE_PRODUCTS_URL + f'?p={current_page}'\n...\nrows = page.locator('table tbody tr')\n...\nparsed = parse_row_text(txt)\n...\nreturn {\n    'id': entity_id,\n    'name': name.strip(),\n    'type': ptype,\n    'qty': qty,\n    'raw': clean,\n}\n...\nbody = await page.locator('body').inner_text()\nif '2042 records found' not in body and 'records found' not in body:",
+                "explanation": "Generalized retrieval of catalog grid pages and row parsing into a page-scoped listing primitive that returns stable product row fields and grid-level total metadata when present."
+              }
+            ]
+          }
+        }
+      ],
+      "workflow_attribution": [
+        {
+          "workflow_id": "task120_t250",
+          "decision": "SKIP",
+          "reason": "No new operation needed; this workflow is covered by existing shopping_admin/search_product_reviews plus existing shopping_admin/get_product_review_detail, and public primitives should not bundle those two existing capabilities."
+        },
+        {
+          "workflow_id": "task12_t288",
+          "decision": "SKIP",
+          "reason": "No new operation needed; existing shopping_admin/search_product_reviews already supports detail_query and returns reported_total_matches from the grid summary."
+        },
+        {
+          "workflow_id": "task107_t270",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0
+          ]
+        },
+        {
+          "workflow_id": "task204_t366",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0,
+            1
+          ]
+        },
+        {
+          "workflow_id": "task184_t368",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            2
+          ]
+        },
+        {
+          "workflow_id": "task290_t234",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0,
+            1
+          ]
+        },
+        {
+          "workflow_id": "task119_t250",
+          "decision": "SKIP",
+          "reason": "No new operation needed; this workflow is covered by existing shopping_admin/search_product_reviews for review discovery and existing shopping_admin/get_product_review_detail for title/rating extraction."
+        }
+      ],
+      "candidate_attribution": [
+        {
+          "candidate_id": "task120_t250::list_product_reviews",
+          "decision": "COVERED",
+          "target_id": "shopping_admin/search_product_reviews",
+          "reason": "Discovery of matching review rows is already covered by shopping_admin/search_product_reviews, while per-review title/rating/product extraction is already covered by shopping_admin/get_product_review_detail; adding a bundled public primitive would combine existing public capabilities."
+        },
+        {
+          "candidate_id": "task12_t288::search_product_reviews_and_get_result_count",
+          "decision": "COVERED",
+          "target_id": "shopping_admin/search_product_reviews",
+          "reason": "Existing shopping_admin/search_product_reviews already accepts a detail_query and returns reported_total_matches parsed from the grid summary, which covers this candidate without a count-only primitive."
+        },
+        {
+          "candidate_id": "task107_t270::list_sales_orders",
+          "decision": "ADD",
+          "operation_index": 0
+        },
+        {
+          "candidate_id": "task204_t366::list_orders_from_admin_order_grid",
+          "decision": "ADD",
+          "operation_index": 0
+        },
+        {
+          "candidate_id": "task204_t366::get_order_line_items_from_admin_order_detail",
+          "decision": "ADD",
+          "operation_index": 1
+        },
+        {
+          "candidate_id": "task184_t368::list_catalog_products",
+          "decision": "ADD",
+          "operation_index": 2
+        },
+        {
+          "candidate_id": "task290_t234::list_sales_orders_from_admin_grid",
+          "decision": "ADD",
+          "operation_index": 0
+        },
+        {
+          "candidate_id": "task290_t234::get_order_detail_skus",
+          "decision": "ADD",
+          "operation_index": 1
+        },
+        {
+          "candidate_id": "task119_t250::list_product_reviews_with_ratings",
+          "decision": "COVERED",
+          "target_id": "shopping_admin/get_product_review_detail",
+          "reason": "Per-review title and rating extraction is already covered by shopping_admin/get_product_review_detail, while review enumeration is already covered by shopping_admin/search_product_reviews; adding a bundled public primitive would duplicate existing capabilities."
+        }
+      ]
+    },
+    "quality_verdicts": {
+      "verdicts": [
+        {
+          "operation_index": 0,
+          "verdict": "PASS",
+          "reason": "Source evidence directly supports an authenticated sales-order-grid primitive using Magento render/grid endpoints with parameterized status and paging, and parsing typed order records plus totalRecords. The method owns site-specific acquisition/parsing only, leaves task-specific selection/aggregation out, and its owns/does_not_own are consistent. Output is typed and includes pagination metadata rather than pretending to be a complete collection. Including billing_name and view_url is supported by grid-item evidence in the proposed code path and consistent with the capability."
+        },
+        {
+          "operation_index": 1,
+          "verdict": "FAIL",
+          "reason": "This is a lossy, partly unsupported projection of the order detail page. The cited evidence demonstrates stable line-item monetary extraction from the item block and order-level fields, but the method/output omit stable identity/link completeness fields for line items and collapse pricing to a vaguely named displayed_price based on the second currency token without contract evidence that this is the right canonical field. It also adds customer_name extraction from loose body text without direct source support in the cited evidence. More importantly, candidate attribution task290_t234::get_order_detail_skus should likely be narrowed/merged into a SKU-only or richer order-detail primitive, but this combined primitive as written mixes weaker unsupported fields with supported parsing."
+        },
+        {
+          "operation_index": 2,
+          "verdict": "FAIL",
+          "reason": "The evidence supports a catalog-grid listing primitive, but the proposed parser is too brittle and under-supported for a stable public primitive. It hardcodes only three product_type labels and uses row-text regex heuristics for quantity instead of demonstrated stable structured fields/selectors. It also infers has_next_page via selectors/disabled attributes not supported by the source evidence. Most importantly, the workflow evidence demonstrated raw_row_text as part of the parsed record and iterative pagination checks via body text, while the proposed projection drops raw_row_text and presents a stronger typed completeness/next-page claim than the evidence supports."
+        }
+      ],
+      "rejection_verdicts": []
+    },
+    "errors": [
+      "quality gate rejected operation 1: This is a lossy, partly unsupported projection of the order detail page. The cited evidence demonstrates stable line-item monetary extraction from the item block and order-level fields, but the method/output omit stable identity/link completeness fields for line items and collapse pricing to a vaguely named displayed_price based on the second currency token without contract evidence that this is the right canonical field. It also adds customer_name extraction from loose body text without direct source support in the cited evidence. More importantly, candidate attribution task290_t234::get_order_detail_skus should likely be narrowed/merged into a SKU-only or richer order-detail primitive, but this combined primitive as written mixes weaker unsupported fields with supported parsing.",
+      "quality gate rejected operation 2: The evidence supports a catalog-grid listing primitive, but the proposed parser is too brittle and under-supported for a stable public primitive. It hardcodes only three product_type labels and uses row-text regex heuristics for quantity instead of demonstrated stable structured fields/selectors. It also infers has_next_page via selectors/disabled attributes not supported by the source evidence. Most importantly, the workflow evidence demonstrated raw_row_text as part of the parsed record and iterative pagination checks via body text, while the proposed projection drops raw_row_text and presents a stronger typed completeness/next-page claim than the evidence supports."
+    ]
+  },
+  {
+    "attempt": 3,
+    "proposal": {
+      "operations": [
+        {
+          "operation": "ADD",
+          "replacement": {
+            "primitive_id": "shopping_admin/list_sales_orders_from_grid",
+            "method": "list_sales_orders_from_grid",
+            "capability": "Retrieve typed sales order records from the shopping admin sales order grid with optional status filtering, pagination, and stable grid-exposed order metadata.",
+            "method_code": "async def list_sales_orders_from_grid(self, status: str | None = None, page_number: int = 1, page_size: int = 200) -> dict:\n    import json\n    import re\n    from urllib.parse import urlencode, urljoin\n\n    if page_number < 1:\n        raise ValueError(\"page_number must be >= 1\")\n    if page_size < 1:\n        raise ValueError(\"page_size must be >= 1\")\n\n    params = {\n        \"namespace\": \"sales_order_grid\",\n        \"paging[pageSize]\": str(page_size),\n        \"paging[current]\": str(page_number),\n        \"isAjax\": \"true\",\n    }\n    if status is not None:\n        params[\"filters[status]\"] = status\n\n    render_url = \"/admin/mui/index/render/?\" + urlencode(params)\n    response = await self.page.context.request.get(\n        urljoin(self.page.url or \"/\", render_url),\n        headers={\"X-Requested-With\": \"XMLHttpRequest\"},\n    )\n    if not response.ok:\n        raise RuntimeError(f\"Failed to fetch sales order grid: HTTP {response.status}\")\n\n    content_type = (response.headers.get(\"content-type\") or \"\").lower()\n    raw_text = await response.text()\n\n    payload = None\n    if \"application/json\" in content_type:\n        payload = json.loads(raw_text)\n    else:\n        script_match = re.search(r'<script type=\"text/x-magento-init\">(.*?)</script>', raw_text, re.S)\n        if not script_match:\n            start_marker = '\"sales_order_grid_data_source\":'\n            start = raw_text.find(start_marker)\n            if start == -1:\n                raise RuntimeError(\"Could not locate sales order grid payload in response.\")\n            idx = start + len(start_marker)\n            while idx < len(raw_text) and raw_text[idx].isspace():\n                idx += 1\n            if idx >= len(raw_text) or raw_text[idx] != '{':\n                raise RuntimeError(\"Sales order grid payload did not start with an object.\")\n            depth = 0\n            end = None\n            for pos in range(idx, len(raw_text)):\n                ch = raw_text[pos]\n                if ch == '{':\n                    depth += 1\n                elif ch == '}':\n                    depth -= 1\n                    if depth == 0:\n                        end = pos + 1\n                        break\n            if end is None:\n                raise RuntimeError(\"Could not parse embedded sales order grid payload.\")\n            payload = json.loads(raw_text[idx:end])[\"config\"][\"data\"]\n        else:\n            app = json.loads(script_match.group(1))[\"*\"][\"Magento_Ui/js/core/app\"]\n            payload = app[\"components\"][\"sales_order_grid\"][\"children\"][\"sales_order_grid_data_source\"][\"config\"][\"data\"]\n\n    items = payload.get(\"items\", [])\n    total_records = payload.get(\"totalRecords\")\n    orders = []\n    for item in items:\n        actions = item.get(\"actions\") or {}\n        view = actions.get(\"view\") or {}\n        href = view.get(\"href\")\n        orders.append({\n            \"entity_id\": str(item.get(\"entity_id\")) if item.get(\"entity_id\") is not None else None,\n            \"increment_id\": str(item.get(\"increment_id\")) if item.get(\"increment_id\") is not None else None,\n            \"created_at\": item.get(\"created_at\"),\n            \"status\": item.get(\"status\"),\n            \"billing_name\": item.get(\"billing_name\"),\n            \"view_url\": urljoin(self.page.url or \"/\", href) if href else None,\n        })\n\n    is_complete_page = False\n    if isinstance(total_records, int) and page_number == 1 and total_records <= len(orders):\n        is_complete_page = True\n\n    return {\n        \"orders\": orders,\n        \"page_number\": page_number,\n        \"page_size\": page_size,\n        \"total_records\": total_records,\n        \"is_complete_page\": is_complete_page,\n        \"status\": status,\n    }\n",
+            "owns": [
+              "Issue authenticated requests to the shopping admin sales order grid endpoint",
+              "Apply optional server-side status filtering via grid parameters",
+              "Apply requested page_number and page_size to the grid request",
+              "Parse Magento sales order grid payloads returned either as JSON, embedded x-magento-init HTML, or embedded sales_order_grid_data_source HTML",
+              "Return typed order records with stable identifiers, timestamps, status, billing name, and detail URL when present",
+              "Return page-level pagination metadata exposed by the grid including total_records"
+            ],
+            "does_not_own": [
+              "Logging into the admin site",
+              "Selecting the latest or otherwise task-relevant order",
+              "Aggregating orders by month or customer",
+              "Counting cancellations or ranking customers",
+              "Opening order detail pages",
+              "Formatting final task answers"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Optional order status filter passed to the sales order grid, for example 'complete' or 'canceled'."
+                },
+                "page_number": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "1-based sales order grid results page to request.",
+                  "default": 1
+                },
+                "page_size": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "Number of grid rows to request.",
+                  "default": 200
+                }
+              },
+              "required": []
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "orders": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "entity_id": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "Internal admin order entity identifier from the grid item."
+                      },
+                      "increment_id": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "Displayed order number from the grid item."
+                      },
+                      "created_at": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "Order creation timestamp from the grid payload."
+                      },
+                      "status": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "Order status from the grid payload."
+                      },
+                      "billing_name": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "Billing customer name from the grid payload when present."
+                      },
+                      "view_url": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "Resolved admin order detail URL from the grid item when present."
+                      }
+                    },
+                    "required": [
+                      "entity_id",
+                      "increment_id",
+                      "created_at",
+                      "status",
+                      "billing_name",
+                      "view_url"
+                    ]
+                  }
+                },
+                "page_number": {
+                  "type": "integer"
+                },
+                "page_size": {
+                  "type": "integer"
+                },
+                "total_records": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "description": "Total matching records reported by the grid payload when available."
+                },
+                "is_complete_page": {
+                  "type": "boolean",
+                  "description": "True only when the returned first page is known to include the full filtered result set based on total_records."
+                },
+                "status": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "orders",
+                "page_number",
+                "page_size",
+                "total_records",
+                "is_complete_page",
+                "status"
+              ]
+            },
+            "requires": [
+              "Authenticated shopping_admin admin browser session"
+            ],
+            "provides": [
+              "Typed sales order grid records with stable page metadata"
+            ],
+            "supported_patterns": [
+              "List orders filtered by status from the sales order grid",
+              "Inspect one page of orders using returned created_at timestamps in workflow logic",
+              "Obtain total matching record count reported by the grid",
+              "Retrieve order detail URLs for later workflow-side follow-up"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task107_t270",
+                "template_id": "270",
+                "code_quote": "url = BASE + '/admin/sales/order/index/?namespace=sales_order_grid&paging%5BpageSize%5D=200&paging%5Bcurrent%5D=1&filters%5Bstatus%5D=complete' ... obj = json.loads(body[start + len('\"sales_order_grid_data_source\":'):end]) ... items = obj['config']['data']['items'] ... obj['config']['data'].get('totalRecords')",
+                "explanation": "Generalized direct retrieval of the sales order grid data source from HTML into a parameterized listing primitive with status filter, paging inputs, typed order records, and total_records metadata."
+              },
+              {
+                "workflow_id": "task204_t366",
+                "template_id": "366",
+                "code_quote": "render = session.post(BASE + \"/admin/mui/index/render/\", data={\"namespace\": \"sales_order_grid\", \"form_key\": page_fk, \"isAjax\": \"true\", \"filters[status]\": \"complete\", \"paging[pageSize]\": \"200\"}, ...)\n...\ndata = obj[\"components\"][\"sales_order_grid\"][\"children\"][\"sales_order_grid_data_source\"][\"config\"][\"data\"]\nitems = data[\"items\"]\ntotal = data[\"totalRecords\"]",
+                "explanation": "Confirmed the same stable capability through the Magento UI render endpoint, including typed order records and totalRecords."
+              },
+              {
+                "workflow_id": "task290_t234",
+                "template_id": "234",
+                "code_quote": "ORDER_GRID = BASE + \"/mui/index/render/?namespace=sales_order_grid&filters%5Bplaceholder%5D=true&search=&keywordUpdated=false&paging%5BpageSize%5D=200&paging%5Bcurrent%5D={page}&sorting%5Bfield%5D=created_at&sorting%5Bdirection%5D=desc&isAjax=true\" ... page1 = await fetch_grid(reqctx, 1) ... return await resp.json()",
+                "explanation": "Confirmed paginated authenticated access to the same sales order grid JSON endpoint with page_number as a stable input."
+              }
+            ]
+          }
+        },
+        {
+          "operation": "ADD",
+          "replacement": {
+            "primitive_id": "shopping_admin/list_catalog_products",
+            "method": "list_catalog_products",
+            "capability": "List product records from the shopping admin catalog products grid for a requested page, preserving stable parsed row facts and page-scoped evidence without overclaiming pagination completeness.",
+            "method_code": "async def list_catalog_products(self, page_number: int = 1) -> dict:\n    import re\n\n    if page_number < 1:\n        raise ValueError(\"page_number must be >= 1\")\n\n    url = \"/admin/catalog/product/index/\" if page_number == 1 else f\"/admin/catalog/product/index/?p={page_number}\"\n    await self.page.goto(url, wait_until=\"domcontentloaded\")\n    await self.page.wait_for_load_state(\"networkidle\")\n\n    body_text = await self.page.locator(\"body\").inner_text()\n    rows = self.page.locator(\"table tbody tr\")\n    row_count = await rows.count()\n\n    def _parse_row_text(text: str):\n        clean = \" \".join(text.split())\n        match = re.match(r\"^(\\d+)\\s+(.+?)\\s+(Simple Product|Configurable Product|Virtual Product)\\s+\", clean)\n        if not match:\n            return None\n        product_id, name, product_type = match.groups()\n        remainder = clean[match.end():]\n        qty_match = re.search(r\"\\$[\\d,.]+\\s+(-?\\d+(?:\\.\\d+)?)\\s+\", remainder)\n        quantity = float(qty_match.group(1)) if qty_match else None\n        return {\n            \"product_id\": product_id,\n            \"name\": name.strip(),\n            \"product_type\": product_type,\n            \"quantity\": quantity,\n            \"raw_row_text\": clean,\n        }\n\n    records = []\n    for i in range(row_count):\n        row_text = await rows.nth(i).inner_text()\n        parsed = _parse_row_text(row_text)\n        if parsed:\n            records.append(parsed)\n\n    records_found_text = None\n    total_records = None\n    total_match = re.search(r\"(\\d+)\\s+records found\", body_text)\n    if total_match:\n        records_found_text = total_match.group(0)\n        total_records = int(total_match.group(1))\n\n    completeness = \"PAGE_ONLY\"\n\n    return {\n        \"records\": records,\n        \"page_number\": page_number,\n        \"records_found_text\": records_found_text,\n        \"total_records\": total_records,\n        \"completeness\": completeness,\n    }\n",
+            "owns": [
+              "Navigate to the shopping admin catalog products grid for a requested page",
+              "Parse visible catalog product rows into typed records with stable row fields demonstrated by the workflow",
+              "Preserve normalized raw_row_text alongside parsed fields to remain lossless with respect to the demonstrated row-text acquisition boundary",
+              "Extract grid-level records-found text and parsed total record count when shown on the page",
+              "Return only page-scoped completeness metadata supported by evidence"
+            ],
+            "does_not_own": [
+              "Logging into the admin site",
+              "Filtering to zero-quantity products",
+              "Restricting to specific product types",
+              "Deriving product color from naming conventions",
+              "Stopping early based on task-specific observations",
+              "Claiming next-page availability or full traversal completeness beyond the current page",
+              "Formatting final task answers"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "page_number": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "1-based catalog products grid page number to fetch.",
+                  "default": 1
+                }
+              },
+              "required": []
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "records": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "product_id": {
+                        "type": "string",
+                        "description": "Entity ID shown in the grid row."
+                      },
+                      "name": {
+                        "type": "string",
+                        "description": "Product name shown in the grid row."
+                      },
+                      "product_type": {
+                        "type": "string",
+                        "description": "Product type label parsed from the grid row text."
+                      },
+                      "quantity": {
+                        "type": [
+                          "number",
+                          "null"
+                        ],
+                        "description": "Inventory quantity parsed from the grid row text when detected."
+                      },
+                      "raw_row_text": {
+                        "type": "string",
+                        "description": "Normalized full row text from which the structured fields were parsed."
+                      }
+                    },
+                    "required": [
+                      "product_id",
+                      "name",
+                      "product_type",
+                      "quantity",
+                      "raw_row_text"
+                    ]
+                  }
+                },
+                "page_number": {
+                  "type": "integer"
+                },
+                "records_found_text": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Grid text indicating overall result count when present, for example '<n> records found'."
+                },
+                "total_records": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "description": "Overall result count parsed from records_found_text when present."
+                },
+                "completeness": {
+                  "type": "string",
+                  "enum": [
+                    "PAGE_ONLY"
+                  ],
+                  "description": "The primitive returns parsed rows from the requested page only and does not claim sitewide completeness."
+                }
+              },
+              "required": [
+                "records",
+                "page_number",
+                "records_found_text",
+                "total_records",
+                "completeness"
+              ]
+            },
+            "requires": [
+              "Authenticated shopping_admin admin browser session"
+            ],
+            "provides": [
+              "Typed catalog product grid records for a requested page with raw row text and page-scoped count evidence"
+            ],
+            "supported_patterns": [
+              "Inspect one page of catalog products",
+              "Find products with specific quantities in workflow logic",
+              "Traverse catalog pages in workflow logic by calling the primitive with successive page_number values",
+              "Use raw_row_text when callers need additional objective row evidence without exposing DOM handles"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task184_t368",
+                "template_id": "368",
+                "code_quote": "url = BASE_PRODUCTS_URL if current_page == 1 else BASE_PRODUCTS_URL + f'?p={current_page}'\n...\nrows = page.locator('table tbody tr')\n...\ntxt = ' '.join((await rows.nth(i).inner_text()).split())\nparsed = parse_row_text(txt)\n...\nreturn {\n    'id': entity_id,\n    'name': name.strip(),\n    'type': ptype,\n    'qty': qty,\n    'raw': clean,\n}\n...\nbody = await page.locator('body').inner_text()\nif '2042 records found' not in body and 'records found' not in body:",
+                "explanation": "Generalized page-by-page retrieval of the catalog grid and the workflow's own row-text parsing boundary into a page-scoped listing primitive. The replacement keeps raw_row_text because the source parser depends on normalized row text, and it limits completeness claims to PAGE_ONLY because the evidence does not support stronger pagination guarantees."
+              }
+            ]
+          }
+        }
+      ],
+      "workflow_attribution": [
+        {
+          "workflow_id": "task120_t250",
+          "decision": "SKIP",
+          "reason": "Covered by existing shopping_admin/search_product_reviews for review discovery and existing shopping_admin/get_product_review_detail for per-review title/rating extraction; a bundled public primitive would compose existing public primitives."
+        },
+        {
+          "workflow_id": "task12_t288",
+          "decision": "SKIP",
+          "reason": "Covered by existing shopping_admin/search_product_reviews, which already supports detail_query and returns reported_total_matches from the grid summary."
+        },
+        {
+          "workflow_id": "task107_t270",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0
+          ]
+        },
+        {
+          "workflow_id": "task204_t366",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0
+          ]
+        },
+        {
+          "workflow_id": "task184_t368",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            1
+          ]
+        },
+        {
+          "workflow_id": "task290_t234",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0
+          ]
+        },
+        {
+          "workflow_id": "task119_t250",
+          "decision": "SKIP",
+          "reason": "Covered by existing shopping_admin/search_product_reviews for review enumeration and existing shopping_admin/get_product_review_detail for title/rating extraction; no new primitive is needed."
+        }
+      ],
+      "candidate_attribution": [
+        {
+          "candidate_id": "task120_t250::list_product_reviews",
+          "decision": "COVERED",
+          "target_id": "shopping_admin/search_product_reviews",
+          "reason": "Review discovery is already covered by shopping_admin/search_product_reviews, while detailed title/rating extraction is already covered by shopping_admin/get_product_review_detail; adding a bundled primitive would duplicate existing public capabilities."
+        },
+        {
+          "candidate_id": "task12_t288::search_product_reviews_and_get_result_count",
+          "decision": "COVERED",
+          "target_id": "shopping_admin/search_product_reviews",
+          "reason": "Existing shopping_admin/search_product_reviews already accepts a detail_query and returns reported_total_matches parsed from the grid summary."
+        },
+        {
+          "candidate_id": "task107_t270::list_sales_orders",
+          "decision": "ADD",
+          "operation_index": 0
+        },
+        {
+          "candidate_id": "task204_t366::list_orders_from_admin_order_grid",
+          "decision": "ADD",
+          "operation_index": 0
+        },
+        {
+          "candidate_id": "task204_t366::get_order_line_items_from_admin_order_detail",
+          "decision": "REJECT",
+          "target_id": null,
+          "reason": "Boundary/evidence defect: the candidate's proposed order-detail line-item projection is under-supported and lossy. The source only demonstrates heuristic extraction of a price token from item blocks and does not support a stable canonical public contract for line-item pricing/identity fields here."
+        },
+        {
+          "candidate_id": "task184_t368::list_catalog_products",
+          "decision": "ADD",
+          "operation_index": 1
+        },
+        {
+          "candidate_id": "task290_t234::list_sales_orders_from_admin_grid",
+          "decision": "ADD",
+          "operation_index": 0
+        },
+        {
+          "candidate_id": "task290_t234::get_order_detail_skus",
+          "decision": "REJECT",
+          "target_id": null,
+          "reason": "Boundary/evidence defect: the candidate relies on parsing SKU values from broad rendered body text on an order detail page, which is too weakly grounded for a standalone stable public primitive under the typed-objective-facts boundary."
+        },
+        {
+          "candidate_id": "task119_t250::list_product_reviews_with_ratings",
+          "decision": "COVERED",
+          "target_id": "shopping_admin/get_product_review_detail",
+          "reason": "Per-review title and rating extraction is already covered by shopping_admin/get_product_review_detail, while review enumeration is already covered by shopping_admin/search_product_reviews; adding a bundled public primitive would duplicate existing capabilities."
+        }
+      ]
+    },
+    "quality_verdicts": {
+      "verdicts": [
+        {
+          "operation_index": 0,
+          "verdict": "PASS",
+          "reason": "Supported by direct evidence from multiple workflows for the Magento sales_order_grid via both /admin/mui/index/render/ and embedded payloads in HTML. Inputs are typed and parameterize site-native grid controls (status, page number, page size). Output is typed and preserves stable objective fields evidenced by the grid, including identifiers, created_at, status, billing_name, view_url, and total_records. The method owns site-specific acquisition/parsing only and leaves task logic such as selecting latest orders, aggregation, ranking, detail-page traversal, and answer formatting to callers. owns/does_not_own are consistent, and the code matches the contract closely enough, including page-scoped completeness reporting rather than overclaiming full traversal."
+        },
+        {
+          "operation_index": 1,
+          "verdict": "FAIL",
+          "reason": "The primitive is under-supported and lossy relative to the cited evidence. The evidence only demonstrates a workflow-local heuristic parser over normalized row text; it does not directly support the proposed stable typed projection of quantity as a reliable field across catalog rows. More importantly, the candidate claims to parse visible catalog product rows into typed records with stable row fields, but the code hard-codes a narrow regex for only three product-type labels and silently drops any non-matching rows, so it can omit objective records on the page without reporting incompleteness of parsing. This violates the lossless typed-record boundary for a listing primitive. The output also presents records as the parsed page collection while neither preserving all rows nor surfacing parse failures. This should be narrowed/regenerated rather than accepted as-is."
+        }
+      ],
+      "rejection_verdicts": [
+        {
+          "candidate_id": "task204_t366::get_order_line_items_from_admin_order_detail",
+          "verdict": "FAIL",
+          "reason": "The REJECT should not stand. The cited evidence does demonstrate a reusable site-specific order-detail acquisition/parsing core: fetching an authenticated order detail page, extracting objective order metadata, locating line-item tbody blocks, and parsing at least typed item names plus page-derived money strings/values. While the proposed price field is heuristically chosen and may need narrowing, this candidate should be regenerated into a narrower primitive rather than rejected outright."
+        },
+        {
+          "candidate_id": "task290_t234::get_order_detail_skus",
+          "verdict": "FAIL",
+          "reason": "The REJECT should not stand. The evidence shows a reusable site-specific primitive core: navigate to an admin order detail page for a given order_id and parse typed SKU occurrences from rendered page text. Even if the extraction is weaker than ideal, it is still typed site parsing rather than pure task logic. This should be narrowed to a conservative order-detail SKU listing/extraction primitive, not rejected."
+        }
+      ]
+    },
+    "errors": [
+      "quality gate rejected operation 1: The primitive is under-supported and lossy relative to the cited evidence. The evidence only demonstrates a workflow-local heuristic parser over normalized row text; it does not directly support the proposed stable typed projection of quantity as a reliable field across catalog rows. More importantly, the candidate claims to parse visible catalog product rows into typed records with stable row fields, but the code hard-codes a narrow regex for only three product-type labels and silently drops any non-matching rows, so it can omit objective records on the page without reporting incompleteness of parsing. This violates the lossless typed-record boundary for a listing primitive. The output also presents records as the parsed page collection while neither preserving all rows nor surfacing parse failures. This should be narrowed/regenerated rather than accepted as-is.",
+      "coverage gate rejected dropping task204_t366::get_order_line_items_from_admin_order_detail: The REJECT should not stand. The cited evidence does demonstrate a reusable site-specific order-detail acquisition/parsing core: fetching an authenticated order detail page, extracting objective order metadata, locating line-item tbody blocks, and parsing at least typed item names plus page-derived money strings/values. While the proposed price field is heuristically chosen and may need narrowing, this candidate should be regenerated into a narrower primitive rather than rejected outright.",
+      "coverage gate rejected dropping task290_t234::get_order_detail_skus: The REJECT should not stand. The evidence shows a reusable site-specific primitive core: navigate to an admin order detail page for a given order_id and parse typed SKU occurrences from rendered page text. Even if the extraction is weaker than ideal, it is still typed site parsing rather than pure task logic. This should be narrowed to a conservative order-detail SKU listing/extraction primitive, not rejected."
+    ]
+  },
+  {
+    "attempt": 4,
+    "proposal": {
+      "operations": [
+        {
+          "operation": "ADD",
+          "replacement": {
+            "primitive_id": "shopping_admin/list_sales_orders_from_grid",
+            "method": "list_sales_orders_from_grid",
+            "capability": "Retrieve typed sales order records from the shopping admin sales order grid with optional status filtering, pagination, and stable grid-exposed order metadata.",
+            "method_code": "async def list_sales_orders_from_grid(self, status: str | None = None, page_number: int = 1, page_size: int = 200) -> dict:\n    import json\n    import re\n    from urllib.parse import urlencode, urljoin\n\n    if page_number < 1:\n        raise ValueError(\"page_number must be >= 1\")\n    if page_size < 1:\n        raise ValueError(\"page_size must be >= 1\")\n\n    await self.page.goto('/admin/sales/order/', wait_until='domcontentloaded')\n    await self.page.wait_for_load_state('networkidle')\n\n    params = {\n        'namespace': 'sales_order_grid',\n        'paging[pageSize]': str(page_size),\n        'paging[current]': str(page_number),\n        'isAjax': 'true',\n    }\n    if status is not None:\n        params['filters[status]'] = status\n\n    render_url = '/admin/mui/index/render/?' + urlencode(params)\n    response = await self.page.context.request.get(\n        urljoin(self.page.url, render_url),\n        headers={\n            'X-Requested-With': 'XMLHttpRequest',\n            'Referer': urljoin(self.page.url, '/admin/sales/order/'),\n        },\n    )\n    if not response.ok:\n        raise RuntimeError(f'Failed to fetch sales order grid: HTTP {response.status}')\n\n    raw_text = await response.text()\n    content_type = (response.headers.get('content-type') or '').lower()\n\n    payload = None\n    if 'application/json' in content_type:\n        parsed = json.loads(raw_text)\n        if isinstance(parsed, dict) and 'items' in parsed:\n            payload = parsed\n        else:\n            raise RuntimeError('Unexpected JSON payload for sales order grid.')\n    else:\n        script_match = re.search(r'<script type=\"text/x-magento-init\">(.*?)</script>', raw_text, re.S)\n        if script_match:\n            app = json.loads(script_match.group(1))['*']['Magento_Ui/js/core/app']\n            payload = app['components']['sales_order_grid']['children']['sales_order_grid_data_source']['config']['data']\n        else:\n            marker = '\"sales_order_grid_data_source\":'\n            start = raw_text.find(marker)\n            if start == -1:\n                raise RuntimeError('Could not locate sales order grid payload in response.')\n            idx = start + len(marker)\n            while idx < len(raw_text) and raw_text[idx].isspace():\n                idx += 1\n            if idx >= len(raw_text) or raw_text[idx] != '{':\n                raise RuntimeError('Embedded sales order grid payload did not start with an object.')\n            depth = 0\n            end = None\n            for pos in range(idx, len(raw_text)):\n                ch = raw_text[pos]\n                if ch == '{':\n                    depth += 1\n                elif ch == '}':\n                    depth -= 1\n                    if depth == 0:\n                        end = pos + 1\n                        break\n            if end is None:\n                raise RuntimeError('Could not parse embedded sales order grid payload.')\n            payload = json.loads(raw_text[idx:end])['config']['data']\n\n    items = payload.get('items', [])\n    total_records = payload.get('totalRecords')\n    orders = []\n    for item in items:\n        actions = item.get('actions') or {}\n        view = actions.get('view') or {}\n        href = view.get('href')\n        orders.append({\n            'entity_id': str(item.get('entity_id')) if item.get('entity_id') is not None else None,\n            'increment_id': str(item.get('increment_id')) if item.get('increment_id') is not None else None,\n            'created_at': item.get('created_at'),\n            'status': item.get('status'),\n            'billing_name': item.get('billing_name'),\n            'view_url': urljoin(self.page.url, href) if href else None,\n        })\n\n    is_complete_page = False\n    if isinstance(total_records, int) and page_number == 1 and total_records <= len(orders):\n        is_complete_page = True\n\n    return {\n        'orders': orders,\n        'page_number': page_number,\n        'page_size': page_size,\n        'total_records': total_records,\n        'is_complete_page': is_complete_page,\n        'status': status,\n    }\n",
+            "owns": [
+              "Navigate to the shopping admin sales order area as needed to establish the grid context",
+              "Issue authenticated requests to the Magento sales order grid endpoint",
+              "Apply optional server-side status filtering via grid parameters",
+              "Apply requested page_number and page_size to the grid request",
+              "Parse Magento sales order grid payloads returned either as JSON, embedded x-magento-init HTML, or embedded sales_order_grid_data_source HTML",
+              "Return typed order records with stable identifiers, timestamps, status, billing name, and detail URL when present",
+              "Return page-level pagination metadata exposed by the grid including total_records"
+            ],
+            "does_not_own": [
+              "Logging into the admin site",
+              "Selecting the latest or otherwise task-relevant order",
+              "Aggregating orders by month or customer",
+              "Counting cancellations or ranking customers",
+              "Opening order detail pages",
+              "Formatting final task answers"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Optional order status filter passed to the sales order grid, for example 'complete' or 'canceled'."
+                },
+                "page_number": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "1-based sales order grid results page to request.",
+                  "default": 1
+                },
+                "page_size": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "Number of grid rows to request.",
+                  "default": 200
+                }
+              },
+              "required": []
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "orders": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "entity_id": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "Internal admin order entity identifier from the grid item."
+                      },
+                      "increment_id": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "Displayed order number from the grid item."
+                      },
+                      "created_at": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "Order creation timestamp from the grid payload."
+                      },
+                      "status": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "Order status from the grid payload."
+                      },
+                      "billing_name": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "Billing customer name from the grid payload when present."
+                      },
+                      "view_url": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "Resolved admin order detail URL from the grid item when present."
+                      }
+                    },
+                    "required": [
+                      "entity_id",
+                      "increment_id",
+                      "created_at",
+                      "status",
+                      "billing_name",
+                      "view_url"
+                    ]
+                  }
+                },
+                "page_number": {
+                  "type": "integer"
+                },
+                "page_size": {
+                  "type": "integer"
+                },
+                "total_records": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "description": "Total matching records reported by the grid payload when available."
+                },
+                "is_complete_page": {
+                  "type": "boolean",
+                  "description": "True only when the returned first page is known to include the full filtered result set based on total_records."
+                },
+                "status": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "orders",
+                "page_number",
+                "page_size",
+                "total_records",
+                "is_complete_page",
+                "status"
+              ]
+            },
+            "requires": [
+              "Authenticated shopping_admin admin browser session"
+            ],
+            "provides": [
+              "Typed sales order grid records with stable page metadata"
+            ],
+            "supported_patterns": [
+              "List orders filtered by status from the sales order grid",
+              "Inspect one page of orders using returned created_at timestamps in workflow logic",
+              "Obtain total matching record count reported by the grid",
+              "Retrieve order detail URLs for later workflow-side follow-up"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task107_t270",
+                "template_id": "270",
+                "code_quote": "url = BASE + '/admin/sales/order/index/?namespace=sales_order_grid&paging%5BpageSize%5D=200&paging%5Bcurrent%5D=1&filters%5Bstatus%5D=complete' ... obj = json.loads(body[start + len('\"sales_order_grid_data_source\":'):end]) ... items = obj['config']['data']['items'] ... obj['config']['data'].get('totalRecords')",
+                "explanation": "Generalized direct retrieval of the sales order grid data source from HTML into a parameterized listing primitive with status filter, paging inputs, typed order records, and total_records metadata."
+              },
+              {
+                "workflow_id": "task204_t366",
+                "template_id": "366",
+                "code_quote": "render = session.post(BASE + \"/admin/mui/index/render/\", data={\"namespace\": \"sales_order_grid\", \"form_key\": page_fk, \"isAjax\": \"true\", \"filters[status]\": \"complete\", \"paging[pageSize]\": \"200\"}, ...)\n...\ndata = obj[\"components\"][\"sales_order_grid\"][\"children\"][\"sales_order_grid_data_source\"][\"config\"][\"data\"]\nitems = data[\"items\"]\ntotal = data[\"totalRecords\"]",
+                "explanation": "Confirmed the same stable capability through the Magento UI render endpoint, including typed order records and totalRecords."
+              },
+              {
+                "workflow_id": "task290_t234",
+                "template_id": "234",
+                "code_quote": "ORDER_GRID = BASE + \"/mui/index/render/?namespace=sales_order_grid&filters%5Bplaceholder%5D=true&search=&keywordUpdated=false&paging%5BpageSize%5D=200&paging%5Bcurrent%5D={page}&sorting%5Bfield%5D=created_at&sorting%5Bdirection%5D=desc&isAjax=true\" ... page1 = await fetch_grid(reqctx, 1) ... return await resp.json()",
+                "explanation": "Confirmed paginated authenticated access to the same sales order grid JSON endpoint with page_number as a stable input."
+              }
+            ]
+          }
+        },
+        {
+          "operation": "ADD",
+          "replacement": {
+            "primitive_id": "shopping_admin/get_order_detail_items",
+            "method": "get_order_detail_items",
+            "capability": "Open a shopping admin order detail page and extract objective order metadata together with typed line-item records and displayed money strings from each item block.",
+            "method_code": "async def get_order_detail_items(self, order_url: str) -> dict:\n    import re\n    from urllib.parse import urljoin\n\n    if not order_url:\n        raise ValueError('order_url is required')\n\n    await self.page.goto(order_url, wait_until='domcontentloaded')\n    await self.page.wait_for_load_state('networkidle')\n\n    def _strip_tags(text: str) -> str:\n        text = re.sub(r'<br\\s*/?>', ' ', text, flags=re.I)\n        text = re.sub(r'<.*?>', ' ', text, flags=re.S)\n        text = text.replace('&nbsp;', ' ').replace('&amp;', '&')\n        return ' '.join(text.split())\n\n    html = await self.page.content()\n\n    title_match = re.search(r'<title>(.*?)</title>', html, re.S | re.I)\n    order_title = _strip_tags(title_match.group(1)) if title_match else None\n\n    date_match = re.search(r'Order Date</th>\\s*<td[^>]*>\\s*(.*?)\\s*</td>', html, re.S | re.I)\n    order_date = _strip_tags(date_match.group(1)) if date_match else None\n\n    status_match = re.search(r'Order Status</th>\\s*<td[^>]*>\\s*(.*?)\\s*</td>', html, re.S | re.I)\n    order_status = _strip_tags(status_match.group(1)) if status_match else None\n\n    items = []\n    for block in re.findall(r'<tbody[^>]*>(.*?)</tbody>', html, re.S | re.I):\n        if 'id=\"order_item_' not in block:\n            continue\n        name_match = re.search(r'<div[^>]*class=\"product-title\"[^>]*>(.*?)</div>', block, re.S | re.I)\n        if not name_match:\n            continue\n        name = _strip_tags(name_match.group(1))\n        displayed_money_amounts = re.findall(r'\\$\\d+[\\d,]*\\.\\d{2}', _strip_tags(block))\n        items.append({\n            'name': name,\n            'displayed_money_amounts': displayed_money_amounts,\n        })\n\n    return {\n        'order_url': urljoin(self.page.url, self.page.url),\n        'order': {\n            'title': order_title,\n            'order_date': order_date,\n            'order_status': order_status,\n        },\n        'items': items,\n    }\n",
+            "owns": [
+              "Navigate to an authenticated admin order detail page by URL",
+              "Parse stable order-level fields displayed on the page such as title, order date, and order status",
+              "Identify line-item tbody blocks corresponding to order items",
+              "Extract product name from each line-item block",
+              "Extract displayed money strings from each item block without overcommitting to a heuristic semantic interpretation",
+              "Return typed order metadata and line-item records rather than raw HTML"
+            ],
+            "does_not_own": [
+              "Selecting which order to inspect",
+              "Verifying business rules like requiring Complete status",
+              "Sorting items by price",
+              "Inferring which displayed currency amount corresponds to a canonical business field",
+              "Formatting final answer"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "order_url": {
+                  "type": "string",
+                  "description": "Admin order detail page URL to fetch and parse."
+                }
+              },
+              "required": [
+                "order_url"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "order_url": {
+                  "type": "string",
+                  "description": "Resolved admin order detail URL that was opened."
+                },
+                "order": {
+                  "type": "object",
+                  "properties": {
+                    "title": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "Page title text for the order detail."
+                    },
+                    "order_date": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "Displayed order date text from the detail page."
+                    },
+                    "order_status": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "Displayed order status text from the detail page."
+                    }
+                  },
+                  "required": [
+                    "title",
+                    "order_date",
+                    "order_status"
+                  ]
+                },
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string",
+                        "description": "Product name shown in the line item."
+                      },
+                      "displayed_money_amounts": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "Currency amounts found in the rendered item block, preserved in page order."
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "displayed_money_amounts"
+                    ]
+                  },
+                  "description": "Parsed product line items from the order detail page."
+                }
+              },
+              "required": [
+                "order_url",
+                "order",
+                "items"
+              ]
+            },
+            "requires": [
+              "Authenticated shopping_admin admin browser session"
+            ],
+            "provides": [
+              "Typed order detail metadata and item-block facts from an admin order detail page"
+            ],
+            "supported_patterns": [
+              "Read order status and date from an order detail page",
+              "List product names from order items",
+              "Let workflows choose how to interpret displayed money amounts",
+              "Support downstream workflow-side sorting or selection"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task204_t366",
+                "template_id": "366",
+                "code_quote": "detail = session.get(order_url)\n...\ndate_m = re.search(r\"Order Date</th>\\s*<td[^>]*>\\s*(.*?)\\s*</td>\", order_html, re.S)\nstatus_m = re.search(r\"Order Status</th>\\s*<td[^>]*>\\s*(.*?)\\s*</td>\", order_html, re.S)\n...\nfor block in re.findall(r\"<tbody[^>]*>(.*?)</tbody>\", order_html, re.S):\n    if 'id=\"order_item_' not in block:\n        continue\n    title_m = re.search(r'<div[^>]*class=\"product-title\"[^>]*>(.*?)</div>', block, re.S)\n    ...\n    nums = re.findall(r\"\\$\\d+[\\d,]*\\.\\d{2}\", strip_tags(block))",
+                "explanation": "The workflow supports a reusable order-detail acquisition boundary: fetch an order detail page, parse displayed order metadata, locate item blocks, extract item names, and preserve the money strings objectively shown in each block. The task's heuristic choice of one specific price value was intentionally narrowed out of the primitive."
+              }
+            ]
+          }
+        },
+        {
+          "operation": "ADD",
+          "replacement": {
+            "primitive_id": "shopping_admin/get_order_detail_skus",
+            "method": "get_order_detail_skus",
+            "capability": "Open a shopping admin order detail page by order ID and extract typed SKU occurrences shown on the rendered page.",
+            "method_code": "async def get_order_detail_skus(self, order_id: str) -> dict:\n    import re\n\n    if not order_id:\n        raise ValueError('order_id is required')\n\n    await self.page.goto(f'/admin/sales/order/view/order_id/{order_id}/', wait_until='domcontentloaded')\n    await self.page.wait_for_load_state('networkidle')\n\n    body_text = await self.page.locator('body').inner_text()\n    sku_matches = re.findall(r'SKU:\\s*([^\\n\\r]+)', body_text)\n    skus = [{'sku': sku.strip()} for sku in sku_matches if sku.strip()]\n\n    return {\n        'order_id': str(order_id),\n        'order_url': self.page.url,\n        'skus': skus,\n        'is_complete': True,\n    }\n",
+            "owns": [
+              "Navigate to an admin order detail page by order_id",
+              "Read rendered page text from the order detail page",
+              "Parse SKU occurrences from the rendered page into typed SKU records preserving page order",
+              "Return typed SKU facts rather than raw page text"
+            ],
+            "does_not_own": [
+              "Determining which order_id should be inspected",
+              "Inferring customer importance or cancellation history",
+              "Returning raw body text instead of parsed SKU data",
+              "Mutating the order"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "order_id": {
+                  "type": "string",
+                  "description": "Admin entity_id of the order to inspect."
+                }
+              },
+              "required": [
+                "order_id"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "order_id": {
+                  "type": "string"
+                },
+                "order_url": {
+                  "type": "string",
+                  "description": "Resolved admin order detail URL that was opened."
+                },
+                "skus": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "sku": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "sku"
+                    ]
+                  }
+                },
+                "is_complete": {
+                  "type": "boolean",
+                  "description": "True when all SKU occurrences visible on the acquired order detail page were parsed from rendered page text."
+                }
+              },
+              "required": [
+                "order_id",
+                "order_url",
+                "skus",
+                "is_complete"
+              ]
+            },
+            "requires": [
+              "Authenticated shopping_admin admin browser session"
+            ],
+            "provides": [
+              "Typed SKU occurrences from an admin order detail page"
+            ],
+            "supported_patterns": [
+              "List all SKU occurrences from a chosen order detail page",
+              "Use workflow logic to deduplicate or compare SKUs",
+              "Inspect the selected order's rendered SKU entries without exposing raw page text"
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task290_t234",
+                "template_id": "234",
+                "code_quote": "await page.goto(f\"{BASE}/sales/order/view/order_id/{order_id}/\", wait_until=\"networkidle\")\nbody_text = await page.locator(\"body\").inner_text()\nsku_matches = re.findall(r\"SKU:\\s*([^\\n\\r]+)\", body_text)\nfinal_skus = sku_matches",
+                "explanation": "The workflow demonstrates a reusable site-specific capability: open an order detail page for a supplied order_id and parse the rendered SKU entries into typed values. The task-specific choice of which order to inspect is separate."
+              }
+            ]
+          }
+        }
+      ],
+      "workflow_attribution": [
+        {
+          "workflow_id": "task120_t250",
+          "decision": "SKIP",
+          "reason": "Covered by existing shopping_admin/search_product_reviews for review discovery and existing shopping_admin/get_product_review_detail for per-review title/rating extraction; a bundled public primitive would compose existing public primitives."
+        },
+        {
+          "workflow_id": "task12_t288",
+          "decision": "SKIP",
+          "reason": "Covered by existing shopping_admin/search_product_reviews, which already supports detail_query and returns reported_total_matches from the grid summary."
+        },
+        {
+          "workflow_id": "task107_t270",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0
+          ]
+        },
+        {
+          "workflow_id": "task204_t366",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0,
+            1
+          ]
+        },
+        {
+          "workflow_id": "task184_t368",
+          "decision": "SKIP",
+          "reason": "No acceptable primitive from this evidence batch. The proposed catalog-grid listing would be under-supported and lossy because the demonstrated parser only recognizes a narrow subset of row shapes/product-type labels and can silently drop objective rows."
+        },
+        {
+          "workflow_id": "task290_t234",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0,
+            2
+          ]
+        },
+        {
+          "workflow_id": "task119_t250",
+          "decision": "SKIP",
+          "reason": "Covered by existing shopping_admin/search_product_reviews for review enumeration and existing shopping_admin/get_product_review_detail for title/rating extraction; no new primitive is needed."
+        }
+      ],
+      "candidate_attribution": [
+        {
+          "candidate_id": "task120_t250::list_product_reviews",
+          "decision": "COVERED",
+          "target_id": "shopping_admin/get_product_review_detail",
+          "reason": "Review discovery is already covered by shopping_admin/search_product_reviews, while detailed title/rating extraction is already covered by shopping_admin/get_product_review_detail; adding a bundled primitive would duplicate existing public capabilities."
+        },
+        {
+          "candidate_id": "task12_t288::search_product_reviews_and_get_result_count",
+          "decision": "COVERED",
+          "target_id": "shopping_admin/search_product_reviews",
+          "reason": "Existing shopping_admin/search_product_reviews already accepts a detail_query and returns reported_total_matches parsed from the grid summary."
+        },
+        {
+          "candidate_id": "task107_t270::list_sales_orders",
+          "decision": "ADD",
+          "operation_index": 0
+        },
+        {
+          "candidate_id": "task204_t366::list_orders_from_admin_order_grid",
+          "decision": "ADD",
+          "operation_index": 0
+        },
+        {
+          "candidate_id": "task204_t366::get_order_line_items_from_admin_order_detail",
+          "decision": "ADD",
+          "operation_index": 1
+        },
+        {
+          "candidate_id": "task184_t368::list_catalog_products",
+          "decision": "REJECT",
+          "target_id": null,
+          "reason": "Boundary/evidence defect: the demonstrated parser is not lossless for a public listing primitive because it only recognizes a narrow regex shape and limited product-type labels, silently dropping non-matching objective rows without surfacing parse failures or preserving all records."
+        },
+        {
+          "candidate_id": "task290_t234::list_sales_orders_from_admin_grid",
+          "decision": "ADD",
+          "operation_index": 0
+        },
+        {
+          "candidate_id": "task290_t234::get_order_detail_skus",
+          "decision": "ADD",
+          "operation_index": 2
+        },
+        {
+          "candidate_id": "task119_t250::list_product_reviews_with_ratings",
+          "decision": "COVERED",
+          "target_id": "shopping_admin/get_product_review_detail",
+          "reason": "Per-review title and rating extraction is already covered by shopping_admin/get_product_review_detail, while review enumeration is already covered by shopping_admin/search_product_reviews; adding a bundled public primitive would duplicate existing capabilities."
+        }
+      ]
+    },
+    "quality_verdicts": {
+      "verdicts": [
+        {
+          "operation_index": 0,
+          "verdict": "PASS",
+          "reason": "Evidence directly supports a reusable sales-order grid listing primitive on this site. The code acquires site data from demonstrated Magento sales order endpoints and parses typed records plus pagination metadata, without taking on task-specific selection/aggregation. Status/page controls are valid site-native parameters supported by evidence. Output is typed and includes stable identity/time/state/link fields shown in evidence. owns/does_not_own are consistent enough with the implementation and contract."
+        },
+        {
+          "operation_index": 1,
+          "verdict": "PASS",
+          "reason": "Evidence supports fetching an admin order detail page and parsing order metadata plus item blocks. The implementation returns typed order/item data, and intentionally avoids the task-specific heuristic of choosing one semantic price field by preserving displayed money strings instead. This is a proper narrowing to site acquisition/parsing, and owns/does_not_own match that boundary."
+        },
+        {
+          "operation_index": 2,
+          "verdict": "PASS",
+          "reason": "Evidence directly supports opening an order detail page by order_id, reading rendered page text, and extracting SKU occurrences. The output is typed, the method stays within site-specific acquisition/parsing, and the separation from task logic about which order to inspect is appropriate. Contract and code are aligned."
+        }
+      ],
+      "rejection_verdicts": [
+        {
+          "candidate_id": "task184_t368::list_catalog_products",
+          "verdict": "PASS",
+          "reason": "Reject is justified. The cited evidence indicates a task-specific, lossy parser that only recognizes a narrow row-text shape and limited product-type labels, which would silently drop objective catalog rows. Removing that task logic does not leave a sufficiently supported lossless reusable listing primitive from the demonstrated implementation, so rejection is appropriate rather than narrowing from this evidence."
+        }
+      ]
+    },
+    "errors": []
+  }
+]
