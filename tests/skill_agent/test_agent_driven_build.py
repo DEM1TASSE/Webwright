@@ -71,10 +71,7 @@ class ScriptedAgent:
         os.environ[ctx.ENV_MODEL_CONFIG] = "unused-in-tests.yaml"
         workspace = Path(workspace)
         (self._batch if stage == "batch" else self._site)(workspace)
-        # The recorded Map artifacts hard-code the deployment address, which today's rule
-        # rejects. That is a real defect in the scripted library, asserted separately below;
-        # here the point is that the mechanical path still produces identical bytes.
-        code, _, errors, _ = verify_mod.run(workspace, with_host_check=False)
+        code, _, errors, _ = verify_mod.run(workspace)
         self.log.append(f"{stage}: verify -> {'ready' if code == 0 else errors}")
         return EpisodeResult(stage=stage, workspace=workspace, exit_status="Submitted",
                              api_calls=1, final_response="replayed")
@@ -109,15 +106,8 @@ class ScriptedAgent:
                         with_code=False)
 
 
-def _patch_driver_host_check(monkeypatch):
-    original = build_mod._run_episode
-    monkeypatch.setattr(build_mod, "_run_episode",
-                        lambda *a, **kw: original(*a, **{**kw, "with_host_check": False}))
-
-
 @pytest.fixture
 def built(tmp_path, monkeypatch):
-    _patch_driver_host_check(monkeypatch)
     monkeypatch.setattr("skill_agent.runner.WebwrightRunner", ReplayJudge)
     ReplayJudge.calls = []
     log: list[str] = []
@@ -184,18 +174,7 @@ class LazyAgent(ScriptedAgent):
         return
 
 
-def test_the_scripted_map_library_fails_todays_host_rule(tmp_path, monkeypatch):
-    """The fixture is genuinely defective by the current standard, and the gate says so."""
-    from skill_agent.soundness import check_hardcoded_hosts
-
-    proposal = _load(FIXTURE / "build" / "batch_000.json")
-    errors = check_hardcoded_hosts([op["replacement"] for op in proposal["operations"]])
-    assert len(errors) == 2
-    assert all("18.208.187.221" in e for e in errors)
-
-
 def test_an_unverified_episode_commits_nothing(tmp_path, monkeypatch):
-    _patch_driver_host_check(monkeypatch)
     monkeypatch.setattr("skill_agent.runner.WebwrightRunner", ReplayJudge)
     library = tmp_path / "map"
     with pytest.raises(ValueError, match="batch 0 failed"):

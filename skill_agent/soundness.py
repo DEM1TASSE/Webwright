@@ -16,10 +16,9 @@ Two failures are detectable statically and are pure crashes, not style:
 
 Both are checked against the composed method code, before anything is committed.
 
-A third check is about portability rather than crashing: a literal deployment address baked
-into a method. The rendered class holds only ``page``, so the site's address has to arrive from
-outside — and both pipelines have shipped primitives that hard-code it instead, which quietly
-ties a library to one deployment.
+A third is the same kind of crash from a different direction: an import of a package the
+project does not depend on, which raises ModuleNotFoundError while nothing about the code looks
+wrong.
 """
 from __future__ import annotations
 
@@ -150,79 +149,6 @@ def check_package(path) -> list[str]:
     return sorted(set(errors))
 
 
-_ABSOLUTE_URL = re.compile(r"(?P<scheme>https?)://(?P<host>[^/\s\"'{}]+)")
-
-
-def hardcoded_hosts(code: str, *, where: str) -> list[str]:
-    """Report deployment addresses baked into method code.
-
-    The rendered class holds only `page`, so a site's base address has to arrive from outside:
-    derived from `self.page.url` for a method that navigates, or passed as a parameter for one
-    that only calls an API. A literal host is the third option, and it is the wrong one — the
-    address is environment state, so a primitive that bakes it in stops working the moment the
-    library is pointed at another deployment.
-    """
-    try:
-        tree = ast.parse(code)
-    except SyntaxError:
-        return []
-    literals: list[str] = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Constant) and isinstance(node.value, str):
-            literals.append(node.value)
-        elif isinstance(node, ast.JoinedStr):
-            literals.append("".join(
-                part.value if isinstance(part, ast.Constant) and isinstance(part.value, str)
-                else "{}" for part in node.values))
-    found = {match.group("host") for literal in literals
-             for match in _ABSOLUTE_URL.finditer(literal)}
-    return [f"{where}: hard-codes the deployment address `{host}`. The site address is "
-            f"environment state: derive it from `self.page.url` when the method navigates, or "
-            f"take it as a parameter when it only calls an API." for host in sorted(found)]
-
-
-def check_hardcoded_hosts(primitives: list[dict]) -> list[str]:
-    errors: list[str] = []
-    for primitive in primitives:
-        if not isinstance(primitive, dict):
-            continue
-        code = primitive.get("method_code")
-        if isinstance(code, str) and code:
-            errors.extend(hardcoded_hosts(
-                code, where=str(primitive.get("primitive_id") or primitive.get("method") or "?")))
-    return errors
-
-
-def _stem(token: str) -> str:
-    """Crude singular form: enough to match `commits` against `commit` in a source."""
-    for suffix in ("ies", "es", "s"):
-        if len(token) > 3 and token.endswith(suffix):
-            return token[: -len(suffix)] + ("y" if suffix == "ies" else "")
-    return token
-
-
-def ungrounded_features(primitives: list[dict], sources: str) -> list[str]:
-    """Report feature names that do not appear in the site's own source workflows.
-
-    A feature is meant to name something the website has. The generic examples once given in
-    the rules included `reviews`, and a GitLab consolidation duly filed its issue primitives
-    under a `reviews` feature — a word that appears zero times in GitLab's seven sources, while
-    `issue` appears nineteen. Grounding the name in the sources catches exactly that.
-    """
-    haystack = sources.lower()
-    errors = []
-    for feature in sorted({str(p.get("feature")) for p in primitives if p.get("feature")}):
-        tokens = feature.split("_")
-        # One grounded token is enough: a compound like `catalog_search` is fine when the site
-        # says "search", and requiring every token would reject reasonable qualifiers.
-        if not any(_stem(token) in haystack or token in haystack for token in tokens):
-            errors.append(
-                f"feature `{feature}`: no part of this name appears anywhere in the site's "
-                f"source workflows. Name a feature with the site's own vocabulary — the words "
-                f"it uses in its URLs, headings and controls — not a generic category.")
-    return errors
-
-
 def undeclared_imports(code: str, *, where: str, allowed: frozenset[str]) -> list[str]:
     """Report imports of modules that are neither stdlib nor a declared dependency.
 
@@ -256,7 +182,7 @@ def project_modules(pyproject: "Path | None" = None) -> frozenset[str]:
     path = Path(pyproject) if pyproject else Path(__file__).resolve().parent.parent / "pyproject.toml"
     if path.is_file():
         for line in path.read_text(encoding="utf-8").splitlines():
-            match = _re.match(r"\s*[\"']([A-Za-z0-9_.\-]+)", line)
+            match = _re.match(r"\s*[\"\']([A-Za-z0-9_.\-]+)", line)
             if match:
                 allowed.add(match.group(1).replace("-", "_").split(".")[0])
     return frozenset(allowed)

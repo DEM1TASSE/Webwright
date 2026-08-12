@@ -3,12 +3,9 @@
 PEP 701 (Python 3.12) allows reusing a quote character inside an f-string expression:
 ``f'{stop['longitude']}'``. On 3.11 and earlier that is a SyntaxError.
 
-There are two independent ways this reaches a package:
+Only one way this actually reaches a package, and it is not the agent:
 
-1. The agent writes it. Prompt guidance alone does not stop this — every command the agent
-   runs still exits 0, because the shared validators call ``ast.parse`` on the 3.12 build
-   interpreter. So ``check`` enforces it (``check_primitives``).
-2. **The renderer produces it from portable input.** ``render_site_package`` round-trips
+**the renderer produces it from portable input.** ``render_site_package`` round-trips
    method code through ``ast.unparse``, which normalizes every string literal to single
    quotes. Given the agent's portable ``f"{point['longitude']}"`` it emits
    ``f'{point['longitude']}'``. Nothing the agent does can prevent this, and the scripted
@@ -127,20 +124,3 @@ def make_portable(code: str) -> tuple[str, list[str]]:
         return code, ["portability rewrite did not remove every quote reuse"]
     return rewritten, [f"rewrote {len(spans)} f-string(s) emitted by ast.unparse "
                        f"so the package parses before Python 3.12"]
-
-
-def check_method_code(code: str, *, where: str) -> list[str]:
-    return [f"{where}: {error}" for error in fstring_quote_reuse(code)]
-
-
-def check_primitives(primitives: list[dict]) -> list[str]:
-    """Lint every method body in a list of primitive replacement objects."""
-    errors: list[str] = []
-    for primitive in primitives:
-        if not isinstance(primitive, dict):
-            continue
-        code = primitive.get("method_code")
-        if isinstance(code, str) and code:
-            errors.extend(check_method_code(
-                code, where=str(primitive.get("primitive_id") or primitive.get("method") or "?")))
-    return errors

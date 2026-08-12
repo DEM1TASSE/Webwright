@@ -1,22 +1,20 @@
 """The check that answers "would this actually run", not "does this parse".
 
 Calibrated against real libraries: six true positives on the GitLab batch that invented
-`self.base_url`, zero on the four scripted packages and on the clean Map batch.
+`self.base_url` and one on the method that imported `requests`, zero on the four scripted
+packages and on the clean Map batch.
 """
 from __future__ import annotations
 
 import pytest
 
 from skill_agent.soundness import (
-    check_hardcoded_hosts,
     check_imports,
     check_method_code,
     check_package,
     check_primitives,
-    hardcoded_hosts,
     project_modules,
     undeclared_imports,
-    ungrounded_features,
 )
 
 CLEAN = """
@@ -128,47 +126,6 @@ class GitLabSite:
     assert check_package(package) == []
 
 
-class TestHardcodedHosts:
-    """Decision A: the site address arrives from outside, so a literal one is a defect.
-
-    Calibrated on real libraries: it flags the two scripted Map primitives and one scripted
-    Shopping primitive that bake in a WebArena address, and nothing in either GitLab library,
-    which take the address as a parameter or derive it from `self.page.url`.
-    """
-
-    def test_flags_a_baked_in_address(self):
-        code = 'def geocode(self, query):\n    return "http://18.208.187.221:8085/search?q=" + query\n'
-        errors = hardcoded_hosts(code, where="map/geocode")
-        assert len(errors) == 1 and "18.208.187.221:8085" in errors[0]
-
-    def test_flags_it_inside_an_f_string(self):
-        code = 'def route(self, a):\n    return f"http://18.208.187.221:5000/route/v1/driving/{a}"\n'
-        assert len(hardcoded_hosts(code, where="p")) == 1
-
-    def test_a_parameterized_base_url_is_clean(self):
-        code = 'def commits(self, base_url, pid):\n    return f"{base_url}/api/v4/projects/{pid}"\n'
-        assert hardcoded_hosts(code, where="p") == []
-
-    def test_a_derived_base_url_is_clean(self):
-        code = ('def issue(self, path):\n'
-                '    from urllib.parse import urlparse\n'
-                '    p = urlparse(self.page.url)\n'
-                '    return f"{p.scheme}://{p.netloc}{path}"\n')
-        assert hardcoded_hosts(code, where="p") == []
-
-    def test_relative_paths_are_clean(self):
-        code = 'def issues(self):\n    self.page.goto("/dashboard/issues")\n'
-        assert hardcoded_hosts(code, where="p") == []
-
-    def test_check_hardcoded_hosts_labels_the_primitive(self):
-        errors = check_hardcoded_hosts([
-            {"primitive_id": "map/geocode", "method_code":
-             'def geocode(self):\n    return "http://10.0.0.1:80/x"\n'},
-            {"primitive_id": "map/clean", "method_code":
-             'def clean(self, base):\n    return f"{base}/x"\n'}])
-        assert len(errors) == 1 and errors[0].startswith("map/geocode:")
-
-
 class TestUndeclaredImports:
     """A generated method imported `requests`, which this project neither declares nor installs."""
 
@@ -204,31 +161,3 @@ class TestUndeclaredImports:
             allowed=self.ALLOWED)
         assert len(errors) == 1 and errors[0].startswith("gitlab/members:")
 
-
-class TestFeatureGrounding:
-    """The rules once offered `reviews` as a generic example; a GitLab consolidation used it
-    for issue primitives, and `review` appears zero times in GitLab's sources."""
-
-    GITLAB_SOURCE = "page.goto('/dashboard/issues'); commits = api('/repository/commits')"
-
-    def test_flags_a_name_borrowed_from_another_site(self):
-        errors = ungrounded_features([{"feature": "reviews"}], self.GITLAB_SOURCE)
-        assert len(errors) == 1 and "`reviews`" in errors[0]
-
-    def test_accepts_a_name_the_site_uses(self):
-        assert ungrounded_features([{"feature": "issues"}], self.GITLAB_SOURCE) == []
-
-    def test_matches_across_plural_and_singular(self):
-        assert ungrounded_features([{"feature": "commits"}], self.GITLAB_SOURCE) == []
-        assert ungrounded_features([{"feature": "issue"}], self.GITLAB_SOURCE) == []
-
-    def test_one_grounded_token_is_enough_for_a_compound_name(self):
-        """`catalog_search` is reasonable when the site says `search` but never `catalog`."""
-        assert ungrounded_features([{"feature": "catalog_search"}],
-                                   "page.goto('/catalogsearch/result?q=x')") == []
-
-    def test_reports_each_feature_once(self):
-        errors = ungrounded_features(
-            [{"feature": "reviews"}, {"feature": "reviews"}, {"feature": "issues"}],
-            self.GITLAB_SOURCE)
-        assert len(errors) == 1

@@ -130,11 +130,18 @@ Every supplied extracted candidate appears exactly once in `candidate_attributio
 
 ```json
 {"candidate_id": "...", "decision": "ADD|UPDATE", "operation_index": 0}
-{"candidate_id": "...", "decision": "COVERED|REJECT", "target_id": null, "reason": "..."}
+{"candidate_id": "...", "decision": "COVERED", "target_id": "<site>/<existing_method>", "reason": "..."}
+{"candidate_id": "...", "decision": "REJECT", "target_id": null, "reason": "..."}
 ```
 
+`COVERED` means a primitive that **already exists** — in the pool, or in an operation you are
+adding in this batch — acquires the same thing. Name it in `target_id`; a `COVERED` without a
+real primitive to point at is not covered, it is dropped. "Omitted to keep the batch small" is
+never a reason: every candidate either becomes an operation, is genuinely covered by a named
+primitive, or is rejected for a defect you can state.
+
 `REJECT` is allowed only for a boundary or evidence defect — never because UI parsing is less
-attractive than an API. Every `ADD`/`UPDATE` operation must be linked from at least one extracted
+attractive than an API, and never because the batch would otherwise be larger. Every `ADD`/`UPDATE` operation must be linked from at least one extracted
 candidate. Workflow attribution summarizes these candidate-level decisions.
 
 Every `ADD`/`UPDATE` cites supplied gold workflows and explains how concrete code was generalized.

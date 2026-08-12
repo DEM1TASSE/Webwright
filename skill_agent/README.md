@@ -119,16 +119,12 @@ live pool between batch episodes, and `agent_runs/` holding every episode worksp
 ## Generated code must parse before 3.12
 
 PEP 701 lets an f-string reuse its own quote inside an expression: `f'{p['lon']}'`. That is a
-SyntaxError on 3.11 and earlier, and it reaches a package two independent ways:
-
-1. **The agent writes it.** Prompt guidance alone does not stop this — every command still exits
-   0, because the shared validators call `ast.parse` on the 3.12 build interpreter. So `verify`
-   rejects it (`portability.check_primitives`).
-2. **The renderer produces it from portable input.** `render_site_package` round-trips method
-   code through `ast.unparse`, which normalizes string literals to single quotes. Nothing the
-   agent does can prevent this, and **the scripted pipeline has the same defect** — two rejected
-   scripted Map runs carry it. `make_portable` repairs it after rendering, and only when the
-   rewrite parses to an identical AST.
+SyntaxError on 3.11 and earlier, and across three real runs the agent never once wrote it — the
+renderer did. `render_site_package` round-trips method code through `ast.unparse`, which
+normalizes string literals to single quotes, turning a portable `f"{p['lon']}"` into a 3.12-only
+`f'{p['lon']}'`. Nothing the agent does can prevent that, and **the scripted pipeline has the
+same defect**. `make_portable` repairs it after rendering, and only when the rewrite parses to
+an identical AST. There is no check on the agent's own code, because the check never fired.
 
 ## Swapping the harness
 

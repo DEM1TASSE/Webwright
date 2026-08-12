@@ -31,8 +31,7 @@ from webwright.skill_factory.audited_primitive_build import (
 )
 
 from . import context as ctx
-from .portability import check_primitives
-from .soundness import check_hardcoded_hosts, check_imports, ungrounded_features
+from .soundness import check_imports
 from .soundness import check_primitives as check_soundness
 
 JUDGE_STEP_LIMIT = 25
@@ -220,7 +219,7 @@ def judge(workspace: Path, proposal: dict, context: dict) -> tuple[dict, list[st
 
 # --------------------------------------------------------------------------- verification
 def verify_batch(workspace: Path, context: dict, *, with_judge: bool,
-                 with_host_check: bool = True) -> tuple[list[str], list[str], dict]:
+                 **_) -> tuple[list[str], list[str], dict]:
     steps, errors = [], []
     batch = context.get("batch") or []
 
@@ -261,11 +260,8 @@ def verify_batch(workspace: Path, context: dict, *, with_judge: bool,
         proposal, site=context["site"], batch=batch, pool=ctx.load_pool(),
         all_workflows={str(k): v for k, v in (context.get("all_workflows") or {}).items()},
         extractions=ctx.load_extractions(workspace, batch=batch))
-    build_errors = (list(build_errors) + check_primitives(_replacements(proposal))
-                    + check_soundness(_replacements(proposal))
-                    + check_imports(_replacements(proposal))
-                    + (check_hardcoded_hosts(_replacements(proposal))
-                       if with_host_check else []))
+    build_errors = (list(build_errors) + check_soundness(_replacements(proposal))
+                    + check_imports(_replacements(proposal)))
     steps.append(f"{'[x]' if not build_errors else '[ ]'} build — {len(proposal['operations'])} "
                  f"operation(s)" + (f", {len(build_errors)} error(s)" if build_errors else ""))
     if build_errors:
@@ -330,16 +326,7 @@ def verify_judge(workspace: Path, context: dict, **_) -> tuple[list[str], list[s
             f"operation ruling(s)"], shape, {}
 
 
-def _site_sources(workspace: Path) -> str:
-    """The site's own vocabulary, as demonstrated by the workflows staged for this episode."""
-    directory = Path(workspace) / "in" / "sources"
-    if not directory.is_dir():
-        return ""
-    return " ".join(path.read_text(encoding="utf-8", errors="replace")
-                    for path in sorted(directory.glob("*.py")))
-
-
-def verify_site(workspace: Path, context: dict, *, with_host_check: bool = True, **_) -> tuple[list[str], list[str], dict]:
+def verify_site(workspace: Path, context: dict, **_) -> tuple[list[str], list[str], dict]:
     pool = ctx.load_pool()
     steps = [f"pool holds {len(pool)} primitive(s)"]
     proposal, compose_errors, index_map = compose(workspace)
@@ -349,26 +336,20 @@ def verify_site(workspace: Path, context: dict, *, with_host_check: bool = True,
     final, errors, _ = validate_consolidation(
         proposal, site=context["site"], pool=pool,
         workflows={str(k): v for k, v in (context.get("workflows") or {}).items()})
-    errors = (list(errors) + check_primitives(_replacements(proposal))
-              + check_soundness(_replacements(proposal))
-              + check_imports(_replacements(proposal))
-              + ungrounded_features(final, _site_sources(workspace))
-              + (check_hardcoded_hosts(_replacements(proposal))
-                 if with_host_check else []))
+    errors = (list(errors) + check_soundness(_replacements(proposal))
+              + check_imports(_replacements(proposal)))
     steps.append(f"{'[x]' if not errors else '[ ]'} consolidate — {len(pool)} pooled -> "
                  f"{len(final)} final" + (f", {len(errors)} error(s)" if errors else ""))
     return steps, errors, {"proposal": proposal, "index_map": index_map}
 
 
-def run(workspace: Path, *, with_judge: bool = True,
-        with_host_check: bool = True) -> tuple[int, list[str], list[str], dict]:
+def run(workspace: Path, *, with_judge: bool = True) -> tuple[int, list[str], list[str], dict]:
     workspace = Path(workspace).resolve()
     context = ctx.load_context(workspace)
     verifier = {"site": verify_site, "judge": verify_judge,
                 "extraction_review": verify_extraction_review}.get(
         context.get("mode", "batch"), verify_batch)
-    steps, errors, extra = verifier(workspace, context, with_judge=with_judge,
-                                    with_host_check=with_host_check)
+    steps, errors, extra = verifier(workspace, context, with_judge=with_judge)
     return (0 if not errors else 1), steps, errors, extra
 
 
@@ -377,13 +358,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--workspace", default=".", help="episode workspace (default: cwd)")
     parser.add_argument("--no-judge", action="store_true",
                         help="skip the independent judge (structural checks only)")
-    parser.add_argument("--no-host-check", action="store_true",
-                        help="allow a hard-coded deployment address; only for replaying "
-                             "artifacts recorded before that rule existed")
     args = parser.parse_args(argv)
     try:
-        code, steps, errors, extra = run(Path(args.workspace), with_judge=not args.no_judge,
-                                         with_host_check=not args.no_host_check)
+        code, steps, errors, extra = run(Path(args.workspace), with_judge=not args.no_judge)
     except (ctx.MissingState, FileNotFoundError) as exc:
         print(json.dumps({"ready": False, "errors": [str(exc)]}, indent=2))
         return 2

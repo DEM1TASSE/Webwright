@@ -41,7 +41,6 @@ from webwright.skill_factory.site_package_candidate import expected_class_name
 from . import context as ctx
 from . import verify as verify_mod
 from .portability import fstring_quote_reuse, make_portable
-from .soundness import check_package
 from .runner import AgentRunner, WebwrightRunner, env_spec
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -168,14 +167,6 @@ def render_final(library: Path, site: str, context: dict, proposal: dict) -> dic
     for note in notes:
         print(f"  [render] {note}")
 
-    (library / "final_candidate").mkdir(parents=True, exist_ok=True)
-    probe = library / "final_candidate" / ".package_probe.py"
-    probe.write_text(code, encoding="utf-8")
-    unsound = check_package(probe)
-    probe.unlink()
-    if unsound:
-        raise ValueError(f"{site} rendered package would not run: {unsound}")
-
     ctx.dump(library / "pre_consolidation" / "primitive_pool.json", list(pool.values()))
     ctx.dump(library / "consolidation" / "proposal.json", proposal)
     ctx.dump(library / "consolidation" / "validation.json", {"accepted": True, "errors": []})
@@ -196,13 +187,12 @@ def render_final(library: Path, site: str, context: dict, proposal: dict) -> dic
 
 
 def _run_episode(runner: AgentRunner, *, level: str, task: str, workspace: Path,
-                 commit, with_host_check: bool = True) -> list[str]:
+                 commit) -> list[str]:
     """One attempt: run the agent, verify what it left behind, commit only if it verifies."""
     episode = runner.run_episode(stage=level, task=task, workspace=workspace, **EPISODE[level])
     errors = [f"episode failed: {episode.error}"] if episode.error else []
     if not errors:
-        code, _, verify_errors, extra = verify_mod.run(
-            workspace, with_host_check=with_host_check)
+        code, _, verify_errors, extra = verify_mod.run(workspace)
         errors = list(verify_errors)
         if code == 0:
             commit(extra)

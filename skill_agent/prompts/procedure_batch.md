@@ -66,6 +66,8 @@ re-submit unchanged work hoping for a different ruling: unchanged work reuses th
 
 Exit 0 means you are done. Set `"done": true` and summarize what you added in `final_response`.
 
-If you genuinely cannot get an operation past the judge, drop that operation and deliver a
-smaller, honest batch rather than weakening a primitive's contract until the objection goes
-away. Say so in `final_response`.
+If an operation genuinely cannot pass the judge, drop that one operation rather than weakening
+its contract until the objection goes away, and say so in `final_response`. That is the only
+reason to deliver less: a capability is never set aside because the batch would otherwise be
+larger. Every extracted candidate ends up as an operation, covered by a primitive you can name,
+or rejected for a defect you can state.
