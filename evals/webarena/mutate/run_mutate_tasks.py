@@ -63,9 +63,14 @@ def run(item):
            "-c", "base.yaml", "-c", MODEL_CFG, "-c", EVAL_CFG]
     rec_dir = RUNS / "_rec" / key
     rec_dir.mkdir(parents=True, exist_ok=True)
+    hosts = ",".join(sorted({
+        u.split("//", 1)[-1].split("/", 1)[0]
+        for e in CONFIG["environments"].values() for u in e.get("urls", [])
+    }))
     env = dict(os.environ,
                PYTHONPATH=f"{HERE / 'warec'}:{WW / 'src'}",
-               WA_REC_DIR=str(rec_dir))
+               WA_REC_DIR=str(rec_dir),
+               WA_REC_HOSTS=hosts)
     t0 = time.time()
     status = "ok"
     with log.open("w", encoding="utf-8") as f:

@@ -14,6 +14,17 @@ import sys
 from pathlib import Path
 
 
+HOSTS = tuple(h.strip() for h in os.environ.get("WA_REC_HOSTS", "").split(",") if h.strip())
+
+
+def _wanted(url):
+    """Drop anything that is not the site under test (e.g. the model gateway)."""
+    if not HOSTS:
+        return True
+    host = str(url).split("//", 1)[-1].split("/", 1)[0].split("@")[-1]
+    return any(host == h or host.split(":")[0] == h.split(":")[0] for h in HOSTS)
+
+
 def entries_from(rec_dir):
     out = []
     for f in sorted(Path(rec_dir).glob("http_*.jsonl")):
@@ -22,9 +33,11 @@ def entries_from(rec_dir):
             if not line:
                 continue
             try:
-                out.append(json.loads(line))
+                rec = json.loads(line)
             except Exception:
-                pass
+                continue
+            if _wanted(rec.get("url", "")):
+                out.append(rec)
     out.sort(key=lambda r: r.get("ts", 0))
     return out
 

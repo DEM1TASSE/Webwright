@@ -20,7 +20,24 @@ if _DIR:
     _OUT.parent.mkdir(parents=True, exist_ok=True)
     _LOCK = threading.Lock()
 
+    # Only record the site under test. Without this the model gateway's traffic
+    # lands in the HAR too -- that is most of the volume, and its request bodies
+    # are full prompts carrying an API key header.
+    _HOSTS = tuple(h.strip() for h in os.environ.get("WA_REC_HOSTS", "").split(",") if h.strip())
+
+    def _wanted(url):
+        if not _HOSTS:
+            return True
+        try:
+            netloc = str(url).split("//", 1)[-1].split("/", 1)[0]
+        except Exception:
+            return True
+        host = netloc.split("@")[-1]
+        return any(host == h or host.split(":")[0] == h.split(":")[0] for h in _HOSTS)
+
     def _emit(rec):
+        if not _wanted(rec.get("url", "")):
+            return
         rec["ts"] = time.time()
         rec["pid"] = os.getpid()
         rec["cwd"] = os.getcwd()
