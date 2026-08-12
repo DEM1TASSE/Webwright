@@ -10,6 +10,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 PARTS = (ROOT / "part_a.jsonl", ROOT / "part_b.jsonl")
 REVIEWS = (ROOT / "review_a.jsonl", ROOT / "review_b.jsonl", ROOT / "review_c.jsonl")
+STRICT_REVIEWS = (
+    ROOT / "review_strict_a.jsonl",
+    ROOT / "review_strict_b.jsonl",
+    ROOT / "review_strict_c.jsonl",
+)
 JSON_FIELDS = {"capabilities", "slots", "interaction_type"}
 
 
@@ -110,6 +115,55 @@ def main() -> None:
     print(json.dumps({
         "reviewed_templates": summary["reviewed_templates"],
         "template_changes": summary["template_changes"],
+    }, ensure_ascii=False, indent=2))
+
+    strict_reviews = {row["id"]: row for path in STRICT_REVIEWS for row in load(path)}
+    if set(strict_reviews) != set(ids):
+        raise SystemExit("strict reviews do not exactly cover official task IDs")
+    strict_rows = []
+    for row in reviewed_rows:
+        review = strict_reviews[row["id"]]
+        revised = dict(row)
+        revised["template_v2"] = row["template"]
+        revised["template"] = review["strict_template"]
+        revised["strict_review_decision"] = review["decision"]
+        revised["strict_review_confidence"] = review["confidence"]
+        revised["strict_review_rationale"] = review["rationale"]
+        revised["annotation_version"] = "webarena-granularity-v3"
+        strict_rows.append(revised)
+
+    (ROOT / "webvoyager_annotations.strict_v3.jsonl").write_text(
+        "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in strict_rows),
+        encoding="utf-8",
+    )
+    strict_fields = [
+        "review_status", "id", "web_name", "ques", "template_v2", "template",
+        "strict_review_decision", "strict_review_confidence",
+        "strict_review_rationale", "capabilities", "slots", "live_web_risk",
+    ]
+    with (ROOT / "webvoyager_annotations.strict_v3.csv").open(
+        "w", encoding="utf-8", newline=""
+    ) as handle:
+        writer = csv.DictWriter(handle, fieldnames=strict_fields, extrasaction="ignore")
+        writer.writeheader()
+        for row in strict_rows:
+            rendered = dict(row)
+            for field in ("capabilities", "slots"):
+                rendered[field] = json.dumps(rendered[field], ensure_ascii=False)
+            writer.writerow(rendered)
+
+    summary["strict_templates"] = len(
+        {(row["web_name"], row["template"]) for row in strict_rows}
+    )
+    summary["strict_changes_from_v2"] = sum(
+        row["strict_review_decision"] == "change" for row in strict_rows
+    )
+    (ROOT / "summary.json").write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    print(json.dumps({
+        "strict_templates": summary["strict_templates"],
+        "strict_changes_from_v2": summary["strict_changes_from_v2"],
     }, ensure_ascii=False, indent=2))
 
 
