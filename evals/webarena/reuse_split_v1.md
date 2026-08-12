@@ -1,51 +1,37 @@
-# Reuse-radius split (retrieve only)
+# Reuse-radius split (retrieve only, fixed train/test)
 
-- workflow library: per template, from that template's build solves; fixed split; measures T1
-- primitive library: per site, from build solves of every template except the held-out one; leave-one-template-out; measures T2
-- the scratch arm is shared, so T1 and T2 are paired against the same baseline runs
+- **split**: fixed train/test over templates, per site
+- **workflow_library**: one skill per TRAIN template with >= 3 distinct build instances
+- **primitive_library**: site-level, from the build solves of all TRAIN templates
+- **t1**: unseen instance of a TRAIN template -- arms: scratch | +workflow
+- **t2**: unseen TEST template -- arms: scratch | +workflow | +primitive
+- **t2_workflow_arm**: ablation expected to fail: a whole-task skill should not transfer across templates
 - effective sample unit: **template**
 
-## Solve corpus (what to run to build the libraries)
+## TRAIN (builds both libraries)
 
-| site | templates | build runs | held-out tasks | fresh templates |
-|---|---:|---:|---:|---:|
-| gitlab | 15 | 33 | 22 | 1 |
-| map | 23 | 50 | 39 | 9 |
-| reddit | 4 | 7 | 4 | 4 |
-| shopping | 24 | 49 | 31 | 10 |
-| shopping_admin | 21 | 49 | 35 | 7 |
-| **total** | **87** | **188** | **131** | **31** |
+| site | templates | build runs | workflow skills | T1 templates | T1 tasks |
+|---|---:|---:|---:|---:|---:|
+| gitlab | 8 | 24 | 8 | 8 | 16 |
+| map | 13 | 31 | 8 | 8 | 16 |
+| reddit | 4 | 7 | 1 | 1 | 2 |
+| shopping | 14 | 33 | 9 | 9 | 18 |
+| shopping_admin | 11 | 31 | 10 | 10 | 20 |
+| **total** | **50** | **126** | **36** | **36** | **72** |
 
-## T1 — same-template reuse (fixed split, workflow library)
+## TEST (never touches a library)
 
-| site | templates | held-out tasks |
-|---|---:|---:|
-| gitlab | 4 | 8 |
-| map | 4 | 8 |
-| reddit | 1 | 2 |
-| shopping | 4 | 8 |
-| shopping_admin | 4 | 8 |
-| **total** | **17** | **34** |
+| site | templates | T2 tasks | fresh |
+|---|---:|---:|---:|
+| gitlab | 7 | 11 | 1 |
+| map | 10 | 19 | 5 |
+| reddit | 0 | 0 | 0 |
+| shopping | 10 | 15 | 6 |
+| shopping_admin | 10 | 18 | 5 |
+| **total** | **37** | **63** | **17** |
 
-Arms: `scratch` vs `+workflow`. Clusters: **17 templates**.
+## Clusters and runs
 
-## T2 — cross-template reuse (leave-one-template-out, primitive library)
-
-| site | folds | held-out tasks | library built from |
-|---|---:|---:|---|
-| gitlab | 12 | 22 | 14 other templates |
-| map | 20 | 39 | 22 other templates |
-| reddit | 2 | 4 | 3 other templates |
-| shopping | 17 | 31 | 23 other templates |
-| shopping_admin | 18 | 35 | 20 other templates |
-| **total** | **69** | **131** | |
-
-Arms: `scratch` vs `+primitive`. Clusters: **69 templates**. Each fold needs its own offline library build (69 distillations, no browser).
-
-## Run budget
-
-- collect solves: **188** agent runs (gold-gated; failures may be retried on the same instance, since build material is not held out)
-- scratch arm: **131** runs (shared by T1 and T2)
-- workflow arm: **34** runs
-- primitive arm: **131** runs
-- **total agent runs: 484**, plus 69 offline library builds
+- T1: **36 templates** / 72 tasks -- scratch vs +workflow
+- T2: **37 templates** / 63 tasks -- scratch vs +workflow vs +primitive
+- runs: 126 build + 72x2 + 63x3 = **459**
