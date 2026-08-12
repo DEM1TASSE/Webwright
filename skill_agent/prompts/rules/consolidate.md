@@ -42,8 +42,13 @@ any generalization. A `SPLIT` produces two or more replacements.
 
 ### Features
 
-Feature classes are composition components — `auth`, `reviews`, `commits`, `orders`, `routes` —
-not inheritance subclasses. Choose cohesive site features.
+Feature classes are composition components, not inheritance subclasses. Choose cohesive site
+features.
+
+**Name each feature with this site's own vocabulary** — the words it uses in its URLs, headings
+and controls, as seen in `in/sources/*.py`. Do not reach for a generic category borrowed from
+another site: a name with no grounding in these sources is rejected. If the sources say `issue`
+nineteen times and never say `review`, the feature is `issues`.
 
 Preserve the primitive/workflow boundary: site mechanics and typed parsing belong in primitives;
 task filtering, aggregation, ranking, subjective decisions, and answer formatting stay in

@@ -191,3 +191,86 @@ def check_hardcoded_hosts(primitives: list[dict]) -> list[str]:
             errors.extend(hardcoded_hosts(
                 code, where=str(primitive.get("primitive_id") or primitive.get("method") or "?")))
     return errors
+
+
+def _stem(token: str) -> str:
+    """Crude singular form: enough to match `commits` against `commit` in a source."""
+    for suffix in ("ies", "es", "s"):
+        if len(token) > 3 and token.endswith(suffix):
+            return token[: -len(suffix)] + ("y" if suffix == "ies" else "")
+    return token
+
+
+def ungrounded_features(primitives: list[dict], sources: str) -> list[str]:
+    """Report feature names that do not appear in the site's own source workflows.
+
+    A feature is meant to name something the website has. The generic examples once given in
+    the rules included `reviews`, and a GitLab consolidation duly filed its issue primitives
+    under a `reviews` feature — a word that appears zero times in GitLab's seven sources, while
+    `issue` appears nineteen. Grounding the name in the sources catches exactly that.
+    """
+    haystack = sources.lower()
+    errors = []
+    for feature in sorted({str(p.get("feature")) for p in primitives if p.get("feature")}):
+        tokens = feature.split("_")
+        # One grounded token is enough: a compound like `catalog_search` is fine when the site
+        # says "search", and requiring every token would reject reasonable qualifiers.
+        if not any(_stem(token) in haystack or token in haystack for token in tokens):
+            errors.append(
+                f"feature `{feature}`: no part of this name appears anywhere in the site's "
+                f"source workflows. Name a feature with the site's own vocabulary — the words "
+                f"it uses in its URLs, headings and controls — not a generic category.")
+    return errors
+
+
+def undeclared_imports(code: str, *, where: str, allowed: frozenset[str]) -> list[str]:
+    """Report imports of modules that are neither stdlib nor a declared dependency.
+
+    A generated method imported `requests`, which this project does not depend on and does not
+    have installed: ModuleNotFoundError on the first call, invisible to every other check,
+    while a sibling method did the same job with urllib.
+    """
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return []
+    modules: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            modules |= {alias.name.split(".")[0] for alias in node.names}
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            modules.add(node.module.split(".")[0])
+    return [f"{where}: imports `{module}`, which is not in the standard library and not a "
+            f"dependency of this project. It raises ModuleNotFoundError on the first call — "
+            f"use the standard library (urllib for HTTP) or the browser page instead."
+            for module in sorted(modules - allowed)]
+
+
+def project_modules(pyproject: "Path | None" = None) -> frozenset[str]:
+    """Stdlib plus whatever the project declares as a dependency."""
+    import re as _re
+    import sys
+    from pathlib import Path
+
+    allowed = set(getattr(sys, "stdlib_module_names", ())) | set(_BUILTINS)
+    path = Path(pyproject) if pyproject else Path(__file__).resolve().parent.parent / "pyproject.toml"
+    if path.is_file():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            match = _re.match(r"\s*[\"']([A-Za-z0-9_.\-]+)", line)
+            if match:
+                allowed.add(match.group(1).replace("-", "_").split(".")[0])
+    return frozenset(allowed)
+
+
+def check_imports(primitives: list[dict], *, allowed: frozenset[str] | None = None) -> list[str]:
+    allowed = allowed if allowed is not None else project_modules()
+    errors: list[str] = []
+    for primitive in primitives:
+        if not isinstance(primitive, dict):
+            continue
+        code = primitive.get("method_code")
+        if isinstance(code, str) and code:
+            errors.extend(undeclared_imports(
+                code, allowed=allowed,
+                where=str(primitive.get("primitive_id") or primitive.get("method") or "?")))
+    return errors

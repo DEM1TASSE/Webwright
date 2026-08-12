@@ -32,7 +32,7 @@ from webwright.skill_factory.audited_primitive_build import (
 
 from . import context as ctx
 from .portability import check_primitives
-from .soundness import check_hardcoded_hosts
+from .soundness import check_hardcoded_hosts, check_imports, ungrounded_features
 from .soundness import check_primitives as check_soundness
 
 JUDGE_STEP_LIMIT = 25
@@ -216,6 +216,7 @@ def verify_batch(workspace: Path, context: dict, *, with_judge: bool,
         extractions=ctx.load_extractions(workspace, batch=batch))
     build_errors = (list(build_errors) + check_primitives(_replacements(proposal))
                     + check_soundness(_replacements(proposal))
+                    + check_imports(_replacements(proposal))
                     + (check_hardcoded_hosts(_replacements(proposal))
                        if with_host_check else []))
     steps.append(f"{'[x]' if not build_errors else '[ ]'} build — {len(proposal['operations'])} "
@@ -257,6 +258,15 @@ def verify_judge(workspace: Path, context: dict, **_) -> tuple[list[str], list[s
             f"operation ruling(s)"], shape, {}
 
 
+def _site_sources(workspace: Path) -> str:
+    """The site's own vocabulary, as demonstrated by the workflows staged for this episode."""
+    directory = Path(workspace) / "in" / "sources"
+    if not directory.is_dir():
+        return ""
+    return " ".join(path.read_text(encoding="utf-8", errors="replace")
+                    for path in sorted(directory.glob("*.py")))
+
+
 def verify_site(workspace: Path, context: dict, *, with_host_check: bool = True, **_) -> tuple[list[str], list[str], dict]:
     pool = ctx.load_pool()
     steps = [f"pool holds {len(pool)} primitive(s)"]
@@ -269,6 +279,8 @@ def verify_site(workspace: Path, context: dict, *, with_host_check: bool = True,
         workflows={str(k): v for k, v in (context.get("workflows") or {}).items()})
     errors = (list(errors) + check_primitives(_replacements(proposal))
               + check_soundness(_replacements(proposal))
+              + check_imports(_replacements(proposal))
+              + ungrounded_features(final, _site_sources(workspace))
               + (check_hardcoded_hosts(_replacements(proposal))
                  if with_host_check else []))
     steps.append(f"{'[x]' if not errors else '[ ]'} consolidate — {len(pool)} pooled -> "

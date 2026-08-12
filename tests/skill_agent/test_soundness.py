@@ -9,10 +9,14 @@ import pytest
 
 from skill_agent.soundness import (
     check_hardcoded_hosts,
+    check_imports,
     check_method_code,
     check_package,
     check_primitives,
     hardcoded_hosts,
+    project_modules,
+    undeclared_imports,
+    ungrounded_features,
 )
 
 CLEAN = """
@@ -163,3 +167,68 @@ class TestHardcodedHosts:
             {"primitive_id": "map/clean", "method_code":
              'def clean(self, base):\n    return f"{base}/x"\n'}])
         assert len(errors) == 1 and errors[0].startswith("map/geocode:")
+
+
+class TestUndeclaredImports:
+    """A generated method imported `requests`, which this project neither declares nor installs."""
+
+    ALLOWED = frozenset({"json", "re", "urllib", "html", "sys"})
+
+    def test_flags_a_third_party_import(self):
+        code = "def f(self):\n    import requests\n    return requests.get('/x')\n"
+        errors = undeclared_imports(code, where="p", allowed=self.ALLOWED)
+        assert len(errors) == 1
+        assert "`requests`" in errors[0] and "ModuleNotFoundError" in errors[0]
+
+    def test_stdlib_imports_are_clean(self):
+        code = ("def f(self):\n    import json\n    from urllib.request import urlopen\n"
+                "    return json.loads(urlopen('/x').read())\n")
+        assert undeclared_imports(code, where="p", allowed=self.ALLOWED) == []
+
+    def test_a_submodule_is_judged_by_its_root(self):
+        code = "def f(self):\n    from urllib.parse import urlparse\n    return urlparse('/x')\n"
+        assert undeclared_imports(code, where="p", allowed=self.ALLOWED) == []
+
+    def test_relative_imports_are_ignored(self):
+        assert undeclared_imports("def f(self):\n    from . import x\n    return x\n",
+                                  where="p", allowed=self.ALLOWED) == []
+
+    def test_the_real_allowlist_covers_the_standard_library(self):
+        allowed = project_modules()
+        assert {"json", "re", "urllib", "html", "hashlib"} <= allowed
+        assert "requests" not in allowed
+
+    def test_check_imports_labels_the_primitive(self):
+        errors = check_imports(
+            [{"primitive_id": "gitlab/members", "method_code": "def f(self):\n    import requests\n"}],
+            allowed=self.ALLOWED)
+        assert len(errors) == 1 and errors[0].startswith("gitlab/members:")
+
+
+class TestFeatureGrounding:
+    """The rules once offered `reviews` as a generic example; a GitLab consolidation used it
+    for issue primitives, and `review` appears zero times in GitLab's sources."""
+
+    GITLAB_SOURCE = "page.goto('/dashboard/issues'); commits = api('/repository/commits')"
+
+    def test_flags_a_name_borrowed_from_another_site(self):
+        errors = ungrounded_features([{"feature": "reviews"}], self.GITLAB_SOURCE)
+        assert len(errors) == 1 and "`reviews`" in errors[0]
+
+    def test_accepts_a_name_the_site_uses(self):
+        assert ungrounded_features([{"feature": "issues"}], self.GITLAB_SOURCE) == []
+
+    def test_matches_across_plural_and_singular(self):
+        assert ungrounded_features([{"feature": "commits"}], self.GITLAB_SOURCE) == []
+        assert ungrounded_features([{"feature": "issue"}], self.GITLAB_SOURCE) == []
+
+    def test_one_grounded_token_is_enough_for_a_compound_name(self):
+        """`catalog_search` is reasonable when the site says `search` but never `catalog`."""
+        assert ungrounded_features([{"feature": "catalog_search"}],
+                                   "page.goto('/catalogsearch/result?q=x')") == []
+
+    def test_reports_each_feature_once(self):
+        errors = ungrounded_features(
+            [{"feature": "reviews"}, {"feature": "reviews"}, {"feature": "issues"}],
+            self.GITLAB_SOURCE)
+        assert len(errors) == 1

@@ -78,6 +78,12 @@ Where the site's base URL comes from, since the class cannot hold it:
 - a method that only calls an **API** must take it as an explicit parameter — it never
   navigates, so `self.page.url` may still be `about:blank`. Declare it in `input_contract`.
 
+Import only the standard library. A method that imports a third-party package this project does
+not depend on raises ModuleNotFoundError on its first call, and nothing about the code looks
+wrong. Use `urllib` for HTTP — including authenticated requests, by forwarding
+`self.page.context.cookies()` as a `Cookie` header — and `self.page` for anything the browser
+should do.
+
 Never hard-code the deployment's host or IP into a method. The site address is environment
 state that changes between deployments; a primitive that bakes it in stops working the moment
 the library moves.

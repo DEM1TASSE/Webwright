@@ -11,8 +11,9 @@ nobody has yet looked at it as a whole. That is your job.
   names.
 - **Granularity** — one primitive may be doing two separable jobs; another may be a fragment
   that only makes sense merged.
-- **Organization** — every primitive belongs to a cohesive site *feature* (`auth`, `commits`,
-  `reviews`, `orders`, `routing`, …), rendered as a component class under the site class.
+- **Organization** — every primitive belongs to a cohesive site *feature*, rendered as a
+  component class under the site class. Take the feature's name from this site's own vocabulary
+  in `in/sources/*.py`, never from a generic category borrowed from another site.
 
 You are **not** adding capability. Nothing may be silently dropped: every input primitive must
 be consumed exactly once, as a `KEEP` source, one `MERGE` source, or one `SPLIT` source.
