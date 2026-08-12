@@ -58,3 +58,27 @@ def test_primitive_mode_cannot_be_source_evidence(tmp_path):
         assert "cannot be source evidence" in str(exc)
     else:
         raise AssertionError("primitive source must fail")
+
+
+def test_workspace_level_source_script_is_accepted(tmp_path):
+    workspace = tmp_path / "workspace"
+    run = workspace / "final_runs" / "run_1"
+    run.mkdir(parents=True)
+    (workspace / "final_script.py").write_text("print('executed')\n")
+    code = tmp_path / "segment.py"
+    code.write_text("print('site segment')\n")
+    segments = tmp_path / "segments.json"
+    segments.write_text(json.dumps({"task": [{
+        "segment_id": "S1", "site": "a.com", "template_id": "a.lookup",
+        "goal": "lookup a", "rubric_ids": ["R1"],
+    }]}))
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps({"sources": [{
+        "task_id": "task", "mode": "scratch", "run_dir": str(run),
+        "segments": str(segments), "segment_code": {"S1": str(code)},
+    }]}))
+    judge = tmp_path / "judge.json"
+    judge.write_text(json.dumps({"tasks": [{
+        "task_id": "task", "rubric_scores": {"R1": 1},
+    }]}))
+    assert list(MODULE.admitted_workflows(manifest, judge)) == ["a_com"]

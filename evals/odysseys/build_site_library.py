@@ -29,6 +29,11 @@ def judge_scores(path: str | Path) -> dict[str, dict[str, int]]:
     }
 
 
+def has_source_script(run_dir: Path) -> bool:
+    return (run_dir / "final_script.py").is_file() or (
+        run_dir.parent.parent / "final_script.py").is_file()
+
+
 def admitted_workflows(source_manifest: str | Path, judge_results: str | Path) -> dict[str, list[dict]]:
     """Map successful site segments to the existing audited-builder workflow contract."""
     scores = judge_scores(judge_results)
@@ -38,7 +43,7 @@ def admitted_workflows(source_manifest: str | Path, judge_results: str | Path) -
         if str(source.get("mode") or "scratch") != "scratch":
             raise ValueError(f"{task_id}: primitive-consumer runs cannot be source evidence")
         run_dir = Path(source["run_dir"])
-        if not (run_dir / "final_script.py").is_file():
+        if not has_source_script(run_dir):
             raise ValueError(f"{task_id}: final_script.py missing from {run_dir}")
         segment_code = source.get("segment_code") or {}
         for segment in load_segments(source["segments"], task_id):
