@@ -39,9 +39,16 @@ def canonical_site(value: str) -> str:
     raw = str(value or "").strip().lower()
     if not raw:
         raise ValueError("site cannot be empty")
-    host = urlparse(raw if "://" in raw else "//" + raw).hostname or raw
+    parsed = urlparse(raw if "://" in raw else "//" + raw)
+    host = parsed.hostname or raw
     if host.startswith("www."):
         host = host[4:]
+    # Google products share a registrable domain but not an interaction surface.  Keep Maps
+    # separate from generic Google Search so its routes/actions can never leak across libraries.
+    if host == "maps.google.com" or (
+        host == "google.com" and (parsed.path == "/maps" or parsed.path.startswith("/maps/"))
+    ):
+        return "google_maps"
     slug = re.sub(r"[^a-z0-9]+", "_", host).strip("_")
     if not slug or not slug[0].isalpha():
         raise ValueError(f"cannot canonicalize site: {value!r}")

@@ -26,6 +26,12 @@ def test_load_segments_canonicalizes_sites_and_preserves_answer_only(tmp_path):
     assert segments[1].site is None
 
 
+def test_google_maps_is_not_collapsed_into_google_search():
+    assert MODULE.canonical_site("https://www.google.com/maps/dir/A/B") == "google_maps"
+    assert MODULE.canonical_site("maps.google.com") == "google_maps"
+    assert MODULE.canonical_site("https://www.google.com/search?q=x") == "google_com"
+
+
 def test_duplicate_rubric_assignment_is_rejected():
     segments = [
         MODULE.SiteSubgoal("S1", "a_com", "one", rubric_ids=("R1",)),

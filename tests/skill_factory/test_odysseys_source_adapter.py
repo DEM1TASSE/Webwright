@@ -31,6 +31,12 @@ def test_discovers_sites_and_maps_reddit_frontend(tmp_path):
     assert MODULE.site_for_url("https://2.boredpanda.com/x") == "boredpanda_com"
 
 
+def test_google_maps_urls_are_evidence_but_google_search_is_not():
+    assert MODULE.site_for_url("https://www.google.com/maps/dir/A/B") == "google_maps"
+    assert MODULE.site_for_url("https://maps.google.com/?q=A") == "google_maps"
+    assert MODULE.site_for_url("https://www.google.com/search?q=A") is None
+
+
 def test_adapter_requires_review_and_passing_rubric(tmp_path):
     run = tmp_path / "run"
     (run / "screenshots").mkdir(parents=True)

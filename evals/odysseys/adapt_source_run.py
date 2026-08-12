@@ -20,6 +20,7 @@ from site_primitives import canonical_site
 URL_RE = re.compile(r"https?://[^\s\]\[(){}<>\"']+")
 IGNORED_HOSTS = {"google.com", "www.google.com", "localhost", "127.0.0.1"}
 SITE_ALIASES = {
+    "google_maps": ("google maps", "maps", "route", "directions"),
     "reddit_com": ("reddit", "subreddit", "r/"),
     "cnn_com": ("cnn",),
     "irs_gov": ("irs", "gift tax"),
@@ -59,7 +60,13 @@ def urls_in_text(text: str) -> list[str]:
 
 
 def site_for_url(url: str) -> str | None:
-    host = (urlparse(url).hostname or "").lower()
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if host == "maps.google.com" or (
+        host in {"google.com", "www.google.com"}
+        and (parsed.path == "/maps" or parsed.path.startswith("/maps/"))
+    ):
+        return "google_maps"
     if not host or host in IGNORED_HOSTS or host.endswith("googleusercontent.com"):
         return None
     # Accessible Reddit frontends remain evidence about reddit.com, not a new library site.
