@@ -70,6 +70,7 @@ def main():
     work_root, library = Path(args.work_root), Path(args.library)
     events = []
     for site, template_id, records in eligible_templates(split, manifests):
+        site_library = library / site
         event = {"site": site, "template_id": int(template_id), "gold_sources": len(records)}
         if not records:
             event["status"] = "no_gold_source"
@@ -90,7 +91,7 @@ def main():
         gold_path.write_text(json.dumps(golds, ensure_ascii=False, indent=2) + "\n")
         cmd = [
             sys.executable, "-m", "webwright.skill_factory.learn", str(source_dir),
-            "--library", str(library), "--golds", str(gold_path), "--chunk", "25",
+            "--library", str(site_library), "--golds", str(gold_path), "--chunk", "25",
             "--verify", args.verify, "--on-fail", "reference",
         ]
         event["command"] = cmd
@@ -110,7 +111,7 @@ def main():
                          returncode=proc.returncode, stdout=proc.stdout[-4000:],
                          stderr=proc.stderr[-4000:])
             if proc.returncode == 0:
-                event["skill_ids"] = built_skill_ids(library, source_dir)
+                event["skill_ids"] = built_skill_ids(site_library, source_dir)
         events.append(event)
         work_root.mkdir(parents=True, exist_ok=True)
         (work_root / "build_events.json").write_text(
