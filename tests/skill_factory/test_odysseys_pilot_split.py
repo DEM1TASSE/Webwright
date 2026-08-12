@@ -6,6 +6,11 @@ ROOT = Path(__file__).parents[2]
 SPLIT = json.loads(
     (ROOT / "evals/odysseys/pilot_10x10_split.json").read_text(encoding="utf-8")
 )
+HELDOUT_SEGMENTS = json.loads(
+    (ROOT / "evals/odysseys/pilot_10x10_heldout_segments.json").read_text(
+        encoding="utf-8"
+    )
+)
 
 
 def test_pilot_has_disjoint_ten_by_ten_tasks_and_templates():
@@ -42,3 +47,16 @@ def test_every_heldout_has_substantive_site_capability_overlap():
             not in {"open_homepage", "search_web", "close_cookie"}
             for capability in overlap
         )
+
+
+def test_heldout_segment_manifest_matches_frozen_split():
+    heldout = {row["task_id"]: row for row in SPLIT["heldout"]}
+    assert set(HELDOUT_SEGMENTS) == set(heldout)
+    for task_id, segments in HELDOUT_SEGMENTS.items():
+        assert len(segments) == 1
+        segment = segments[0]
+        row = heldout[task_id]
+        assert segment["template_id"] == row["template_id"]
+        assert segment["rubric_ids"] == row["rubric_ids"]
+        assert segment["goal"]
+        assert segment["required_fields"]
