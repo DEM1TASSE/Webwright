@@ -25,6 +25,24 @@ def eligible_templates(split, by_template):
             yield site, template_id, list(by_template.get(site, {}).get(template_id, []))
 
 
+def built_skill_ids(library, source_dir):
+    """Resolve the opaque distilled skill id back to this frozen template's source runs."""
+    ledger_path = Path(library) / ".learned.json"
+    if not ledger_path.exists():
+        return []
+    source_runs = {os.path.abspath(path) for path in Path(source_dir).iterdir() if path.is_dir()}
+    templates = {
+        row.get("template")
+        for run, row in (load(ledger_path).get("runs") or {}).items()
+        if os.path.abspath(run) in source_runs and row.get("template")
+    }
+    skill_ids = []
+    for meta_path in Path(library).glob("*/meta.json"):
+        if load(meta_path).get("template") in templates:
+            skill_ids.append(meta_path.parent.name)
+    return sorted(skill_ids)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--split", required=True)
@@ -91,6 +109,8 @@ def main():
             event.update(status="built" if proc.returncode == 0 else "failed",
                          returncode=proc.returncode, stdout=proc.stdout[-4000:],
                          stderr=proc.stderr[-4000:])
+            if proc.returncode == 0:
+                event["skill_ids"] = built_skill_ids(library, source_dir)
         events.append(event)
         work_root.mkdir(parents=True, exist_ok=True)
         (work_root / "build_events.json").write_text(
