@@ -175,30 +175,48 @@ if _DIR:
 
     # ---- 2. Playwright: attach listeners to every context that gets created ----
     def _wire_context(ctx, is_async):
-        def on_request_finished(req):
+        # request.headers omits what the browser adds (accept, sec-fetch-*), and
+        # WebArena decides whether an event counts as a *navigation* from exactly
+        # those. all_headers() is the complete set; it is awaitable on the async
+        # API, so the handler has to be a coroutine there.
+        def record(resp, req_headers, resp_headers):
+            _emit({"source": "playwright", "method": resp.request.method, "url": resp.url,
+                   "post_data": resp.request.post_data,
+                   "req_headers": req_headers, "status": resp.status,
+                   "resp_headers": resp_headers})
+
+        async def on_response_async(resp):
             try:
-                _emit({"source": "playwright", "method": req.method, "url": req.url,
-                       "post_data": req.post_data, "req_headers": dict(req.headers or {}),
-                       "status": None, "resp_headers": {}})
+                try:
+                    rh = dict(await resp.request.all_headers())
+                except Exception:
+                    rh = dict(resp.request.headers or {})
+                try:
+                    sh = dict(await resp.all_headers())
+                except Exception:
+                    sh = dict(resp.headers or {})
+                record(resp, rh, sh)
             except Exception:
                 pass
 
-        def on_response(resp):
+        def on_response_sync(resp):
             try:
-                _emit({"source": "playwright", "method": resp.request.method, "url": resp.url,
-                       "post_data": resp.request.post_data,
-                       "req_headers": dict(resp.request.headers or {}),
-                       "status": resp.status, "resp_headers": dict(resp.headers or {})})
+                try:
+                    rh = dict(resp.request.all_headers())
+                except Exception:
+                    rh = dict(resp.request.headers or {})
+                try:
+                    sh = dict(resp.all_headers())
+                except Exception:
+                    sh = dict(resp.headers or {})
+                record(resp, rh, sh)
             except Exception:
                 pass
 
         try:
-            ctx.on("response", on_response)
+            ctx.on("response", on_response_async if is_async else on_response_sync)
         except Exception:
-            try:
-                ctx.on("requestfinished", on_request_finished)
-            except Exception:
-                pass
+            pass
 
     def _patch_api_request(mod, is_async):
         """page.request / context.request bypass context 'response' events entirely.
