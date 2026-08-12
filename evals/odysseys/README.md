@@ -77,9 +77,11 @@ Missing site libraries and answer-only segments deterministically skip; they nev
 primitive from another site.
 
 Before invoking the official rubric judge, use `export_rubric_run.py` to select the final run. The
-exporter requires a `self_reflect_result.json` with `predicted_label=1` by default and refuses to
-silently export a partial run after a timeout, gateway failure, or interrupted agent. The
-`--allow-incomplete` option is for debugging only and its output is not a valid benchmark result.
+exporter requires a parsed `self_reflect_result.json` by default and refuses to silently export a
+run interrupted before reflection by a timeout or gateway failure. A reflected failure remains
+eligible for the official per-rubric judge because some site segments may still pass. Use
+`--require-self-reflection-pass` when a full-task pass is required. The `--allow-incomplete` option
+is for debugging only and its output is not a valid benchmark result.
 
 ## Experimental boundary
 

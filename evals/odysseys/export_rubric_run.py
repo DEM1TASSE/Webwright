@@ -28,32 +28,43 @@ def latest_workspace(root: Path, task_id: str) -> Path:
     return max(candidates, key=lambda path: (path.stat().st_mtime_ns, path.name))
 
 
-def pick_final_run(workspace: Path, *, allow_incomplete: bool = False) -> Path:
+def pick_final_run(workspace: Path, *, allow_incomplete: bool = False,
+                   require_self_reflection_pass: bool = False) -> Path:
     candidates = [path for path in (workspace / "final_runs").glob("run_*")
                   if (path / "final_script_log.txt").is_file()]
+    reflected = []
     successful = []
     for path in candidates:
         try:
-            if json.loads((path / "self_reflect_result.json").read_text()).get(
-                    "predicted_label") in (1, True):
+            result = json.loads((path / "self_reflect_result.json").read_text())
+            if result.get("predicted_label") in (0, 1, False, True):
+                reflected.append(path)
+            if result.get("predicted_label") in (1, True):
                 successful.append(path)
         except (OSError, ValueError):
             pass
     if successful:
         return max(successful, key=lambda path: (path.stat().st_mtime_ns, path.name))
+    if not require_self_reflection_pass and reflected:
+        return max(reflected, key=lambda path: (path.stat().st_mtime_ns, path.name))
     if not candidates:
         raise ValueError(f"no executed final run under {workspace}")
     if not allow_incomplete:
         raise ValueError(
-            f"no self-reflection-passing final run under {workspace}; "
+            f"no {'self-reflection-passing' if require_self_reflection_pass else 'self-reflected'} "
+            f"final run under {workspace}; "
             "refusing to export an incomplete trajectory"
         )
     return max(candidates, key=lambda path: (path.stat().st_mtime_ns, path.name))
 
 
-def export(task_id: str, runs: Path, output: Path, *, allow_incomplete: bool = False) -> dict:
+def export(task_id: str, runs: Path, output: Path, *, allow_incomplete: bool = False,
+           require_self_reflection_pass: bool = False) -> dict:
     workspace = latest_workspace(runs, task_id)
-    final_run = pick_final_run(workspace, allow_incomplete=allow_incomplete)
+    final_run = pick_final_run(
+        workspace, allow_incomplete=allow_incomplete,
+        require_self_reflection_pass=require_self_reflection_pass,
+    )
     destination = output / task_id
     destination.mkdir(parents=True, exist_ok=True)
     shutil.copy2(final_run / "final_script_log.txt", destination / "final_script_log.txt")
@@ -88,9 +99,14 @@ def main(argv=None):
         "--allow-incomplete", action="store_true",
         help="Debug only: export the latest run even when self-reflection did not pass",
     )
+    parser.add_argument(
+        "--require-self-reflection-pass", action="store_true",
+        help="Require predicted_label=1 instead of merely requiring a completed reflection",
+    )
     args = parser.parse_args(argv)
     print(json.dumps(export(
         args.task_id, args.runs, args.output, allow_incomplete=args.allow_incomplete,
+        require_self_reflection_pass=args.require_self_reflection_pass,
     ), indent=2))
     return 0
 

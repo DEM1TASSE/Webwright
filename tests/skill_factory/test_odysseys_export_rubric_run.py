@@ -27,17 +27,35 @@ def test_export_accepts_arm_suffix_and_prefers_successful_run(tmp_path):
     assert (tmp_path / "out/t/result.txt").read_text() == "1.0\n"
 
 
-def test_export_rejects_incomplete_run_by_default(tmp_path):
+def test_export_rejects_run_without_self_reflection_by_default(tmp_path):
     workspace = tmp_path / "runs" / "t_primitive_stamp"
     run = workspace / "final_runs" / "run_001"
     run.mkdir(parents=True)
     (workspace / "task.json").write_text(json.dumps({"task_id": "t_primitive"}))
     (run / "final_script_log.txt").write_text("partial")
 
-    with pytest.raises(ValueError, match="no self-reflection-passing final run"):
+    with pytest.raises(ValueError, match="no self-reflected final run"):
         MODULE.export("t", tmp_path / "runs", tmp_path / "out")
 
     result = MODULE.export(
         "t", tmp_path / "runs", tmp_path / "debug", allow_incomplete=True,
     )
     assert result["final_run"].endswith("run_001")
+
+
+def test_export_accepts_reflected_failure_for_per_rubric_scoring(tmp_path):
+    workspace = tmp_path / "runs" / "t_scratch_stamp"
+    run = workspace / "final_runs" / "run_001"
+    run.mkdir(parents=True)
+    (workspace / "task.json").write_text(json.dumps({"task_id": "t_scratch"}))
+    (run / "final_script_log.txt").write_text("partial rubric evidence")
+    (run / "self_reflect_result.json").write_text(
+        json.dumps({"predicted_label": 0})
+    )
+    result = MODULE.export("t", tmp_path / "runs", tmp_path / "out")
+    assert result["final_run"].endswith("run_001")
+    with pytest.raises(ValueError, match="no self-reflection-passing final run"):
+        MODULE.export(
+            "t", tmp_path / "runs", tmp_path / "strict",
+            require_self_reflection_pass=True,
+        )
