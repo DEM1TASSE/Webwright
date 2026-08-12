@@ -37,6 +37,17 @@ def load_json(path):
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
+def source_script(run: str | Path) -> Path:
+    run = Path(run)
+    local = run / "final_script.py"
+    if local.is_file():
+        return local
+    workspace_copy = run.parent.parent / "final_script.py"
+    if workspace_copy.is_file():
+        return workspace_copy
+    raise ValueError(f"no final_script.py for {run}")
+
+
 def completed_run(workspace: str | Path) -> Path:
     runs = sorted((Path(workspace) / "final_runs").glob("run_*"))
     successful = []
@@ -45,11 +56,22 @@ def completed_run(workspace: str | Path) -> Path:
             label = load_json(run / "self_reflect_result.json").get("predicted_label")
         except (OSError, ValueError):
             label = None
-        if label in (1, True) and (run / "final_script.py").is_file():
+        try:
+            source_script(run)
+            has_script = True
+        except ValueError:
+            has_script = False
+        if label in (1, True) and has_script:
             successful.append(run)
     if successful:
         return successful[-1]
-    valid = [run for run in runs if (run / "final_script.py").is_file()]
+    valid = []
+    for run in runs:
+        try:
+            source_script(run)
+            valid.append(run)
+        except ValueError:
+            pass
     if not valid:
         raise ValueError(f"no final run in {workspace}")
     return valid[-1]
@@ -161,7 +183,7 @@ def site_code_ranges(script_lines: list[str], site: str, urls: list[str]) -> lis
 def discover_site_evidence(run_dir: str | Path) -> dict[str, dict]:
     run = Path(run_dir)
     log = (run / "final_script_log.txt").read_text(encoding="utf-8", errors="ignore")
-    script = (run / "final_script.py").read_text(encoding="utf-8", errors="ignore")
+    script = source_script(run).read_text(encoding="utf-8", errors="ignore")
     by_site: dict[str, dict] = {}
     for line_number, line in enumerate(log.splitlines(), start=1):
         sites = {site_for_url(url) for url in urls_in_text(line)} - {None}
@@ -229,7 +251,7 @@ def adapt(task: dict, run_dir: str | Path, judge_results: str | Path,
     approvals = approvals or {}
     root = Path(output) / task_id
     root.mkdir(parents=True, exist_ok=True)
-    script_lines = (Path(run_dir) / "final_script.py").read_text(
+    script_lines = source_script(run_dir).read_text(
         encoding="utf-8", errors="ignore").splitlines()
     segments = []
     for number, (site, item) in enumerate(sorted(evidence.items()), start=1):

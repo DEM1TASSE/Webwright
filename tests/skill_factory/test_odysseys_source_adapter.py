@@ -102,6 +102,17 @@ def test_approved_code_ranges_replace_heuristic_excerpt(tmp_path):
     assert 'URL = "https://reddit.com/r/test"' not in Path(segment["code_path"]).read_text()
 
 
+def test_completed_run_accepts_workspace_level_final_script(tmp_path):
+    workspace = tmp_path / "workspace"
+    run = workspace / "final_runs" / "run_1"
+    run.mkdir(parents=True)
+    (workspace / "final_script.py").write_text("print('executed')\n")
+    (run / "final_script_log.txt").write_text("done\n")
+    (run / "self_reflect_result.json").write_text(json.dumps({"predicted_label": 0}))
+    assert MODULE.completed_run(workspace) == run
+    assert MODULE.source_script(run) == workspace / "final_script.py"
+
+
 def test_failed_rubric_cannot_be_admitted(tmp_path):
     run = tmp_path / "run"
     (run / "screenshots").mkdir(parents=True)
