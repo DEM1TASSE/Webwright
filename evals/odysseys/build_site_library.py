@@ -81,21 +81,44 @@ def main(argv=None) -> int:
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--seed", type=int, default=20260812)
     parser.add_argument("--max-attempts", type=int, default=3)
+    parser.add_argument("--sites", nargs="*", help="Optional canonical site subset")
+    parser.add_argument("--resume-preconsolidation", action="store_true")
     args = parser.parse_args(argv)
 
     config = yaml.safe_load(Path(args.model_config).read_text(encoding="utf-8")) or {}
     if not isinstance(config.get("model"), dict):
         raise ValueError(f"{args.model_config}: missing model configuration")
-    configure_llm(config["model"])
     workflows = admitted_workflows(args.source_manifest, args.judge_results)
-    summary = {"status": "candidate", "source_scope": "rubric_admitted_site_segment",
-               "sites": {}}
-    for site, rows in sorted(workflows.items()):
+    target = Path(args.output) / "summary.json"
+    if target.is_file():
+        summary = load_json(target)
+        summary["status"] = "candidate"
+        summary["source_scope"] = "rubric_admitted_site_segment"
+        summary.setdefault("sites", {})
+    else:
+        summary = {"status": "candidate", "source_scope": "rubric_admitted_site_segment",
+                   "sites": {}}
+    selected = [(site, rows) for site, rows in sorted(workflows.items())
+                if not args.sites or site in set(args.sites)]
+    needs_build = any(
+        not (Path(args.output) / site / "final_candidate" / "index.json").is_file()
+        for site, _ in selected
+    )
+    if needs_build:
+        configure_llm(config["model"])
+    for site, rows in selected:
+        existing = Path(args.output) / site / "final_candidate" / "index.json"
+        if existing.is_file():
+            value = load_json(existing)
+            summary["sites"][site] = {"site": site, "status": value.get("status"),
+                                      "resumed": True}
+            continue
         result = build_audited_site_library(
             site=site, workflows=rows, output=Path(args.output) / site,
             batch_size=args.batch_size, seed=args.seed,
             llm_fn=lambda system, user: llm_json(system, user, max_tokens=24000),
             max_attempts=args.max_attempts,
+            resume_preconsolidation=args.resume_preconsolidation,
         )
         summary["sites"][site] = result
         index = Path(args.output) / site / "final_candidate" / "index.json"
@@ -103,7 +126,6 @@ def main(argv=None) -> int:
             value = load_json(index)
             write_candidate_review(index.parent, site=site,
                                    primitives=value.get("primitives") or [])
-    target = Path(args.output) / "summary.json"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n",
                       encoding="utf-8")

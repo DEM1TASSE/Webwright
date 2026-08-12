@@ -177,6 +177,34 @@ def _hash(value: object) -> str:
     return "sha256:" + hashlib.sha256(text.encode()).hexdigest()
 
 
+def deduplicate_source_evidence(raw: dict) -> dict:
+    """Remove repeated citations of one workflow without altering primitive semantics.
+
+    Consolidation models sometimes copy multiple pre-merge evidence rows from the same workflow.
+    The validator correctly requires one attribution row per workflow; retaining the first complete
+    row is a mechanical normalization, not evidence invention or a quality repair.
+    """
+    for operation in raw.get("operations") or []:
+        replacements = ([operation.get("replacement")] if operation.get("replacement")
+                        else operation.get("replacements") or [])
+        for replacement in replacements:
+            if not isinstance(replacement, dict):
+                continue
+            evidence = replacement.get("source_evidence")
+            if not isinstance(evidence, list):
+                continue
+            seen, unique = set(), []
+            for row in evidence:
+                workflow_id = str(row.get("workflow_id") or "") if isinstance(row, dict) else ""
+                if workflow_id and workflow_id in seen:
+                    continue
+                if workflow_id:
+                    seen.add(workflow_id)
+                unique.append(row)
+            replacement["source_evidence"] = unique
+    return raw
+
+
 def compose_candidate_indexes(
     *, site: str, indexes: list[dict], output: str | Path,
 ) -> dict:
@@ -654,6 +682,7 @@ def retrieve_pool(batch: list[dict], pool: dict[str, dict], *, top_k: int = 12) 
 def build_audited_site_library(
     *, site: str, workflows: list[dict], output: str | Path, batch_size=8, seed=20260810,
     llm_fn: Callable[[str, str], dict], max_attempts: int = 3,
+    resume_preconsolidation: bool = False,
 ) -> dict:
     """Run both phases and persist enough state to reproduce every transition."""
     output = Path(output)
@@ -667,6 +696,11 @@ def build_audited_site_library(
                        "template_id": x.get("template_id")} for x in batch] for batch in batches]
     })
     pool, history = {}, []
+    preconsolidation_path = output / "pre_consolidation" / "primitive_pool.json"
+    if resume_preconsolidation and preconsolidation_path.is_file():
+        previous = json.loads(preconsolidation_path.read_text(encoding="utf-8"))
+        pool = {item["primitive_id"]: item for item in previous}
+        history.append({"resume": "pre_consolidation", "primitive_count": len(pool)})
     all_workflows = {str(x["id"]): x for x in workflows}
     extractions_by_workflow = {}
     for workflow in workflows:
@@ -700,7 +734,8 @@ def build_audited_site_library(
         if errors:
             raise ValueError(f"{site} extraction {workflow['id']} rejected: {errors}")
         extractions_by_workflow[str(workflow["id"])] = raw
-    for number, batch in enumerate(batches):
+    pending_batches = [] if (resume_preconsolidation and pool) else batches
+    for number, batch in enumerate(pending_batches):
         directory = output / "batches" / f"batch_{number:03d}"
         catalog_index = [{key: value.get(key) for key in (
             "primitive_id", "method", "capability", "input_contract", "output_contract",
@@ -768,7 +803,9 @@ def build_audited_site_library(
                 "Regenerate the complete consolidation. Correct coverage, boundary, code, and "
                 "evidence errors without silently deleting a primitive."
             )
-        raw = llm_fn(_CONSOLIDATE_SYS, json.dumps(attempt_input, ensure_ascii=False)) or {}
+        raw = deduplicate_source_evidence(
+            llm_fn(_CONSOLIDATE_SYS, json.dumps(attempt_input, ensure_ascii=False)) or {}
+        )
         final, errors, coverage = validate_consolidation(
             raw, site=site, pool=pool, workflows=all_workflows
         )

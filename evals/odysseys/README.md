@@ -8,6 +8,10 @@ never receive primitive code.
 ## Files
 
 - `site_primitives.py`: validates reviewed segments and independently routes each site.
+- `adapt_source_run.py`: discovers per-site URL/action/screenshot/code evidence from a judged run
+  and emits a conservative human-review queue.
+- `export_builder_manifest.py`: converts only approved, rubric-passing adapter records into the
+  existing audited builder contract.
 - `build_site_library.py`: admits only scratch segments whose assigned official rubrics scored 1.
 - `cross_task_eval.py`: runs scratch or a single task with all site-level routing decisions frozen
   before browser execution.
@@ -20,6 +24,23 @@ For each task, review a segment manifest with an exact site, site-level template
 fields, and rubric IDs. Also extract a reviewed site-only code file for every site segment and list
 it under `segment_code`; the builder deliberately refuses to expose a full multi-site script to a
 site builder. Then create a source manifest like `source_manifest.example.json` and run:
+
+```bash
+PYTHONPATH=src python evals/odysseys/adapt_source_run.py TASK_ID \
+  --tasks odysseys.json --workspace RUN_WORKSPACE \
+  --judge-results eval_results.json --output adapter_reviews
+
+# Review adapter_review.json, supply exact rubric/template/goal approvals, rerun with --approvals,
+# then combine the approved records:
+PYTHONPATH=src python evals/odysseys/export_builder_manifest.py \
+  adapter_reviews/*/adapter_review.json --output builder_inputs
+```
+
+The initial adapter output always says `needs_review`; automatic URL/rubric matching is a proposal,
+not admission. A segment becomes admitted only when review status is approved, every mapped rubric
+scored 1, it has a frozen template ID, and site-specific code evidence was found.
+
+Build the resulting manifest:
 
 ```bash
 PYTHONPATH=src python evals/odysseys/build_site_library.py \
