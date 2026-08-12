@@ -13,7 +13,7 @@ missing piece was recording one.
 ## Why recording is not just `record_har_path`
 
 Webwright's agent writes its own scripts, and it does not consistently use the
-browser. Across the tasks we ran it reached the site three different ways:
+browser. Across the tasks we ran it reached the site four different ways:
 
 | path | seen in | caught by |
 |---|---|---|
@@ -25,12 +25,15 @@ browser. Across the tasks we ran it reached the site three different ways:
 `httpx` is patched too, for completeness -- Webwright itself uses it, though so
 far only for the model gateway.
 
-Playwright's own `record_har_path` sees only the middle row. The third row is the
-subtle one: `page.request.*` does **not** emit context `request`/`response`
-events, so a listener-based recorder misses it silently — we scored a correct run
-`network=0.0` before catching this.
+Playwright's own `record_har_path` sees only the browser rows. Two of the others
+fail silently and were each found only by running: `page.request.*` does **not**
+emit context `request`/`response` events, so a listener-based recorder misses it — we scored a correct run
+`network=0.0` before catching this. And urllib3 v2 **overrides**
+`HTTPConnection.request` and `getresponse`, so patching `http.client` never fires
+for `requests` -- four runs recorded literally nothing, which looked like the
+recorder failing to load rather than a gap. Both have regression tests.
 
-`warec/sitecustomize.py` covers all three. It is auto-imported by every Python
+`warec/sitecustomize.py` covers all four. It is auto-imported by every Python
 subprocess Webwright spawns (Webwright builds `command_env` from `os.environ`, so
 `PYTHONPATH` and `WA_REC_DIR` propagate), and is a no-op unless `WA_REC_DIR` is
 set. It never raises into the run.
