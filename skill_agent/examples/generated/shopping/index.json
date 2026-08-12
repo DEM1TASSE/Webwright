@@ -1,0 +1,212 @@
+{
+  "schema_version": 1,
+  "status": "candidate",
+  "approved": false,
+  "site": "shopping",
+  "root_class": "ShoppingSite",
+  "primitives": [
+    {
+      "primitive_id": "shopping/contact/get_contact_page_phone_numbers",
+      "method": "get_contact_page_phone_numbers",
+      "capability": "Navigate from the shopping homepage to the Contact Us page and extract phone numbers displayed there.",
+      "owns": [
+        "footer Contact Us link selector and navigation path",
+        "visible Contact Us page text acquisition",
+        "phone-number parsing from rendered contact-page text"
+      ],
+      "does_not_own": [
+        "choosing a single answer string when multiple phone numbers are displayed",
+        "task-specific interpretation beyond extraction",
+        "answer formatting"
+      ],
+      "input_contract": {
+        "base_url": "Base URL of the shopping site."
+      },
+      "output_contract": {
+        "phone_numbers": "List of phone number strings extracted from the visible Contact Us page reached from the site's footer."
+      },
+      "requires": [],
+      "provides": [
+        "contact_page_phone_numbers"
+      ],
+      "supported_patterns": [
+        "Footer navigation to Contact Us",
+        "Regex extraction from visible page text"
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task313_t134",
+          "template_id": "134",
+          "code_quote": "The workflow opens the homepage, clicks the footer link named 'Contact Us', reads body innerText from the destination page, and matches a phone-number regex against that page text.",
+          "explanation": "Generalized the fixed base URL into a base_url parameter while preserving the demonstrated footer navigation path and typed extraction of displayed phone numbers from the contact page.",
+          "evidence_match_mode": "attributed_nonverbatim"
+        }
+      ],
+      "method_code": "def get_contact_page_phone_numbers(self, base_url: str) -> dict:\n    import re\n\n    self.page.goto(base_url.rstrip(\"/\") + \"/\", wait_until=\"domcontentloaded\")\n    self.page.wait_for_timeout(1500)\n    footer_link = self.page.locator(\"footer\").get_by_role(\"link\", name=\"Contact Us\").first\n    footer_link.scroll_into_view_if_needed()\n    footer_link.click()\n    self.page.wait_for_load_state(\"domcontentloaded\")\n    self.page.wait_for_timeout(1500)\n    body_text = re.sub(r\"\\s+\", \" \", self.page.locator(\"body\").inner_text())\n    phone_regex = re.compile(r\"(?:\\+?1[-.\\s]?)?(?:\\(?\\d{3}\\)?[-.\\s]?\\d{3}[-.\\s]?\\d{4})\")\n    return {\"phone_numbers\": phone_regex.findall(body_text)}\n",
+      "feature": "contact"
+    },
+    {
+      "primitive_id": "shopping/search/search_products_from_results_page",
+      "method": "search_products_from_results_page",
+      "capability": "Submit a search query on the shopping site and parse visible product search-result cards into typed product records.",
+      "owns": [
+        "homepage search box and Search button selectors",
+        "visible result-card selectors for product names and displayed prices",
+        "price-text parsing into numeric values"
+      ],
+      "does_not_own": [
+        "semantic inclusion or exclusion rules for which products matter to a task",
+        "aggregate computations such as min/max",
+        "answer formatting"
+      ],
+      "input_contract": {
+        "base_url": "Base URL of the shopping site.",
+        "query": "Search query to submit in the site search box."
+      },
+      "output_contract": {
+        "products": "List of visible search-result product records with fields name and price."
+      },
+      "requires": [],
+      "provides": [
+        "product_search_results"
+      ],
+      "supported_patterns": [
+        "UI search from homepage",
+        "DOM extraction from li.product-item cards"
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task126_t159",
+          "template_id": "159",
+          "code_quote": "The script opens the homepage, fills the placeholder 'Search entire store here...', clicks Search, then evaluates all 'li.product-item' elements to read '.product-item-link' text and '.price' text and converts the displayed price string to float.",
+          "explanation": "Generalized the hard-coded query into a query parameter and kept the site's demonstrated selectors for search submission and result-card parsing. Excluded the workflow's Canon-photo-printer filtering and price-range calculation.",
+          "evidence_match_mode": "attributed_nonverbatim"
+        }
+      ],
+      "method_code": "def search_products_from_results_page(self, base_url: str, query: str) -> dict:\n    self.page.goto(base_url, wait_until=\"domcontentloaded\")\n    self.page.wait_for_timeout(1500)\n    self.page.get_by_placeholder(\"Search entire store here...\").fill(query)\n    self.page.get_by_role(\"button\", name=\"Search\").click()\n    self.page.wait_for_load_state(\"domcontentloaded\")\n    self.page.wait_for_timeout(2500)\n    products = self.page.locator(\"li.product-item\").evaluate_all(\n        \"\"\"\n        els => els.map(el => {\n          const name = el.querySelector('.product-item-link')?.textContent?.trim() || '';\n          const price = el.querySelector('.price')?.textContent?.trim() || '';\n          return {name, price};\n        }).filter(x => x.name)\n        \"\"\"\n    )\n    parsed = []\n    for item in products:\n        price_text = item[\"price\"].replace(\"$\", \"\").replace(\",\", \"\").strip()\n        if not price_text:\n            continue\n        try:\n            price = float(price_text)\n        except Exception:\n            continue\n        parsed.append({\"name\": item[\"name\"], \"price\": price})\n    return {\"products\": parsed}\n",
+      "feature": "search"
+    },
+    {
+      "primitive_id": "shopping/orders/list_orders_from_account_orders_page",
+      "method": "list_orders_from_account_orders_page",
+      "capability": "Authenticate to a customer account, open the My Orders page, and parse visible order rows into records containing order number, row text, and order detail URL.",
+      "owns": [
+        "login page URL and sign-in selectors",
+        "navigation to My Orders after authentication",
+        "extracting visible order-row text, order numbers, and detail links from the My Orders table"
+      ],
+      "does_not_own": [
+        "filtering to task-requested orders",
+        "interpreting row text into unsupported typed subfields",
+        "summing totals across orders",
+        "answer formatting"
+      ],
+      "input_contract": {
+        "base_url": "Base URL of the shopping site.",
+        "username": "Customer account email.",
+        "password": "Customer account password."
+      },
+      "output_contract": {
+        "orders": "List of visible My Orders table records with fields order_number when identifiable from the row text, row_text, and detail_url."
+      },
+      "requires": [],
+      "provides": [
+        "authenticated_orders_page"
+      ],
+      "supported_patterns": [
+        "UI authentication",
+        "My Orders table enumeration"
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task320_t160",
+          "template_id": "160",
+          "code_quote": "The script visits '/customer/account/login/', fills login[username] and login[password], clicks 'Sign In', opens the 'My Orders' link, iterates 'table tbody tr', and reads each row's 'View Order' href.",
+          "explanation": "Generalized the hard-coded credentials into username/password inputs and preserved the demonstrated authenticated navigation to My Orders plus row-level acquisition the workflow actually uses: finding visible order rows by their text and extracting each row's View Order href. The primitive returns row_text together with order_number when identifiable and detail_url, without claiming unsupported typed date/status fields or pagination completeness.",
+          "evidence_match_mode": "attributed_nonverbatim"
+        }
+      ],
+      "method_code": "def list_orders_from_account_orders_page(self, base_url: str, username: str, password: str) -> dict:\n    self.page.goto(base_url.rstrip(\"/\") + \"/customer/account/login/\", wait_until=\"domcontentloaded\")\n    self.page.locator('input[name=\"login[username]\"]').fill(username)\n    self.page.locator('input[name=\"login[password]\"]').fill(password)\n    self.page.get_by_role(\"button\", name=\"Sign In\").click()\n    self.page.wait_for_load_state(\"domcontentloaded\")\n    self.page.get_by_role(\"link\", name=\"My Orders\").click()\n    self.page.wait_for_load_state(\"domcontentloaded\")\n    rows = self.page.locator(\"table tbody tr\").all()\n    orders = []\n    for row in rows:\n        row_text = row.inner_text().strip()\n        detail_url = row.get_by_role(\"link\", name=\"View Order\").get_attribute(\"href\")\n        if detail_url and detail_url.startswith(\"/\"):\n            detail_url = base_url.rstrip(\"/\") + detail_url\n        order_number = None\n        for token in row_text.split():\n            if token.isdigit():\n                order_number = token\n                break\n        orders.append({\n            \"order_number\": order_number,\n            \"row_text\": row_text,\n            \"detail_url\": detail_url,\n        })\n    return {\"orders\": orders}\n",
+      "feature": "orders"
+    },
+    {
+      "primitive_id": "shopping/orders/get_order_detail_totals",
+      "method": "get_order_detail_totals",
+      "capability": "Open an order detail page and parse objective detail fields including order number, visible status, one displayed date text when shown, shipping amount, and grand total.",
+      "owns": [
+        "order detail page acquisition by URL",
+        "parsing displayed order identifier, status, one displayed date text, shipping charge, and grand total from page text"
+      ],
+      "does_not_own": [
+        "choosing which order URLs to inspect",
+        "adding totals across orders",
+        "interpreting the total as a refund for a task answer"
+      ],
+      "input_contract": {
+        "order_url": "Absolute URL of a shopping site order detail page."
+      },
+      "output_contract": {
+        "order_detail": "Typed order-detail record including order_number, status_text, displayed_date_text when shown, shipping_amount, and grand_total."
+      },
+      "requires": [],
+      "provides": [
+        "order_detail_totals"
+      ],
+      "supported_patterns": [
+        "UI order detail page parsing",
+        "Regex extraction from rendered account-order text"
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task320_t160",
+          "template_id": "160",
+          "code_quote": "For each selected order, the script visits the order href, reads body text, checks for the order number and 'Canceled', checks a displayed date text, confirms 'Shipping & Handling $5.00', and extracts 'Grand Total $<amount>' with regex.",
+          "explanation": "This supports a reusable primitive that opens a known order detail URL and parses objective fields shown on the page. The evidence directly supports order number, visible status, one visible date text on the detail page, shipping amount, and grand total; it does not support labeling that date more specifically. The workflow's sum across two orders is task-specific and excluded.",
+          "evidence_match_mode": "attributed_nonverbatim"
+        }
+      ],
+      "method_code": "def get_order_detail_totals(self, order_url: str) -> dict:\n    import re\n\n    self.page.goto(order_url, wait_until=\"domcontentloaded\")\n    detail_text = self.page.locator(\"body\").inner_text()\n    order_match = re.search(r\"Order\\s+#?\\s*(\\d+)\", detail_text)\n    grand_total_match = re.search(r\"Grand Total\\s*\\$([\\d,]+\\.\\d{2})\", detail_text)\n    shipping_match = re.search(r\"Shipping\\s*&\\s*Handling\\s*\\$([\\d,]+\\.\\d{2})\", detail_text)\n    date_match = re.search(r\"([A-Z][a-z]+\\s+\\d{1,2},\\s+\\d{4})\", detail_text)\n    status_text = \"Canceled\" if \"Canceled\" in detail_text else None\n    return {\n        \"order_detail\": {\n            \"order_number\": order_match.group(1) if order_match else None,\n            \"status_text\": status_text,\n            \"displayed_date_text\": date_match.group(1) if date_match else None,\n            \"shipping_amount\": float(shipping_match.group(1).replace(\",\", \"\")) if shipping_match else None,\n            \"grand_total\": float(grand_total_match.group(1).replace(\",\", \"\")) if grand_total_match else None,\n        }\n    }\n",
+      "feature": "orders"
+    },
+    {
+      "primitive_id": "shopping/reviews/list_product_reviews_from_current_product_page",
+      "method": "list_product_reviews_from_current_product_page",
+      "capability": "Open the reviews section on a product page and parse visible product reviews into typed records.",
+      "owns": [
+        "review tab selectors on a product page",
+        "parsing review blocks from rendered page text into typed fields"
+      ],
+      "does_not_own": [
+        "classifying reviews by task-specific criteria",
+        "selecting names for the answer",
+        "answer formatting"
+      ],
+      "input_contract": {
+        "product_url": "Absolute URL of a shopping site product detail page."
+      },
+      "output_contract": {
+        "reviews": "List of review records with fields title, rating_percent, body, reviewer_name, and posted_date parsed from the visible reviews section."
+      },
+      "requires": [],
+      "provides": [
+        "product_reviews"
+      ],
+      "supported_patterns": [
+        "UI navigation from product page to reviews tab",
+        "regex parsing of rendered review text"
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task26_t222",
+          "template_id": "222",
+          "code_quote": "The script visits a product URL, clicks '#tab-label-reviews, #tab-label-reviews-title', reads body text, and parses repeated review blocks with a regex capturing title, rating, body, reviewer name, and posted date.",
+          "explanation": "Generalized the hard-coded product URL into a product_url parameter while preserving the demonstrated review-tab selector and typed review parsing. Excluded the workflow's service-complaint filtering and answer assembly.",
+          "evidence_match_mode": "attributed_nonverbatim"
+        }
+      ],
+      "method_code": "def list_product_reviews_from_current_product_page(self, product_url: str) -> dict:\n    import re\n\n    def _normalize(text: str) -> str:\n        return re.sub(r\"\\s+\", \" \", text).strip()\n\n    self.page.goto(product_url, wait_until=\"networkidle\")\n    self.page.locator(\"#tab-label-reviews, #tab-label-reviews-title\").first.click()\n    self.page.wait_for_timeout(2500)\n    body_text = self.page.locator(\"body\").inner_text().replace(\"\\r\", \"\")\n    pattern = re.compile(\n        r\"(?P<title>.+?)\\nRating\\s*\\n(?P<rating>\\d+)%\\s*\\n(?P<body>.*?)\\nReview by (?P<name>.+?)\\n\\nPosted on (?P<date>.+?)(?=\\n\\n.+?\\nRating\\s*\\n\\d+%\\s*\\n|\\Z)\",\n        re.S,\n    )\n    reviews = []\n    for match in pattern.finditer(body_text):\n        reviews.append(\n            {\n                \"title\": _normalize(match.group(\"title\")),\n                \"rating_percent\": int(_normalize(match.group(\"rating\"))),\n                \"body\": _normalize(match.group(\"body\")),\n                \"reviewer_name\": _normalize(match.group(\"name\")),\n                \"posted_date\": _normalize(match.group(\"date\")),\n            }\n        )\n    return {\"reviews\": reviews}\n",
+      "feature": "reviews"
+    }
+  ],
+  "package_sha256": "sha256:f17ff7d2c9d40e04fc0c11a668ae048af7373600203eefd12ad8f4137d4542ab"
+}
