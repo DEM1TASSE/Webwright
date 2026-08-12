@@ -66,7 +66,21 @@ Methods belong to a feature component class whose `__init__` stores `self.page`.
   `list_commits`, write `def list_commits(self, ...)`, never `def method(...)`;
 - private helpers start with `_`;
 - public primitives do not call other public primitives. Use `requires`/`provides` for
-  environment-state preconditions such as being authenticated.
+  environment-state preconditions such as being authenticated;
+- the rendered class is `__init__(self, page): self.page = page` and nothing more, so
+  `self.<anything else>` does not exist. Inventing `self.base_url` parses fine and raises
+  AttributeError on the first real call.
+
+Where the site's base URL comes from, since the class cannot hold it:
+
+- a method that **navigates** may derive it from where the browser already is:
+  `urlparse(self.page.url)` gives scheme and netloc;
+- a method that only calls an **API** must take it as an explicit parameter — it never
+  navigates, so `self.page.url` may still be `about:blank`. Declare it in `input_contract`.
+
+Never hard-code the deployment's host or IP into a method. The site address is environment
+state that changes between deployments; a primitive that bakes it in stops working the moment
+the library moves.
 
 Keep the code portable across Python versions: never reuse the same quote character inside an
 f-string expression (`f'{d['key']}'` is a syntax error before 3.12 — use `f"{d['key']}"` or a
