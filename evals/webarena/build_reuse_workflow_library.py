@@ -30,11 +30,11 @@ def built_skill_ids(library, source_dir):
     ledger_path = Path(library) / ".learned.json"
     if not ledger_path.exists():
         return []
-    source_runs = {os.path.abspath(path) for path in Path(source_dir).iterdir() if path.is_dir()}
+    source_runs = {os.path.realpath(path) for path in Path(source_dir).iterdir() if path.is_dir()}
     templates = {
         row.get("template")
         for run, row in (load(ledger_path).get("runs") or {}).items()
-        if os.path.abspath(run) in source_runs and row.get("template")
+        if os.path.realpath(run) in source_runs and row.get("template")
     }
     skill_ids = []
     for meta_path in Path(library).glob("*/meta.json"):

@@ -31,3 +31,16 @@ def test_built_skill_ids_joins_ledger_to_skill_meta(tmp_path):
     }))
     (library / "skill_abc/meta.json").write_text(json.dumps({"template": "Do {{thing}}"}))
     assert MODULE.built_skill_ids(library, runs) == ["skill_abc"]
+
+
+def test_built_skill_ids_resolves_source_symlinks(tmp_path):
+    library, runs, actual = tmp_path / "library", tmp_path / "runs", tmp_path / "actual"
+    (library / "skill_abc").mkdir(parents=True)
+    actual.mkdir()
+    runs.mkdir()
+    (runs / "run_1").symlink_to(actual, target_is_directory=True)
+    (library / ".learned.json").write_text(json.dumps({
+        "runs": {str(actual): {"template": "Do {{thing}}"}}
+    }))
+    (library / "skill_abc/meta.json").write_text(json.dumps({"template": "Do {{thing}}"}))
+    assert MODULE.built_skill_ids(library, runs) == ["skill_abc"]
