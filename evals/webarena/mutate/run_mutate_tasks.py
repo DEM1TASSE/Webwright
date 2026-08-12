@@ -48,6 +48,28 @@ def creds(sites):
     return env.get("credentials") or {}
 
 
+def complete_response(runs_root, key):
+    """Stop the run the moment the agent declares a terminal result.
+
+    Webwright keeps rewriting and re-running final_script.py after it has already
+    produced an answer. On task 460 that turned one 15% price cut into seven
+    (45.00 -> 14.42); run_1 had already written status=SUCCESS at the correct
+    38.25. Mirrors has_complete_agent_response() in cross_task_eval.py.
+    """
+    for d in Path(runs_root).glob(f"{key}_*"):
+        f = d / "agent_response.json"
+        if not f.exists():
+            continue
+        try:
+            payload = json.loads(f.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if (str(payload.get("task_type", "")).upper() == "MUTATE"
+                and payload.get("status") in ("SUCCESS", "FAILURE")):
+            return True
+    return False
+
+
 def run(item):
     key = f"task{item['task_id']}_{item['cat']}"
     url = resolve(item["start_urls"][0], item["sites"])
@@ -78,11 +100,18 @@ def run(item):
         f.flush()
         p = subprocess.Popen(cmd, stdout=f, stderr=subprocess.STDOUT,
                              cwd=str(WW), env=env, start_new_session=True)
-        try:
-            p.wait(timeout=TIMEOUT)
-        except subprocess.TimeoutExpired:
-            status = "timeout"
-            os.killpg(os.getpgid(p.pid), 9)
+        deadline = time.time() + TIMEOUT
+        while p.poll() is None:
+            if time.time() > deadline:
+                status = "timeout"
+                os.killpg(os.getpgid(p.pid), 9)
+                break
+            if complete_response(RUNS, key):
+                status = "stopped_after_response"
+                os.killpg(os.getpgid(p.pid), 9)
+                f.write("\nSTOPPED_AFTER_AGENT_RESPONSE\n")
+                break
+            time.sleep(5)
     return {"key": key, "task_id": item["task_id"], "cat": item["cat"],
             "status": status, "rc": p.returncode, "secs": round(time.time() - t0)}
 

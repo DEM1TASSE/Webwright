@@ -38,11 +38,31 @@ subprocess Webwright spawns (Webwright builds `command_env` from `os.environ`, s
 `PYTHONPATH` and `WA_REC_DIR` propagate), and is a no-op unless `WA_REC_DIR` is
 set. It never raises into the run.
 
-## Trajectory vs final-run scoring
+## Stop the run when the agent answers
 
-`final_script.py` gets re-run **2-5 times per task** — this happened on every
-single task we observed, not occasionally. So "did the agent do X" and "does the
-deliverable do X" are different questions, and one recording answers both:
+Webwright keeps rewriting and re-running `final_script.py` after it has already
+produced an answer -- 1 to 8 times across the tasks we ran. For most task shapes
+this is harmless. For a task that reads current state and applies a delta it is
+not, because each run is independently "correct":
+
+task 460, *reduce the price by 15%*, expected `45.00 -> 38.25`:
+
+```
+45.00 -> 38.25 -> 32.51 -> 27.63 -> 23.49 -> 19.97 -> 16.97 -> 14.42
+```
+
+Seven successive 15% cuts. **run_1 had already written `status=SUCCESS` at the
+correct 38.25.** Task 458 ("reduce by $5") did the same thing twice, ending at
+$22.00 for an expected $27.00.
+
+`run_mutate_tasks.py` therefore stops the process as soon as `agent_response.json`
+holds a terminal MUTATE status, mirroring `has_complete_agent_response()` in
+`cross_task_eval.py`. That is the mitigation: not a smarter scoring window, but
+not letting the extra runs happen.
+
+## Which HAR window to score
+
+One recording, two views:
 
 ```
 _rec/<task>/http_*.jsonl              one raw recording
@@ -50,23 +70,44 @@ _rec/<task>/http_*.jsonl              one raw recording
    └─ final.har        last final_runs/run_N window only  → the score
 ```
 
-**Score on `final.har`.** Observed case (task 458, "reduce the price by $5"):
+`final.har` is the default because it judges the deliverable rather than
+something the agent stumbled into while exploring. **But neither window is
+universally right, and this is worth knowing before relying on it:** when the
+agent improves across reruns the last window is correct, and when it corrupts
+across reruns (task 460) the *first* is. With early-stop in place first and last
+coincide, which is the real reason the ambiguity stops mattering.
 
-| final run | read price | wrote | result |
-|---|---|---|---|
-| run_1 | 32.00 | 27.00 | save banner missed, not persisted |
-| run_2 | 32.00 | 27.00 | saved |
-| run_3 | **27.00** | **22.00** | saved |
-
-The site ended at `$22.00` for a task whose answer is `$27.00`, and the agent
-reported `SUCCESS`. The trajectory window contains run_2's correct `POST` and
-scores it **right**; the final-run window sees run_3's `22.00` and scores it
-**wrong**. Only the second answer matches reality.
+We have not yet observed the two windows disagreeing on an actual score. The
+argument above rests on the recorded price sequences, not on two differing
+evaluator outputs.
 
 `trim_har_file` (from `webarena_verified.core.utils.trim_network_logs`) is applied
 to both, which drops static assets using the evaluator's own
-`NetworkEvent.is_evaluation_event` predicate — typically -89% entries — and
-redacts auth headers while preserving cookies.
+`NetworkEvent.is_evaluation_event` predicate and redacts auth headers while
+preserving cookies.
+
+## Repetition damages state, not scores
+
+Attributing every failure we scored:
+
+| task | final runs | why it scored 0 | repetition the cause? |
+|---|---|---|---|
+| 663 create issue | 1 | posted to the web UI; evaluator wants `POST /api/v4/.../issues` 201 | no -- ran once |
+| 744 create project | 5 | same, plus `401` on `/api/v4/projects/196/members` -- session cookie, no API token | no -- capability gap |
+| 406 upvote | 8 | voted 134852/134851, expected 119517 | no -- wrong target |
+| 460 reduce price | 7 | URL lacked the `back/edit` suffix the regex anchors on | no -- the first, correct save missed too |
+| 472 cancel order | 2 | scored **1.0** | -- |
+
+None of the zeros come from repetition. What repetition does instead is corrupt
+the site silently (460, 458 -- both relative-change) and stall one-shot tasks:
+task 470 cancelled order 302 on its first execution, then could not re-verify
+because the Cancel control was gone, and burned 32 steps into a timeout without
+writing any answer.
+
+**A separate, larger problem for GitLab:** its mutate tasks expect REST API calls
+(`POST /api/v4/projects`, `201`), while the agent drives the web UI and only holds
+a session cookie. Task 663 failed this way on a single run. This depresses GitLab
+mutate scores independently of anything in this harness.
 
 ## Do not score the agent's self-report
 
