@@ -121,19 +121,17 @@ def collect_run(runs, key):
 
 def assert_arm_isolation(runs: Path, mode: str) -> None:
     """Fail before execution when the run root exposes artifacts from the opposite arm."""
-    if not runs.exists() or mode not in {"scratch", "primitive"}:
+    arms = {"scratch", "workflow", "primitive"}
+    if not runs.exists() or mode not in arms:
         return
-    opposite = "primitive" if mode == "scratch" else "scratch"
-    patterns = [
-        f"task*_{opposite}_*",
-        f"task*_{opposite}.log",
-        f"task*_{opposite}.json",
-    ]
+    patterns = [pattern for opposite in arms - {mode} for pattern in (
+        f"task*_{opposite}_*", f"task*_{opposite}.log", f"task*_{opposite}.json",
+    )]
     exposed = []
     for pattern in patterns:
         exposed.extend(path for path in runs.glob(pattern) if path.exists())
     # Retrieval records are treatment artifacts even when their filename omits an arm suffix.
-    if mode == "scratch":
+    if mode != "primitive":
         exposed.extend(runs.glob("*.primitive_retrieval.json"))
     if exposed:
         sample = ", ".join(sorted(path.name for path in exposed)[:5])
@@ -320,6 +318,41 @@ def configure_router_model(model_config):
     configure_llm(model)
 
 
+def prepare_workflow_hint(task, library, *, forced_skill_id=None):
+    """Retrieve and fully inject a standalone workflow without primitive material."""
+    root = Path(library).resolve()
+    if forced_skill_id:
+        source = root / forced_skill_id / "skill.py"
+        meta_path = root / forced_skill_id / "meta.json"
+        if not source.is_file() or not meta_path.is_file():
+            return {"decision": "skip", "skill_id": None,
+                    "reason": f"frozen workflow skill missing: {forced_skill_id}", "hint": ""}
+        meta = load_json(meta_path)
+        decision, reason = "use", "exact frozen TRAIN template workflow"
+        skill_id = forced_skill_id
+    else:
+        from webwright.tools.skill_use import recommend
+        rec = recommend(task["intent"], root)
+        if rec.get("verdict") == "skip" or not rec.get("skill_id"):
+            return {"decision": "skip", "skill_id": None,
+                    "reason": rec.get("reason", "no useful workflow"), "hint": ""}
+        skill_id = rec["skill_id"]
+        source = root / skill_id / "skill.py"
+        meta = load_json(root / skill_id / "meta.json")
+        decision, reason = "adapt", rec.get("reason", "related cross-template workflow")
+    code = source.read_text(encoding="utf-8")
+    hint = (
+        "## Frozen workflow material\n"
+        f"Decision: {decision}; workflow: {skill_id}\n"
+        f"Template: {meta.get('template', '')}\n"
+        "This is a standalone workflow prior, not a site primitive. Read the complete source "
+        "below, reuse only what fits the current task, and produce your own standalone final "
+        "script. Do not assume its task-specific final selection is valid here.\n"
+        "```python\n" + code + "\n```\n"
+    )
+    return {"decision": decision, "skill_id": skill_id, "reason": reason, "hint": hint}
+
+
 def run_one(args, split, dataset, config):
     tasks = {x["task_id"]: x for x in dataset}
     task = tasks[args.task_id]
@@ -428,6 +461,18 @@ def run_one(args, split, dataset, config):
             Path(args.runs) / f"{key}.primitive_retrieval.json", retrieval,
             task=task["intent"],
         )
+    elif mode == "workflow":
+        configure_router_model(args.model_config)
+        workflow = prepare_workflow_hint(
+            task, Path(args.workflow_library) / site,
+            forced_skill_id=args.workflow_skill_id,
+        )
+        prompt = workflow["hint"] + "\n" + prompt
+        route_out = {
+            "route_stage": "workflow", "route_decision": workflow["decision"],
+            "reason": workflow["reason"], "remaining_gap": [],
+            "skill_id": workflow["skill_id"],
+        }
     elif mode == "routed":
         configure_router_model(args.model_config)
         route_out = prepare_routed_hint(
@@ -612,7 +657,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=["validate", "plan", "run", "table"])
     parser.add_argument("task_id", nargs="?", type=int)
-    parser.add_argument("mode", nargs="?", choices=["scratch", "primitive", "routed", "oracle"])
+    parser.add_argument("mode", nargs="?", choices=["scratch", "workflow", "primitive", "routed", "oracle"])
     parser.add_argument("--split", default=str(HERE / "cross_task_split.json"))
     parser.add_argument("--dataset", default=os.environ.get("WEBARENA_DATASET", ""))
     parser.add_argument("--config", default=os.environ.get("WEBARENA_CONFIG", ""))
@@ -622,6 +667,9 @@ def main(argv=None):
         default=str(HERE / "generated_oracle_library"),
         help="Frozen workflow + generated primitive library used by routed mode.",
     )
+    parser.add_argument("--workflow-library", default=str(HERE / "workflow_library"))
+    parser.add_argument("--workflow-skill-id",
+                        help="T1 only: inject the exact frozen same-template workflow skill.")
     parser.add_argument(
         "--candidate-library",
         default=str(HERE / "audited_site_library_v2"),

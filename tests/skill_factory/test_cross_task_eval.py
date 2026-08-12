@@ -116,6 +116,31 @@ def test_strict_arm_isolation_allows_same_arm_and_scratch_plan(tmp_path):
     E.assert_arm_isolation(tmp_path, "scratch")
 
 
+def test_strict_arm_isolation_rejects_workflow_artifacts_from_primitive(tmp_path):
+    (tmp_path / "task7_workflow_001").mkdir()
+    try:
+        E.assert_arm_isolation(tmp_path, "primitive")
+    except ValueError as error:
+        assert "opposite-arm artifacts" in str(error)
+    else:
+        raise AssertionError("expected primitive isolation failure")
+
+
+def test_prepare_workflow_hint_forced_exact_skill(tmp_path):
+    skill = tmp_path / "wf_1"
+    skill.mkdir()
+    (skill / "meta.json").write_text(json.dumps({"template": "Find {{item}}"}))
+    (skill / "skill.py").write_text("def solve(item): return item\n")
+    out = E.prepare_workflow_hint(
+        {"intent": "Find shoes", "sites": ["shopping"]},
+        tmp_path,
+        forced_skill_id="wf_1",
+    )
+    assert out["decision"] == "use"
+    assert out["skill_id"] == "wf_1"
+    assert "def solve(item)" in out["hint"]
+
+
 def test_reads_valid_primitive_execution_events(tmp_path):
     (tmp_path / "primitive_execution_trace.jsonl").write_text("\n".join([
         json.dumps({"primitive_id": "gitlab/commits/list", "scratch_step_id": "S1",
