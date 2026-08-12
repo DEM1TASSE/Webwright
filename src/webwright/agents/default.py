@@ -39,6 +39,9 @@ class AgentConfig(BaseModel):
     require_self_reflection_success: bool = False
     summary_every_n_steps: int = 0
     summary_user_prompt: str = DEFAULT_SUMMARY_USER_PROMPT
+    # Stop a model that repeatedly emits neither an action nor done=true. Without this guard,
+    # an acknowledged external blocker can consume the entire step budget with identical no-ops.
+    max_consecutive_no_action_steps: int = 3
     # Strip the ARIA snapshot payload from observation messages older than the last N
     # to bound context growth in browser-driven modes. Any value <= 0 disables pruning
     # (default). Opt in per config (e.g. local_browser.yaml sets this to 1).
@@ -89,6 +92,7 @@ class DefaultAgent:
         self.extra_template_vars: dict[str, Any] = {}
         self.n_calls = 0
         self.n_format_errors = 0
+        self.n_consecutive_no_action_steps = 0
 
     def _debug_dir(self) -> Path | None:
         if self.config.output_path is None:
@@ -422,7 +426,28 @@ class DefaultAgent:
                     },
                 )
             )
-        outputs = [self.env.execute(action) for action in extra.get("actions", [])]
+        actions = extra.get("actions", [])
+        has_action = any(_action_text(action) for action in actions)
+        if not has_action:
+            self.n_consecutive_no_action_steps += 1
+            limit = self.config.max_consecutive_no_action_steps
+            if 0 < limit <= self.n_consecutive_no_action_steps:
+                self._write_debug_step_artifact(
+                    step_index=self.n_calls, assistant_message=message, outputs=[]
+                )
+                return self.add_messages(
+                    self.model.format_message(
+                        role="exit",
+                        content=(
+                            "Agent stalled after repeatedly returning done=false with no executable "
+                            "action."
+                        ),
+                        extra={"exit_status": "Stalled", "submission": ""},
+                    )
+                )
+        else:
+            self.n_consecutive_no_action_steps = 0
+        outputs = [self.env.execute(action) for action in actions]
         self._write_debug_step_artifact(step_index=self.n_calls, assistant_message=message, outputs=outputs)
         observation_messages = self.model.format_observation_messages(message, outputs, self.get_template_vars())
         if self.config.attach_instance_template_after_observation:

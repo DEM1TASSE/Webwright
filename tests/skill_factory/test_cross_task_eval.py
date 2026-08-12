@@ -67,6 +67,21 @@ def test_missing_response_is_not_complete(tmp_path):
     assert E.has_complete_agent_response(tmp_path, "task8_scratch") is False
 
 
+def test_nested_final_run_response_is_detected_and_promoted(tmp_path):
+    run = tmp_path / "task9_primitive_001"
+    nested = run / "final_runs" / "run_002"
+    nested.mkdir(parents=True)
+    payload = {
+        "task_type": "RETRIEVE", "status": "SUCCESS",
+        "retrieved_data": ["answer"], "error_details": None,
+    }
+    (nested / "agent_response.json").write_text(json.dumps(payload))
+    assert E.has_complete_agent_response(tmp_path, "task9_primitive") is True
+    target = E.promote_nested_agent_response(tmp_path, "task9_primitive")
+    assert target == run / "agent_response.json"
+    assert json.loads(target.read_text()) == payload
+
+
 def test_terminate_process_group_escalates_after_grace_period(monkeypatch):
     calls = []
 

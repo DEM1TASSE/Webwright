@@ -171,7 +171,7 @@ def read_primitive_execution_trace(run_dir: Path) -> list[dict]:
     return events
 
 
-def has_complete_agent_response(runs, key):
+def complete_agent_response_path(runs, key):
     """Completion is the artifact, not a non-null answer.
 
     NOT_FOUND_ERROR legitimately uses retrieved_data=null; treating null as unfinished makes those
@@ -179,18 +179,44 @@ def has_complete_agent_response(runs, key):
     """
     matches = sorted(glob.glob(str(Path(runs) / f"{key}_*")))
     if not matches:
-        return False
-    path = Path(matches[-1]) / "agent_response.json"
-    try:
-        payload = load_json(path)
-    except (OSError, ValueError):
-        return False
-    return (
-        isinstance(payload, dict)
-        and payload.get("task_type") == "RETRIEVE"
-        and payload.get("status") in {"SUCCESS", "NOT_FOUND_ERROR"}
-        and "retrieved_data" in payload
-    )
+        return None
+    run_dir = Path(matches[-1])
+    paths = [run_dir / "agent_response.json"]
+    nested = []
+    for candidate in (run_dir / "final_runs").glob("run_*/agent_response.json"):
+        try:
+            run_id = int(candidate.parent.name.removeprefix("run_"))
+        except ValueError:
+            continue
+        nested.append((run_id, candidate))
+    paths.extend(path for _, path in sorted(nested, reverse=True))
+    for path in paths:
+        try:
+            payload = load_json(path)
+        except (OSError, ValueError):
+            continue
+        if (isinstance(payload, dict)
+                and payload.get("task_type") == "RETRIEVE"
+                and payload.get("status") in {"SUCCESS", "NOT_FOUND_ERROR"}
+                and "retrieved_data" in payload):
+            return path
+    return None
+
+
+def has_complete_agent_response(runs, key):
+    return complete_agent_response_path(runs, key) is not None
+
+
+def promote_nested_agent_response(runs, key):
+    """Copy a valid final-run response to the workspace location required by the benchmark."""
+    path = complete_agent_response_path(runs, key)
+    if path is None:
+        return None
+    matches = sorted(glob.glob(str(Path(runs) / f"{key}_*")))
+    target = Path(matches[-1]) / "agent_response.json"
+    if path != target:
+        target.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+    return target
 
 
 def terminate_process_group(proc, grace_seconds=20):
@@ -353,7 +379,11 @@ def run_one(args, split, dataset, config):
         if output_schema else ""
     )
     prompt = (f"Complete this web task.\n\nGoal: {task['intent']}\n"
-              f"Start URL: {url}{login}{schema_note}{ANSWER_SPEC}")
+              f"Start URL: {url}{login}{schema_note}{ANSWER_SPEC}\n"
+              "This WebArena run is scored by an external evaluator. Do not run the optional "
+              "webwright self_reflection tool and do not wait for self_reflect_result.json. "
+              "After final_script.py has run successfully and the required workspace-level "
+              "agent_response.json exists, declare done.")
     development_hint = ""
     if args.development_hint_file:
         if not args.allow_any_task:
@@ -466,6 +496,7 @@ def run_one(args, split, dataset, config):
             timed_out = True
             terminate_process_group(proc)
             f.write("\nTIMEOUT\n")
+    promote_nested_agent_response(Path(args.runs), key)
     run_dir, answer, steps = collect_run(Path(args.runs), key)
     complete_response = has_complete_agent_response(Path(args.runs), key)
     eval_provenance = evaluator_provenance(args.eval_python)
