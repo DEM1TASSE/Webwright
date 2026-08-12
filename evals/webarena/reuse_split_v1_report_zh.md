@@ -17,9 +17,10 @@ template 的 v4 primitive。正式实验只包含 retrieve 任务。
 
 ## TRAIN 与建库
 
-121 个 TRAIN scratch solve 全部结束：66 correct、53 incorrect、2 timeout。只有 66 个
-gold-admitted final script 进入建库；任何失败、timeout 或接触过 library material 的运行均被
-排除。
+原始 121 个 TRAIN scratch solve 全部结束：66 correct、53 incorrect、2 timeout。正式评测前的
+语义检查发现 task 792 是购买操作，不属于 retrieve；其失败运行保留供审计，但从正式 TRAIN
+资格中剔除。因此正式 TRAIN 为 120 个任务，gold-admitted 仍为 66 个；任何失败、timeout、
+mutation 或接触过 library material 的运行均未进入库。
 
 Workflow 仅在同一官方 template 至少有 3 个 gold source 时构建。Primitive 按网站汇总所有
 gold source，依次保存 extraction、batch update、pre-consolidation、consolidation/organize 和
@@ -43,3 +44,5 @@ final candidate snapshots。
 - Workflow gold gate 会降低实际覆盖率；缺少三个 gold source 的 template 在 workflow arm
   明确路由为 skip，而不是借用别的 template 冒充 exact match。
 - 建库和运行中的所有需人工关注项记录在 `review_required.md`。
+- 旧 sampler 只按 evaluator 类型过滤，曾混入 1 个 TRAIN 和 7 个 T2 mutation/不可执行任务；
+  已在正式 browser eval 前剔除并写入 split metadata。正式规模为 T1 70、T2 60。

@@ -40,15 +40,29 @@ import hashlib
 import json
 import glob
 import os
+import re
 from pathlib import Path
 
 MAX_BUILD = 3        # solves per template that feed the workflow library
 MAX_HELDOUT = 2      # instances reserved for evaluation
+MUTATION_PREFIX = re.compile(
+    r"^\s*(add|approve|assign|buy|cancel|change|close|create|delete|dislike|edit|like|"
+    r"notify|post|purchase|refund|remove|reopen|set|submit|update|vote)\b", re.IGNORECASE,
+)
+
+
+def is_retrieve_only(task):
+    evaluations = task.get("eval", [])
+    return (
+        {item.get("evaluator") for item in evaluations} == {"AgentResponseEvaluator"}
+        and all(str((item.get("expected") or {}).get("task_type", "")).lower() == "retrieve"
+                for item in evaluations)
+        and not MUTATION_PREFIX.search(task.get("intent", ""))
+    )
 
 
 def retrieve_only(tasks):
-    return [t for t in tasks
-            if {e.get("evaluator") for e in t.get("eval", [])} == {"AgentResponseEvaluator"}]
+    return [task for task in tasks if is_retrieve_only(task)]
 
 
 def previously_used(prev_dir):
@@ -177,6 +191,8 @@ def validate(split, tasks):
                 errs.append(f"task {tid} missing from dataset")
             elif {e.get("evaluator") for e in t["eval"]} != {"AgentResponseEvaluator"}:
                 errs.append(f"task {tid} is not retrieve-only")
+            elif not is_retrieve_only(t):
+                errs.append(f"task {tid} has mutation semantics or non-retrieve expected type")
     return errs
 
 

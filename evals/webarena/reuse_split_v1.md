@@ -15,23 +15,23 @@
 | gitlab | 7 | 21 | 7 | 7 | 14 |
 | map | 13 | 31 | 8 | 8 | 16 |
 | reddit | 2 | 5 | 1 | 1 | 2 |
-| shopping | 14 | 33 | 9 | 9 | 18 |
+| shopping | 13 | 32 | 9 | 9 | 18 |
 | shopping_admin | 11 | 31 | 10 | 10 | 20 |
-| **total** | **47** | **121** | **35** | **35** | **70** |
+| **total** | **46** | **120** | **35** | **35** | **70** |
 
 ## TEST (never touches a library)
 
 | site | templates | T2 tasks | fresh |
 |---|---:|---:|---:|
-| gitlab | 8 | 13 | 1 |
+| gitlab | 6 | 10 | 0 |
 | map | 10 | 19 | 5 |
-| reddit | 2 | 2 | 2 |
+| reddit | 0 | 0 | 0 |
 | shopping | 10 | 15 | 6 |
-| shopping_admin | 10 | 18 | 5 |
-| **total** | **40** | **67** | **19** |
+| shopping_admin | 8 | 16 | 3 |
+| **total** | **34** | **60** | **14** |
 
 ## Clusters and runs
 
 - T1: **35 templates** / 70 tasks -- scratch vs +workflow
-- T2: **40 templates** / 67 tasks -- scratch vs +workflow vs +primitive
-- runs: 121 build + 70x2 + 67x3 = **462**
+- T2: **34 templates** / 60 tasks -- scratch vs +workflow vs +primitive
+- runs: 120 build + 70x2 + 60x3 = **440**
