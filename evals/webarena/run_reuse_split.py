@@ -121,8 +121,16 @@ def main():
                 "steps": record.get("steps"), "timed_out": record.get("timed_out"),
                 "stderr": stderr.strip()[-500:]}
 
+    print_lock = threading.Lock()
+
     def run_lane(lane):
-        return [run(job) for job in lane]
+        rows = []
+        for job in lane:
+            row = run(job)
+            with print_lock:
+                print(json.dumps(row, ensure_ascii=False), flush=True)
+            rows.append(row)
+        return rows
 
     failures = 0
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as pool:
@@ -130,7 +138,6 @@ def main():
         for future in concurrent.futures.as_completed(futures):
             for row in future.result():
                 failures += row["status"] == "process_error"
-                print(json.dumps(row, ensure_ascii=False), flush=True)
     return int(failures > 0)
 
 
