@@ -25,28 +25,11 @@ def eligible_templates(split, by_template):
             yield site, template_id, list(by_template.get(site, {}).get(template_id, []))
 
 
-def built_skill_ids(library, source_dir):
-    """Resolve the opaque distilled skill id back to this frozen template's source runs."""
-    ledger_path = Path(library) / ".learned.json"
-    if not ledger_path.exists():
-        return []
-    source_runs = {os.path.realpath(path) for path in Path(source_dir).iterdir() if path.is_dir()}
-    templates = {
-        row.get("template")
-        for run, row in (load(ledger_path).get("runs") or {}).items()
-        if os.path.realpath(run) in source_runs and row.get("template")
-    }
-    skill_ids = []
-    for meta_path in Path(library).glob("*/meta.json"):
-        if load(meta_path).get("template") in templates:
-            skill_ids.append(meta_path.parent.name)
-    return sorted(skill_ids)
-
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--split", required=True)
     ap.add_argument("--by-template", required=True)
+    ap.add_argument("--dataset", required=True)
     ap.add_argument("--frozen-worktree", required=True)
     ap.add_argument("--expected-commit", required=True)
     ap.add_argument("--library", required=True)
@@ -90,10 +73,14 @@ def main():
             golds[str(task_id)] = record["answer"]
         gold_path = source_dir.parent / "golds.json"
         gold_path.write_text(json.dumps(golds, ensure_ascii=False, indent=2) + "\n")
+        records_path = source_dir.parent / "records.json"
+        records_path.write_text(json.dumps(records, ensure_ascii=False, indent=2) + "\n")
+        build_output = source_dir.parent / "build_result.json"
         cmd = [
-            sys.executable, "-m", "webwright.skill_factory.learn", str(source_dir),
-            "--library", str(site_library), "--golds", str(gold_path), "--chunk", "25",
-            "--verify", args.verify, "--on-fail", "reference",
+            sys.executable, str(Path(__file__).with_name("build_exact_workflow_template.py")),
+            "--records", str(records_path), "--dataset", args.dataset,
+            "--library", str(site_library), "--verify", args.verify,
+            "--output", str(build_output),
         ]
         event["command"] = cmd
         if args.dry_run:
@@ -112,7 +99,7 @@ def main():
                          returncode=proc.returncode, stdout=proc.stdout[-4000:],
                          stderr=proc.stderr[-4000:])
             if proc.returncode == 0:
-                event["skill_ids"] = built_skill_ids(site_library, source_dir)
+                event["skill_ids"] = load(build_output).get("skill_ids") or []
         events.append(event)
         work_root.mkdir(parents=True, exist_ok=True)
         (work_root / "build_events.json").write_text(
