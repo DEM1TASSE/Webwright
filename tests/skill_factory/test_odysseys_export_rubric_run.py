@@ -59,3 +59,27 @@ def test_export_accepts_reflected_failure_for_per_rubric_scoring(tmp_path):
             "t", tmp_path / "runs", tmp_path / "strict",
             require_self_reflection_pass=True,
         )
+
+
+def test_export_filters_paired_workspaces_by_mode(tmp_path):
+    for mode, contents in (("scratch", "scratch evidence"),
+                           ("primitive", "primitive evidence")):
+        workspace = tmp_path / "runs" / f"t_{mode}_stamp"
+        run = workspace / "final_runs" / "run_001"
+        run.mkdir(parents=True)
+        (workspace / "task.json").write_text(json.dumps({"task_id": f"t_{mode}"}))
+        (run / "final_script_log.txt").write_text(contents)
+        (run / "self_reflect_result.json").write_text(
+            json.dumps({"predicted_label": 1})
+        )
+
+    scratch = MODULE.export(
+        "t", tmp_path / "runs", tmp_path / "scratch-out", mode="scratch",
+    )
+    primitive = MODULE.export(
+        "t", tmp_path / "runs", tmp_path / "primitive-out", mode="primitive",
+    )
+    assert "_scratch_" in scratch["workspace"]
+    assert "_primitive_" in primitive["workspace"]
+    assert (tmp_path / "scratch-out/t/final_script_log.txt").read_text() == "scratch evidence"
+    assert (tmp_path / "primitive-out/t/final_script_log.txt").read_text() == "primitive evidence"

@@ -20,11 +20,21 @@ def task_identity(workspace: Path) -> str:
     return value
 
 
-def latest_workspace(root: Path, task_id: str) -> Path:
+def task_mode(workspace: Path) -> str | None:
+    value = str(json.loads((workspace / "task.json").read_text())["task_id"])
+    for mode in ("scratch", "primitive"):
+        if value.endswith(f"_{mode}"):
+            return mode
+    return None
+
+
+def latest_workspace(root: Path, task_id: str, *, mode: str | None = None) -> Path:
     candidates = [child for child in root.iterdir() if child.is_dir()
-                  and (child / "task.json").is_file() and task_identity(child) == task_id]
+                  and (child / "task.json").is_file() and task_identity(child) == task_id
+                  and (mode is None or task_mode(child) == mode)]
     if not candidates:
-        raise ValueError(f"no workspace for {task_id} under {root}")
+        suffix = f" in {mode} mode" if mode else ""
+        raise ValueError(f"no workspace for {task_id}{suffix} under {root}")
     return max(candidates, key=lambda path: (path.stat().st_mtime_ns, path.name))
 
 
@@ -59,8 +69,8 @@ def pick_final_run(workspace: Path, *, allow_incomplete: bool = False,
 
 
 def export(task_id: str, runs: Path, output: Path, *, allow_incomplete: bool = False,
-           require_self_reflection_pass: bool = False) -> dict:
-    workspace = latest_workspace(runs, task_id)
+           require_self_reflection_pass: bool = False, mode: str | None = None) -> dict:
+    workspace = latest_workspace(runs, task_id, mode=mode)
     final_run = pick_final_run(
         workspace, allow_incomplete=allow_incomplete,
         require_self_reflection_pass=require_self_reflection_pass,
@@ -96,6 +106,10 @@ def main(argv=None):
     parser.add_argument("--runs", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument(
+        "--mode", choices=("scratch", "primitive"),
+        help="Select one arm when scratch and primitive workspaces share --runs.",
+    )
+    parser.add_argument(
         "--allow-incomplete", action="store_true",
         help="Debug only: export the latest run even when self-reflection did not pass",
     )
@@ -106,7 +120,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     print(json.dumps(export(
         args.task_id, args.runs, args.output, allow_incomplete=args.allow_incomplete,
-        require_self_reflection_pass=args.require_self_reflection_pass,
+        require_self_reflection_pass=args.require_self_reflection_pass, mode=args.mode,
     ), indent=2))
     return 0
 
