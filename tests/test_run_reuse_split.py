@@ -20,6 +20,13 @@ def test_build_jobs_reads_only_train_build_tasks():
     assert MODULE.build_jobs(split) == [("gitlab", 1), ("gitlab", 2), ("map", 3)]
 
 
+def test_only_benchmark_outcomes_are_resumable():
+    assert MODULE.resumable_result({"run_status": "scored_correct"})
+    assert MODULE.resumable_result({"run_status": "scored_incorrect"})
+    assert MODULE.resumable_result({"run_status": "agent_timeout_or_incomplete"})
+    assert not MODULE.resumable_result({"run_status": "agent_process_infrastructure_error"})
+
+
 def test_site_lanes_are_sequential_and_site_isolated():
     lanes = MODULE.site_lanes([
         ("gitlab", 1), ("map", 2), ("gitlab", 3), ("map", 4),

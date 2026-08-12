@@ -20,6 +20,13 @@ def load(path):
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
+def resumable_result(record):
+    """Infrastructure failures are attempts, not completed benchmark observations."""
+    return record.get("run_status") in {
+        "scored_correct", "scored_incorrect", "agent_timeout_or_incomplete",
+    }
+
+
 def build_jobs(split):
     return [
         (site, task_id)
@@ -100,7 +107,7 @@ def main():
         if result.exists():
             try:
                 record = load(result)
-                if "process_returncode" in record:
+                if resumable_result(record):
                     return {"site": site, "task_id": task_id, "status": "resumed",
                             "correct": record.get("correct"), "steps": record.get("steps")}
             except (OSError, ValueError):
