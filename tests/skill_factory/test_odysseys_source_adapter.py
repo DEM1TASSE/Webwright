@@ -113,6 +113,25 @@ def test_completed_run_accepts_workspace_level_final_script(tmp_path):
     assert MODULE.source_script(run) == workspace / "final_script.py"
 
 
+def test_completed_run_rejects_ambiguous_workspace_script_after_newer_run(tmp_path):
+    workspace = tmp_path / "workspace"
+    reflected = workspace / "final_runs" / "run_1"
+    newer = workspace / "final_runs" / "run_2"
+    reflected.mkdir(parents=True)
+    newer.mkdir(parents=True)
+    (workspace / "final_script.py").write_text("print('newer script')\n")
+    (reflected / "final_script_log.txt").write_text("old\n")
+    (reflected / "self_reflect_result.json").write_text(
+        json.dumps({"predicted_label": 0}))
+    (newer / "final_script_log.txt").write_text("newer\n")
+    try:
+        MODULE.completed_run(workspace)
+    except ValueError as exc:
+        assert "cannot be attributed safely" in str(exc)
+    else:
+        raise AssertionError("ambiguous workspace script must be rejected")
+
+
 def test_failed_rubric_cannot_be_admitted(tmp_path):
     run = tmp_path / "run"
     (run / "screenshots").mkdir(parents=True)

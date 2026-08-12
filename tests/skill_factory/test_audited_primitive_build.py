@@ -4,7 +4,8 @@ import pytest
 
 from webwright.skill_factory.audited_primitive_build import (
     apply_build_operations, build_audited_site_library, partition_workflows,
-    render_site_package, validate_build_proposal, validate_consolidation, validate_primitive,
+    normalize_extraction_candidate_ids, render_site_package, validate_build_proposal,
+    validate_consolidation, validate_extraction, validate_primitive,
 )
 
 
@@ -54,6 +55,15 @@ def test_partition_is_deterministic_and_bounded():
     assert partition_workflows(WORKFLOWS, batch_size=1, seed=7) == partition_workflows(
         list(reversed(WORKFLOWS)), batch_size=1, seed=7
     )
+
+
+def test_extraction_candidate_id_is_canonicalized_from_full_workflow_id():
+    workflow = {"id": "task::S2", "template_id": "maps.route"}
+    raw = extraction(workflow)
+    raw["candidates"][0]["candidate_id"] = "task::list_commits"
+    normalized = normalize_extraction_candidate_ids(raw, workflow=workflow)
+    assert normalized["candidates"][0]["candidate_id"] == "task::S2::list_commits"
+    assert validate_extraction(normalized, workflow=workflow) == []
 
 
 def test_consolidation_requires_exact_coverage():

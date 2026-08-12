@@ -290,6 +290,25 @@ def validate_extraction(raw: dict, *, workflow: dict) -> list[str]:
     return errors
 
 
+def normalize_extraction_candidate_ids(raw: dict, *, workflow: dict) -> dict:
+    """Repair only deterministic candidate IDs; never alter capability content.
+
+    Models occasionally treat the last ``::segment`` portion of a workflow ID as a suffix to
+    replace.  Candidate identity is mechanically defined by the full workflow ID and method, so
+    the manager can canonicalize it without making a semantic judgment.
+    """
+    value = deepcopy(raw)
+    if str(value.get("decision") or "").upper() != "CANDIDATES":
+        return value
+    for candidate in value.get("candidates") or []:
+        if not isinstance(candidate, dict):
+            continue
+        method = candidate.get("proposed_method")
+        if isinstance(method, str) and _SAFE.fullmatch(method):
+            candidate["candidate_id"] = f"{workflow['id']}::{method}"
+    return value
+
+
 def _parse_methods(code: str, public_name: str) -> tuple[list[ast.stmt], list[str]]:
     wrapper = "class _Candidate:\n" + "\n".join(
         "    " + line if line.strip() else line for line in code.strip().splitlines()
@@ -724,6 +743,7 @@ def build_audited_site_library(
                                       "validation_feedback": errors,
                                       "retry_instruction": "Regenerate without losing demonstrated site capabilities."})
             raw = llm_fn(_EXTRACT_SYS, json.dumps(attempt_input, ensure_ascii=False)) or {}
+            raw = normalize_extraction_candidate_ids(raw, workflow=workflow)
             errors = validate_extraction(raw, workflow=workflow)
             attempts.append({"attempt": attempt, "proposal": raw, "errors": errors})
             if not errors:

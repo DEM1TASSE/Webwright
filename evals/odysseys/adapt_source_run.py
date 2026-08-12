@@ -44,27 +44,45 @@ def source_script(run: str | Path) -> Path:
         return local
     workspace_copy = run.parent.parent / "final_script.py"
     if workspace_copy.is_file():
+        executed = sorted(
+            (candidate for candidate in run.parent.glob("run_*")
+             if (candidate / "final_script_log.txt").is_file()),
+            key=lambda path: (path.stat().st_mtime_ns, path.name),
+        )
+        if executed and executed[-1] != run:
+            raise ValueError(
+                f"workspace final_script.py is ambiguous for {run}; "
+                f"newer executed run exists: {executed[-1]}"
+            )
         return workspace_copy
     raise ValueError(f"no final_script.py for {run}")
 
 
 def completed_run(workspace: str | Path) -> Path:
     runs = sorted((Path(workspace) / "final_runs").glob("run_*"))
+    reflected = []
     successful = []
     for run in runs:
         try:
             label = load_json(run / "self_reflect_result.json").get("predicted_label")
         except (OSError, ValueError):
             label = None
-        try:
-            source_script(run)
-            has_script = True
-        except ValueError:
-            has_script = False
-        if label in (1, True) and has_script:
+        if label in (0, 1, False, True):
+            reflected.append(run)
+        if label in (1, True):
             successful.append(run)
-    if successful:
-        return successful[-1]
+    for group in (successful, reflected):
+        for run in reversed(group):
+            try:
+                source_script(run)
+                return run
+            except ValueError:
+                pass
+        if group:
+            raise ValueError(
+                f"self-reflected final run exists in {workspace}, but its executed "
+                "final_script.py cannot be attributed safely"
+            )
     valid = []
     for run in runs:
         try:
@@ -305,12 +323,25 @@ def main(argv=None) -> int:
     parser.add_argument("--workspace", required=True)
     parser.add_argument("--judge-results", required=True)
     parser.add_argument("--output", required=True)
+    parser.add_argument(
+        "--final-run",
+        help="Exact judged final_runs/run_* directory; avoids selecting a later retry",
+    )
     parser.add_argument("--approvals", help="Reviewed site mapping JSON keyed by canonical site")
     args = parser.parse_args(argv)
     tasks = {str(row["task_id"]): row for row in load_json(args.tasks)}
     if args.task_id not in tasks:
         raise SystemExit(f"unknown task_id: {args.task_id}")
-    run = completed_run(args.workspace)
+    if args.final_run:
+        run = Path(args.final_run).resolve()
+        workspace = Path(args.workspace).resolve()
+        if run.parent != workspace / "final_runs":
+            raise SystemExit(f"--final-run is not inside {workspace}/final_runs: {run}")
+        if not (run / "final_script_log.txt").is_file():
+            raise SystemExit(f"--final-run has no executed log: {run}")
+        source_script(run)
+    else:
+        run = completed_run(args.workspace)
     approvals = load_json(args.approvals) if args.approvals else None
     result = adapt(tasks[args.task_id], run, args.judge_results, args.output,
                    approvals=approvals)
