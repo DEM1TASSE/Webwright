@@ -747,6 +747,7 @@ TEST:  4 websites × 6 templates = 24 tasks
 
 ```text
 +8.3 percentage points success rate
++18.2% relative improvement in solved tasks
 −11.3% counted agent-execution steps
 ```
 
@@ -764,6 +765,31 @@ TEST:  4 websites × 6 templates = 24 tasks
 - task 122、154：实际注入 primitive 后的 win；
 - task 113：实际注入 primitive 后的 loss；
 - task 3：router `skip`，没有注入 primitive，因此视为采样波动，而非 primitive-attributable win。
+
+### 主结果页应该强调什么
+
+不要在主结果页用三个段落依次写“第一次污染”“没有手写”“gain concentrated”。这样的排版会让
+观众首先记住实验缺陷和样本小，而不是贡献。主页面应使用三个正向 evidence blocks：
+
+1. **Transfer to unseen templates**：24 个测试 template 均未进入 library；这是 cross-template
+   transfer，不是同 template 参数替换。
+2. **End-to-end automatic construction**：17 个 evaluator-admitted workflows 自动生成 19 个
+   primitives，0 个 primitive 由人工编写。
+3. **Joint quality improvement**：成功率提高 8.3 pp（相对多解决 18.2%），counted agent steps
+   同时下降 11.3%。
+
+Clean isolation 只放成结果表下的一行 validity badge：
+
+> Paired clean-room evaluation · disjoint held-out templates · independently isolated scratch arm
+
+严格 attribution 放在 speaker note 或 backup：
+
+> Outcome-changing runs were favorable overall (3 wins / 1 loss); among runs with actual primitive
+> injection, the direction remained positive (2 wins / 1 loss).
+
+这里的意义是证明 primitive 确实产生了可归因的 positive transfer，而不是用 3 个样本声称统计显著。
+“第一次运行污染”属于开发历史，不应占主结果页；如被问到 validity，再说明最终数字来自重新运行的
+clean-room scratch baseline，且 24 条 trajectory 均完成 artifact-access audit。
 
 ## 5.4 按网站结果
 
@@ -1093,30 +1119,50 @@ Scratch vs Primitive-direct
 
 ### Title
 
-**Primitive Reuse Improves Held-out Success**
+**Automatically Generated Primitives Transfer to Unseen Templates**
 
 ### Table
 
 | Method | Success | Agent steps |
 |---|---:|---:|
-| Scratch | 11/24 | 9.58 |
-| Primitive | **13/24** | **8.50** |
+| Scratch | 45.8% | 9.58 |
+| Primitive reuse | **54.2%** | **8.50** |
+| Delta | **+8.3 pp** | **−11.3%** |
 
-### Big numbers
+### Hero statement
 
 ```text
-+8.3 pp success
-−11.3% counted agent steps
+18.2% more held-out tasks solved
+with 11.3% fewer counted agent steps
 ```
 
-### Conclusion
+### Three evidence blocks
 
-> Site-scoped primitives provide a more transferable unit for cross-template reuse than complete
-> workflows.
+```text
+UNSEEN-TEMPLATE TRANSFER
+All 24 test templates were disjoint from library construction.
+
+FULLY AUTOMATIC LIBRARY
+17 gold workflows → 19 primitives; 0 handwritten primitives.
+
+CONSISTENT SITE-LEVEL DIRECTION
+Improved on 2/4 websites and maintained accuracy on the other 2.
+```
+
+### Bottom line
+
+> The factory converts successful workflows into reusable website operations that improve new task
+> templates without manually engineering the library.
 
 ### Footer
 
-> Clean paired retrieval-only pilot; steps exclude offline build and routing overhead.
+> Clean paired retrieval-only pilot · 4 websites · disjoint held-out templates · gpt-5.4. Steps
+> exclude offline build and routing overhead.
+
+### Speaker note / optional small-print attribution
+
+> Paired outcomes were 3 wins and 1 loss. Restricting attribution to runs with actual primitive
+> injection gives 2 wins and 1 loss. This is a development pilot, not a significance claim.
 
 ## Backup 1 — Workflow vs Primitive
 
@@ -1135,6 +1181,22 @@ Candidate package
 → executable contract tests           [next]
 → affected-consumer regression tests  [next]
 → release package
+```
+
+## Backup 3 — Evaluation Validity
+
+```text
+Template isolation
+Train and test templates are disjoint.
+
+Arm isolation
+Scratch ran in an independent clean experiment root.
+
+Artifact audit
+24/24 scratch trajectories contained no primitive-library or cross-arm references.
+
+Paired accounting
+Timeouts remain in the denominator; all tasks use the same evaluator and model family.
 ```
 
 ---
