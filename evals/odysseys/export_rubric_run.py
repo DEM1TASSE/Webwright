@@ -39,7 +39,15 @@ def latest_workspace(root: Path, task_id: str, *, mode: str | None = None) -> Pa
 
 
 def pick_final_run(workspace: Path, *, allow_incomplete: bool = False,
-                   require_self_reflection_pass: bool = False) -> Path:
+                   require_self_reflection_pass: bool = False,
+                   final_run: str | None = None) -> Path:
+    if final_run is not None:
+        if Path(final_run).name != final_run or not final_run.startswith("run_"):
+            raise ValueError(f"invalid final run name: {final_run!r}")
+        selected = workspace / "final_runs" / final_run
+        if not (selected / "final_script_log.txt").is_file():
+            raise ValueError(f"no executed final run {final_run} under {workspace}")
+        return selected
     candidates = [path for path in (workspace / "final_runs").glob("run_*")
                   if (path / "final_script_log.txt").is_file()]
     reflected = []
@@ -69,11 +77,13 @@ def pick_final_run(workspace: Path, *, allow_incomplete: bool = False,
 
 
 def export(task_id: str, runs: Path, output: Path, *, allow_incomplete: bool = False,
-           require_self_reflection_pass: bool = False, mode: str | None = None) -> dict:
+           require_self_reflection_pass: bool = False, mode: str | None = None,
+           final_run: str | None = None) -> dict:
     workspace = latest_workspace(runs, task_id, mode=mode)
     final_run = pick_final_run(
         workspace, allow_incomplete=allow_incomplete,
         require_self_reflection_pass=require_self_reflection_pass,
+        final_run=final_run,
     )
     destination = output / task_id
     destination.mkdir(parents=True, exist_ok=True)
@@ -110,6 +120,10 @@ def main(argv=None):
         help="Select one arm when scratch and primitive workspaces share --runs.",
     )
     parser.add_argument(
+        "--final-run",
+        help="Pin an executed run directory name such as run_004 instead of auto-selecting.",
+    )
+    parser.add_argument(
         "--allow-incomplete", action="store_true",
         help="Debug only: export the latest run even when self-reflection did not pass",
     )
@@ -121,6 +135,7 @@ def main(argv=None):
     print(json.dumps(export(
         args.task_id, args.runs, args.output, allow_incomplete=args.allow_incomplete,
         require_self_reflection_pass=args.require_self_reflection_pass, mode=args.mode,
+        final_run=args.final_run,
     ), indent=2))
     return 0
 

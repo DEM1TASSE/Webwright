@@ -83,3 +83,26 @@ def test_export_filters_paired_workspaces_by_mode(tmp_path):
     assert "_primitive_" in primitive["workspace"]
     assert (tmp_path / "scratch-out/t/final_script_log.txt").read_text() == "scratch evidence"
     assert (tmp_path / "primitive-out/t/final_script_log.txt").read_text() == "primitive evidence"
+
+
+def test_export_can_pin_an_exact_executed_final_run(tmp_path):
+    workspace = tmp_path / "runs" / "t_primitive_stamp"
+    (workspace / "task.json").parent.mkdir(parents=True)
+    (workspace / "task.json").write_text(json.dumps({"task_id": "t_primitive"}))
+    for name, contents in (("run_003", "old"), ("run_004", "fixed")):
+        run = workspace / "final_runs" / name
+        run.mkdir(parents=True)
+        (run / "final_script_log.txt").write_text(contents)
+
+    result = MODULE.export(
+        "t", tmp_path / "runs", tmp_path / "out", mode="primitive",
+        final_run="run_004",
+    )
+    assert result["final_run"].endswith("run_004")
+    assert (tmp_path / "out/t/final_script_log.txt").read_text() == "fixed"
+
+    with pytest.raises(ValueError, match="invalid final run name"):
+        MODULE.export(
+            "t", tmp_path / "runs", tmp_path / "bad", mode="primitive",
+            final_run="../run_004",
+        )
