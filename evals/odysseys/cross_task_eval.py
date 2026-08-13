@@ -40,7 +40,8 @@ def build_prompt(task: dict, mode: str, *, segments_path=None, library=None,
     configure_router(model_config)
     segments = load_segments(segments_path, str(task["task_id"]))
     routed = route_site_segments(segments, library, records_dir)
-    return render_multisite_hint(routed) + "\n" + text, routed
+    hint = render_multisite_hint(routed)
+    return (hint + "\n" + text if hint else text), routed
 
 
 def main(argv=None) -> int:

@@ -141,25 +141,34 @@ def route_site_segments(
 
 
 def render_multisite_hint(results: list[SegmentRetrieval]) -> str:
-    """Render isolated per-site instructions without presenting them as one mega-skill."""
+    """Render only approved local patches without changing the task on a skip.
+
+    The full Odysseys instruction remains the completion target.  A segment is routing
+    metadata, not a smaller replacement task, so skipped segments must be prompt-neutral.
+    """
+    adapted = [result for result in results
+               if result.decision == "adapt" and result.hint.strip()]
+    if not adapted:
+        return ""
     sections = [
-        "## Odysseys site-segment execution",
-        "Treat each segment independently. When beginning a segment, use only the primitive "
-        "material under that segment. Do not transfer selectors, facts, or assumptions between "
-        "sites. A skipped segment must be solved from scratch.",
+        "## Optional local implementation patches for the full Odysseys task",
+        "The original task after this block is the sole completion target. Complete every "
+        "requirement in it, including all sites, aggregation, end-state tabs, and final output. "
+        "Each patch below applies only while executing its named site sub-operation; it is not "
+        "a replacement task and is never a reason to stop after that sub-operation. Preserve "
+        "all unrelated scratch work and do not transfer selectors, facts, or assumptions "
+        "between sites. Segments whose gate skipped retrieval are intentionally omitted so "
+        "their execution remains identical to scratch.",
     ]
-    for result in results:
+    for result in adapted:
         segment = result.segment
         sections.extend([
             "",
-            f"### Segment {segment.segment_id}: {segment.site or 'answer-only'}",
-            f"Goal: {segment.goal}",
-            f"Rubrics: {', '.join(segment.rubric_ids) or 'none'}",
-            f"Required fields: {', '.join(segment.required_fields) or 'none'}",
-            f"Gate: {result.decision} ({result.reason})",
+            f"### Local patch {segment.segment_id}: {segment.site}",
+            f"Sub-operation only: {segment.goal}",
+            f"Approved gate: adapt ({result.reason})",
         ])
-        if result.hint:
-            sections.append(result.hint.rstrip())
+        sections.append(result.hint.rstrip())
     return "\n".join(sections).rstrip() + "\n"
 
 

@@ -86,3 +86,28 @@ def test_missing_site_library_skips_without_cross_site_fallback(tmp_path):
     assert result.decision == "skip"
     assert result.primitive_sources == []
     assert "missing_com" in result.reason
+
+
+def test_render_hint_is_prompt_neutral_when_every_gate_skips():
+    result = MODULE.SegmentRetrieval(
+        segment=MODULE.SiteSubgoal("S1", "a_com", "local goal", rubric_ids=("R1",)),
+        decision="skip", reason="not useful", hint="HUGE FROZEN PLAN",
+    )
+    assert MODULE.render_multisite_hint([result]) == ""
+
+
+def test_render_hint_keeps_only_adapted_local_patch_and_full_task_warning():
+    skipped = MODULE.SegmentRetrieval(
+        segment=MODULE.SiteSubgoal("S1", "a_com", "skip goal", rubric_ids=("R1",)),
+        decision="skip", reason="not useful", hint="SKIPPED PLAN",
+    )
+    adapted = MODULE.SegmentRetrieval(
+        segment=MODULE.SiteSubgoal("S2", "b_com", "adapt goal", rubric_ids=("R2",)),
+        decision="adapt", reason="replaces S2", hint="APPROVED PATCH",
+    )
+    rendered = MODULE.render_multisite_hint([skipped, adapted])
+    assert "original task after this block is the sole completion target" in rendered
+    assert "not a replacement task" in rendered
+    assert "APPROVED PATCH" in rendered
+    assert "SKIPPED PLAN" not in rendered
+    assert "Rubrics:" not in rendered
