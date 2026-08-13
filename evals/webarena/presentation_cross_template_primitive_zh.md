@@ -801,7 +801,167 @@ clean-room scratch baseline，且 24 条 trajectory 均完成 artifact-access au
 | Map | 1/6 | 2/6 |
 | **Total** | **11/24** | **13/24** |
 
-## 5.5 Step metric 如何描述
+## 5.5 Primitive 具体如何省步骤
+
+Primitive 不直接替 agent 完成整个任务。它省掉的是重复的 **site discovery and acquisition**：
+
+```text
+Scratch
+discover page/API
+→ inspect DOM/response
+→ infer selector and fields
+→ write parser
+→ debug acquisition
+→ task reasoning
+
+Primitive reuse
+retrieve known operation
+→ receive complete code + typed output contract
+→ task reasoning
+```
+
+它传递的具体知识包括：
+
+- 已验证过的页面/API 入口；
+- selector、URL 与请求参数；
+- pagination 或 detail-page traversal；
+- site-specific response parsing；
+- typed records，例如 `review_id/title/rating` 或 `duration_seconds`。
+
+Agent 仍负责当前任务独有的语义：
+
+- 选择哪个 candidate；
+- 按什么阈值过滤；
+- 如何 aggregation；
+- 如何输出最终 schema。
+
+因此省步骤的来源不是“少思考一个任务”，而是：
+
+> **Skip rediscovering website mechanics; retain task-specific reasoning.**
+
+### 在双方都正确的任务上观察到的局部节省
+
+| Task | Reused operations | Scratch | Primitive | Saved |
+|---|---|---:|---:|---:|
+| GitLab 205：统计特定日期作者 commits | project metrics + typed commit listing | 8 | 6 | 2 |
+| Shopping 225：查找低星商品 reviews | product search + structured review extraction | 8 | 6 | 2 |
+
+这两个 case 中 accuracy 不变，说明 primitive 可以直接缩短 acquisition path，而不只是因为某个
+arm 更早失败才降低步骤。
+
+需要诚实区分：在全部 10 个 both-correct pairs 上，primitive 平均 8.0 步、scratch 7.6 步，
+并没有总体 correct-only efficiency gain。上述案例用于解释“什么情况下会省步骤”，总体 11.3%
+仍是 all-task counted-step metric。
+
+## 5.6 Primitive 具体如何 wrong → correct
+
+### Case A — Shopping Admin review retrieval
+
+**Task 122**：返回 Olivia zip jacket 中 rating ≥ 4 的 review title 和 rating。
+
+```text
+Scratch (11 steps, incorrect)
+open-ended admin exploration
+→ failed to recover structured review ratings
+→ returned null
+
+Primitive (7 steps, correct)
+reviews grid filter
+→ typed {review_id, title}
+→ open each stable review-detail URL
+→ typed {product_name, rating}
+→ task-owned rating >= 4 filter
+→ [{"title": "Quite good", "rating": 5}]
+```
+
+注入的两个 primitive：
+
+```text
+list_product_reviews_from_admin_grid_page(product_name)
+get_product_review_detail_from_admin(review_id)
+```
+
+它们提供的关键站点知识：
+
+- admin reviews grid 的稳定入口；
+- `#reviewGrid_filter_name` filter；
+- grid row 到 `review_id/title` 的解析；
+- `/admin/review/product/edit/id/<id>/` detail URL；
+- checked rating control 到整数星级的解析。
+
+Agent 没有照搬 source task 的结果，而是保留 target-specific logic：确认 product association、检查
+pagination completeness、执行 `rating >= 4`、构造目标 JSON schema。
+
+**机制总结：** primitive 将开放式页面探索转化为两段 typed acquisition chain；agent 从“先发现
+review 数据在哪里以及怎么解析”推进到“直接对结构化 review records 做当前任务过滤”。结果同时是：
+
+```text
+wrong → correct
+11 → 7 steps  (−36%)
+```
+
+### Case B — Map route duration
+
+**Task 154**：查询 CMU Gates Building 到 Schenley Park 的最短驾车时间。
+
+```text
+Scratch (16 steps, incorrect)
+route-time acquisition/parsing
+→ represented the observed 4-minute value as 4 seconds
+→ returned 00:00:04
+
+Primitive (10 steps, evaluator-correct)
+typed place search candidates with lat/lon
+→ agent disambiguates Gates Building and a routable park point
+→ typed OSRM route with duration_seconds
+→ task-owned min + HH:MM:SS formatting
+```
+
+注入的两个 primitive：
+
+```text
+search_places(query) → typed candidates with coordinates
+get_osrm_route(coordinates, profile="car") → duration_seconds
+```
+
+它们提供的关键站点知识：
+
+- 网站使用的 Nominatim endpoint；
+- place response 到稳定 identity/lat/lon 字段的解析；
+- OSRM car endpoint 与坐标编码；
+- route JSON 到 `duration_seconds/distance_meters` 的解析。
+
+Agent 仍负责 Gates Building 与 Schenley Park candidate 的语义消歧、选择 minimum route，以及
+HH:MM:SS formatting。关键变化是 primitive 把时间单位固定为 typed seconds，避免把分钟值编码成
+秒数。Compact scratch artifact 能证明错误输出是 `00:00:04`；原始 scratch temporary trajectory
+已经不在，因此 slide 应描述可观察到的 unit error，不要声称具体经过了某个 UI 或 API 路径。
+
+```text
+wrong → correct
+16 → 10 steps  (−37.5%)
+```
+
+### 两个可归因 recovery case 的合并视角
+
+只看实际注入 primitive 后发生 wrong→correct 的 task 122 和 154：
+
+| Metric | Scratch | Primitive |
+|---|---:|---:|
+| Correct | 0/2 | 2/2 |
+| Mean agent steps | 13.5 | 8.5 |
+
+即在这两个 mechanism case 中：
+
+```text
+2 failures recovered
+5 fewer steps per task on average
+−37.0% counted agent steps
+```
+
+这不是总体统计结论，而是用于展示 primitive **如何**同时改变 success 和执行路径的 attribution
+case study。
+
+## 5.7 Step metric 如何描述
 
 可以报告：
 
@@ -822,7 +982,7 @@ router LLM call 和 frozen-plan preparation。
 因此不能声称 primitive 已证明端到端效率更高。主 presentation 可以只展示总体 counted agent steps；
 如果被追问，则说明该指标反映 downstream execution length，而不是 total token/wall-clock cost。
 
-## 5.6 最安全的结果表述
+## 5.8 最安全的结果表述
 
 推荐：
 
@@ -1163,6 +1323,70 @@ Improved on 2/4 websites and maintained accuracy on the other 2.
 
 > Paired outcomes were 3 wins and 1 loss. Restricting attribution to runs with actual primitive
 > injection gives 2 wins and 1 loss. This is a development pilot, not a significance claim.
+
+## Slide 7 — How Primitives Change the Outcome
+
+### Title
+
+**From Re-discovery to Typed Acquisition**
+
+### Left case — Shopping Admin
+
+```text
+TASK
+Reviews rated >= 4 for Olivia zip jacket
+
+SCRATCH
+11 steps → null → incorrect
+
+PRIMITIVE
+review grid → review IDs/titles
+detail pages → typed ratings
+task filter >= 4
+7 steps → correct
+
+RESULT
+wrong → correct, 4 steps saved
+```
+
+### Right case — Map
+
+```text
+TASK
+Driving time: CMU Gates → Schenley Park
+
+SCRATCH
+16 steps → 4 minutes represented as 4 seconds → incorrect
+
+PRIMITIVE
+place search → typed coordinates
+OSRM route → duration_seconds
+task min + formatting
+10 steps → correct
+
+RESULT
+wrong → correct, 6 steps saved
+```
+
+### Bottom mechanism
+
+```text
+Primitive owns website mechanics
+URL / selector / API / parser / units
+
+Agent retains task semantics
+candidate choice / filter / aggregate / format
+```
+
+### Hero number
+
+> On the two primitive-attributable recovery cases: **13.5 → 8.5 steps on average (−37%)**.
+
+### Speaker note
+
+> These are mechanism case studies, not a separate aggregate claim. They show exactly where the
+> saved actions come from: the agent starts with executable site acquisition and spends its steps on
+> the target task rather than rediscovering selectors, endpoints, and response semantics.
 
 ## Backup 1 — Workflow vs Primitive
 
