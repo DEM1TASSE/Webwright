@@ -2,6 +2,44 @@
 
 No blocking review items currently.
 
+## Formal evaluation release decision
+
+The frozen evaluation completed with 317/317 structurally valid records. T1 exact workflow scored
+42/70 versus scratch 44/70. T2 primitive-v4-direct scored 37/59 versus scratch 43/59; the
+workflow-adapt ablation scored 33/59. The current recommendation is **do not promote v4 as a
+release library**. Human review is requested only for the release decision; it does not block
+retaining the candidate, build provenance, or formal results.
+
+## Map contract and routing changes proposed for v5
+
+All seven T2 primitive paired losses unique to Map selected the same `search_places + get_route`
+pair. Inspection found that the route primitive exposes transport profile and service base URL as
+independent knobs even though the deployment couples mode to endpoint/port. Failed consumers asked
+for `foot`/`walking` on the default port and received route steps marked `driving`. In addition,
+`search_places` declares `is_complete=false`, yet the router adapted it for exact-set and
+NOT_FOUND-sensitive tasks while leaving core candidate discovery as a remaining gap.
+
+Recommended v5 changes are: expose a semantic `transport_mode` and map/verify the correct endpoint
+inside the primitive; add explicit candidate-set scope/completeness metadata; and reject `adapt`
+when an exact-set task lacks a complete core candidate acquisition. These changes should first be
+tested on the seven Map losses plus previously correct Map cases, not silently applied to the
+frozen v4 result.
+
+## Router reproducibility
+
+The retrieval audit and E2E decisions matched on 176/188 records, while exact selected material
+matched on 175/188. The audit and E2E currently resample the LLM router independently. A future
+formal protocol should persist one routing manifest and consume it during E2E if route stability is
+part of the claim. This is a follow-up design choice, not a reason to invalidate the completed run;
+the final report uses actual E2E exposure.
+
+## Primitive execution attribution
+
+All 40 E2E tasks with primitive exposure contained the selected code markers in their final script,
+but none produced declared usage or an execution trace. The present evidence supports
+"exposed/incorporated", not "executed". A release-grade pipeline should add execution-level
+instrumentation before making function-use claims.
+
 ## Retrieve-only split correction
 
 Before formal evaluation, semantic validation found that the original evaluator-only filter had
