@@ -112,6 +112,10 @@ Every replacement must state machine-readable guarantees and observable acceptan
 configuration contract may be `semantic_enum` only when code accepts the semantic parameter,
 internally maps every supported value to coupled deployment controls, and checks the response.
 Never expose coupled endpoint/port/profile controls as independently combinable public inputs.
+Do not infer a configuration contradiction merely because a low-level path/profile label remains
+constant while another coupled deployment control (such as endpoint or port) changes. When
+successful source workflows demonstrate the semantic modes, hide the complete evidenced mapping
+behind one semantic enum rather than exposing or interpreting its low-level pieces independently.
 
 Every workflow in the batch must occur exactly once in workflow_attribution:
 {"workflow_id":"...","decision":"CONTRIBUTED","operation_indices":[0]} or
@@ -175,6 +179,9 @@ FAIL missing, unsupported, or internally inconsistent guarantees/acceptance chec
 coupled site configuration is exposed as independent public controls, when `semantic_enum` lacks
 an internal mapping for every supported value, or when valid empty output cannot be distinguished
 from acquisition/filter/parser failure.
+Do not reject an evidenced semantic configuration solely because one low-level path/profile label
+looks inconsistent with that semantic name; inspect the whole coupled mapping demonstrated by the
+successful source workflow.
 
 A REJECT passes only when removing task logic leaves no reusable website acquisition/parsing core.
 If a count candidate demonstrates listing record IDs, it must be narrowed to a list-records
@@ -236,6 +243,58 @@ def compose_candidate_indexes(
 def _op_kind(value: dict) -> str:
     """Canonicalize a harmless schema alias while retaining raw proposals on disk."""
     return str(value.get("op") or value.get("operation") or "").upper()
+
+
+def _normalize_extraction(value: dict) -> dict:
+    """Repair the common harmless omission of the CANDIDATES envelope."""
+    if (
+        isinstance(value, dict)
+        and not value.get("decision")
+        and not value.get("candidates")
+        and value.get("candidate_id")
+        and value.get("proposed_method")
+    ):
+        return {"decision": "CANDIDATES", "candidates": [value]}
+    return value
+
+
+def _reconcile_workflow_attribution(value: dict, batch: list[dict]) -> dict:
+    """Derive workflow attribution from replacement evidence, the provenance source of truth."""
+    if not isinstance(value, dict) or not isinstance(value.get("operations"), list):
+        return value
+    result = deepcopy(value)
+    original = result.get("workflow_attribution") or []
+    original_by_id = {
+        str(row.get("workflow_id")): row for row in original if isinstance(row, dict)
+    }
+    evidence_by_operation = []
+    for operation in result["operations"]:
+        evidence_by_operation.append({
+            str(row.get("workflow_id"))
+            for row in (operation.get("replacement") or {}).get("source_evidence", [])
+            if isinstance(row, dict)
+        })
+    reconciled = []
+    for workflow in batch:
+        workflow_id = str(workflow["id"])
+        indices = [
+            index for index, evidence_ids in enumerate(evidence_by_operation)
+            if workflow_id in evidence_ids
+        ]
+        if indices:
+            reconciled.append({"workflow_id": workflow_id, "decision": "CONTRIBUTED",
+                               "operation_indices": indices})
+        else:
+            prior = original_by_id.get(workflow_id) or {}
+            reason = str(prior.get("reason") or "").strip() or (
+                "No generated ADD/UPDATE replacement cites this workflow as source evidence."
+            )
+            reconciled.append({"workflow_id": workflow_id, "decision": "SKIP",
+                               "reason": reason})
+    if original != reconciled:
+        result["model_workflow_attribution"] = original
+        result["workflow_attribution"] = reconciled
+    return result
 
 
 def partition_workflows(workflows: list[dict], *, batch_size: int, seed: int) -> list[list[dict]]:
@@ -364,6 +423,19 @@ def _validate_guarantees(value: dict) -> list[str]:
             errors.append("semantic_enum configuration requires supported_values")
         if configuration.get("coupled_site_parameters_hidden") is not True:
             errors.append("coupled site parameters must be hidden")
+        properties = (value.get("input_contract") or {}).get("properties") or {}
+        config_names = {"provider", "backend", "profile", "transport_mode", "mode", "engine",
+                        "service"}
+        config_values = {
+            str(item)
+            for name, spec in properties.items()
+            if name in config_names and isinstance(spec, dict)
+            for item in (spec.get("enum") or [])
+        }
+        if config_values and kind != "semantic_enum":
+            errors.append("public configuration enum requires semantic_enum guarantees")
+        if config_values and set(values or []) != config_values:
+            errors.append("guarantees supported_values must match public configuration enum")
     checks = value.get("acceptance_checks")
     if not isinstance(checks, list) or not checks or any(
         not isinstance(item, str) or not item.strip() for item in checks
@@ -636,6 +708,20 @@ def validate_consolidation(raw: dict, *, site: str, pool: dict[str, dict], workf
     ids = [x.get("primitive_id") for x in final]
     if len(ids) != len(set(ids)):
         errors.append("final primitive ids must be unique")
+    contract_groups = {}
+    for primitive in final:
+        signature = (
+            str(primitive.get("feature") or ""),
+            json.dumps(_schema_shape(primitive.get("input_contract")), sort_keys=True),
+        )
+        contract_groups.setdefault(signature, []).append(primitive.get("primitive_id"))
+    for (feature, _), primitive_ids in contract_groups.items():
+        if feature and len(primitive_ids) > 1:
+            errors.append(
+                f"overlapping {feature} primitives share the same input contract: "
+                f"{primitive_ids}; merge configuration variants behind a semantic enum or "
+                "make their semantic input contracts distinct"
+            )
     return final, errors, {"expected": expected, "consumed": consumed}
 
 
@@ -727,6 +813,7 @@ def retrieve_pool(batch: list[dict], pool: dict[str, dict], *, top_k: int = 12) 
 def build_audited_site_library(
     *, site: str, workflows: list[dict], output: str | Path, batch_size=8, seed=20260810,
     llm_fn: Callable[[str, str], dict], max_attempts: int = 3,
+    rebuild_from_batch: int | None = None,
 ) -> dict:
     """Run both phases and persist enough state to reproduce every transition."""
     output = Path(output)
@@ -762,7 +849,9 @@ def build_audited_site_library(
                 attempt_input.update({"previous_rejected_extraction": raw,
                                       "validation_feedback": errors,
                                       "retry_instruction": "Regenerate without losing demonstrated site capabilities."})
-            raw = llm_fn(_EXTRACT_SYS, json.dumps(attempt_input, ensure_ascii=False)) or {}
+            raw = _normalize_extraction(
+                llm_fn(_EXTRACT_SYS, json.dumps(attempt_input, ensure_ascii=False)) or {}
+            )
             errors = validate_extraction(raw, workflow=workflow)
             attempts.append({"attempt": attempt, "proposal": raw, "errors": errors})
             if not errors:
@@ -775,6 +864,19 @@ def build_audited_site_library(
         extractions_by_workflow[str(workflow["id"])] = raw
     for number, batch in enumerate(batches):
         directory = output / "batches" / f"batch_{number:03d}"
+        validation_path = directory / "validation.json"
+        snapshot_path = directory / "snapshot" / "primitive_pool.json"
+        diff_path = directory / "primitive_diff.json"
+        may_resume = rebuild_from_batch is None or number < rebuild_from_batch
+        if may_resume and validation_path.exists() and snapshot_path.exists() and diff_path.exists():
+            validation = json.loads(validation_path.read_text(encoding="utf-8"))
+            if validation.get("accepted") is True:
+                snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+                pool = {row["primitive_id"]: row for row in snapshot}
+                diff = json.loads(diff_path.read_text(encoding="utf-8"))
+                history.append({"batch": number, "workflows": [x["id"] for x in batch],
+                                "diff": diff, "resumed": True})
+                continue
         catalog_index = [{key: value.get(key) for key in (
             "primitive_id", "method", "capability", "input_contract", "output_contract",
             "supported_patterns")}
@@ -794,7 +896,9 @@ def build_audited_site_library(
                     "Regenerate the complete proposal; correct every error without inventing "
                     "code or evidence."
                 )
-            raw = llm_fn(_BUILD_SYS, json.dumps(attempt_input, ensure_ascii=False)) or {}
+            raw = _reconcile_workflow_attribution(
+                llm_fn(_BUILD_SYS, json.dumps(attempt_input, ensure_ascii=False)) or {}, batch
+            )
             accepted, errors = validate_build_proposal(
                 raw, site=site, batch=batch, pool=pool, all_workflows=all_workflows,
                 extractions=batch_extractions,

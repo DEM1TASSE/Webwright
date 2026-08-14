@@ -1,0 +1,128 @@
+{
+  "decision": "CANDIDATES",
+  "candidates": [
+    {
+      "candidate_id": "task16_t73::geocode_place_query",
+      "proposed_method": "geocode_place_query",
+      "capability": "Geocode a free-text place query to structured candidate locations using the site's Nominatim search endpoint.",
+      "owns": [
+        "Constructing the Nominatim search URL for a text query",
+        "Issuing the HTTP request to the map site's geocoding service",
+        "Parsing the JSON response into structured location candidates",
+        "Returning stable identity and coordinate/display fields exposed by the response"
+      ],
+      "does_not_own": [
+        "Choosing which returned candidate best matches a task intent",
+        "Combining origin and destination into a route request",
+        "Formatting downstream answers for a task"
+      ],
+      "input_contract": {
+        "query": "string",
+        "max_results": "integer, optional; demonstrated default/top limit is 5"
+      },
+      "output_contract": {
+        "candidates": [
+          {
+            "place_id": "string or integer if provided by site",
+            "display_name": "string",
+            "lat": "string or number",
+            "lon": "string or number",
+            "raw_rank": "object optional; remaining stable site fields may be preserved"
+          }
+        ]
+      },
+      "guarantees": {
+        "collection_scope": "query",
+        "completeness": "partial",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "none",
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "Returns a JSON-decoded list (possibly empty) rather than raw text/HTML.",
+        "For each returned candidate, latitude and longitude are present along with a display name.",
+        "An empty list is treated as a valid no-match result, distinct from request/parse failure."
+      ],
+      "source_evidence": {
+        "workflow_id": "task16_t73",
+        "template_id": "73",
+        "code_quote": "BASE_NOM = \"http://18.208.187.221:8085/search?format=jsonv2&limit=5&q=\"\n...\ndef geocode(query):\n    return fetch_json(BASE_NOM + urllib.parse.quote(query))\n...\norigin_results = geocode(ORIGIN_QUERY)\ndest_results = geocode(DEST_QUERY)\norigin = origin_results[0]\ndest = dest_results[0]",
+        "explanation": "The workflow demonstrates a reusable place-search primitive against the site's Nominatim endpoint. The hard-coded queries should be parameterized into a generic free-text query input, while preserving the structured candidate records actually exposed and used: display name and coordinates, plus stable identity fields such as place_id when present in the returned JSON.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    },
+    {
+      "candidate_id": "task16_t73::get_route_summary",
+      "proposed_method": "get_route_summary",
+      "capability": "Retrieve a route summary between two coordinates for a supported travel mode using the site's OSRM directions service.",
+      "owns": [
+        "Constructing the OSRM route endpoint for a mode and origin/destination coordinates",
+        "Resolving any site-coupled deployment details for supported modes internally",
+        "Issuing the HTTP request to the directions service",
+        "Parsing the response into a typed route summary with route and waypoint fields"
+      ],
+      "does_not_own": [
+        "Geocoding free-text locations into coordinates",
+        "Selecting among multiple alternative routes beyond the demonstrated first route",
+        "Task-specific filtering to only duration or formatting the final answer list"
+      ],
+      "input_contract": {
+        "origin": {
+          "lon": "number or string",
+          "lat": "number or string"
+        },
+        "destination": {
+          "lon": "number or string",
+          "lat": "number or string"
+        },
+        "mode": "string enum: driving | walking"
+      },
+      "output_contract": {
+        "code": "string",
+        "route": {
+          "duration_seconds": "number",
+          "distance_meters": "number"
+        },
+        "waypoints": [
+          {
+            "name": "string",
+            "location": "array optional if provided by site"
+          },
+          {
+            "name": "string",
+            "location": "array optional if provided by site"
+          }
+        ]
+      },
+      "guarantees": {
+        "collection_scope": "single",
+        "completeness": "conditional",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "semantic_enum",
+          "supported_values": [
+            "driving",
+            "walking"
+          ],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "Returns a parsed JSON object with a response code and at least one route when successful.",
+        "The first route includes numeric duration_seconds and distance_meters.",
+        "Exactly two waypoint records are returned for the supplied origin and destination, each with snapped-name information when present.",
+        "If no route is available, this is surfaced distinctly from transport or JSON parse failure."
+      ],
+      "source_evidence": {
+        "workflow_id": "task16_t73",
+        "template_id": "73",
+        "code_quote": "MODE_PORTS = {\"driving\": 5001, \"walking\": 5002}\n...\ncoord = f\"{origin['lon']},{origin['lat']};{dest['lon']},{dest['lat']}\"\nfor mode in [\"driving\", \"walking\"]:\n    port = MODE_PORTS[mode]\n    route_url = f\"http://18.208.187.221:{port}/route/v1/{mode}/{coord}?overview=false\"\n    route = fetch_json(route_url)\n    duration = route[\"routes\"][0][\"duration\"]\n    ...\n    f\"Origin waypoint snapped name: {route['waypoints'][0]['name']}\"\n    f\"Destination waypoint snapped name: {route['waypoints'][1]['name']}\"\n    f\"Distance meters: {route['routes'][0]['distance']}\"\n    f\"Response code: {route['code']}\"",
+        "explanation": "The workflow demonstrates a reusable route-summary acquisition primitive parameterized by origin coordinates, destination coordinates, and travel mode. The deployment coupling between mode and backend port is site-specific and should be hidden inside the primitive, exposed only as a semantic mode enum. The evidence supports returning first-route duration and distance plus waypoint snapped-name metadata and response code.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    }
+  ]
+}

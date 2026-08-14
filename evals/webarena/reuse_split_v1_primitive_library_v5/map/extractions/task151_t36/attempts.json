@@ -1,0 +1,186 @@
+[
+  {
+    "attempt": 1,
+    "proposal": {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task151_t36::search_places",
+          "proposed_method": "search_places",
+          "capability": "Search for place/location matches on the site-configured Nominatim service and return typed geocoding candidates.",
+          "owns": [
+            "Submitting a free-text place query to the configured Nominatim search endpoint",
+            "Handling the endpoint's required fixed parameters demonstrated by the workflow (JSON output format and result limit)",
+            "Parsing returned geocoding candidate objects into typed place records",
+            "Returning stable identity/display/location fields actually exposed by the response"
+          ],
+          "does_not_own": [
+            "Choosing which candidate best satisfies a task",
+            "Comparing origin vs destination choices",
+            "Computing routes or travel times",
+            "Formatting final answers for the user"
+          ],
+          "input_contract": {
+            "query": {
+              "type": "string",
+              "description": "Free-text place or address query to geocode."
+            }
+          },
+          "output_contract": {
+            "type": "object",
+            "properties": {
+              "results": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "display_name": {
+                      "type": "string"
+                    },
+                    "lat": {
+                      "type": "number"
+                    },
+                    "lon": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "display_name",
+                    "lat",
+                    "lon"
+                  ]
+                }
+              }
+            }
+          },
+          "guarantees": {
+            "collection_scope": "query",
+            "completeness": "partial",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "internal",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "Returns a results array where each item has parsed numeric latitude and longitude plus display_name",
+            "For a query with matches, the array is non-empty; for a query with no matches, returns an empty results array rather than raw response text",
+            "Fails distinctly on HTTP/network errors instead of silently returning no results"
+          ],
+          "source_evidence": {
+            "workflow_id": "task151_t36",
+            "template_id": "36",
+            "code_quote": "requests.get(nom, params={'q':'Carnegie Mellon University, Pittsburgh, PA','format':'jsonv2','limit':5}, timeout=20) ... cmu_candidates = cmu_resp.json() ... cmu = cmu_candidates[0] ... f\"top_result={cmu.get('display_name')}\" ... f\"lat={cmu.get('lat')} lon={cmu.get('lon')}\"",
+            "explanation": "The workflow demonstrates a reusable place-search operation against a configured Nominatim endpoint. Hard-coded query strings can be parameterized into a general query input. The response is parsed into stable typed fields actually evidenced in use and logging: display_name, lat, and lon. Candidate selection (`[0]`) is task logic, so the primitive should return the candidate list rather than own ranking choice.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        },
+        {
+          "candidate_id": "task151_t36::get_route",
+          "proposed_method": "get_route",
+          "capability": "Get route summary information between two coordinates from the site-configured OSRM directions service for a supported travel profile.",
+          "owns": [
+            "Building the OSRM route request from origin/destination coordinates",
+            "Hiding coupled site deployment parameters such as host/port and supported profile mapping behind a semantic travel mode input",
+            "Calling the route endpoint with the demonstrated fixed options",
+            "Parsing route summary fields from the first returned route"
+          ],
+          "does_not_own": [
+            "Geocoding place names into coordinates",
+            "Selecting the minimum among multiple separately requested routes",
+            "Task-specific conversion of duration into a final answer string",
+            "Ranking unrelated alternatives beyond the API's returned first route"
+          ],
+          "input_contract": {
+            "origin": {
+              "type": "object",
+              "properties": {
+                "lat": {
+                  "type": "number"
+                },
+                "lon": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "lat",
+                "lon"
+              ]
+            },
+            "destination": {
+              "type": "object",
+              "properties": {
+                "lat": {
+                  "type": "number"
+                },
+                "lon": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "lat",
+                "lon"
+              ]
+            },
+            "travel_mode": {
+              "type": "string",
+              "enum": [
+                "car"
+              ],
+              "description": "Semantic travel mode supported by the demonstrated workflow; internally resolves to the OSRM driving profile."
+            }
+          },
+          "output_contract": {
+            "type": "object",
+            "properties": {
+              "distance_meters": {
+                "type": "number"
+              },
+              "duration_seconds": {
+                "type": "number"
+              },
+              "travel_mode": {
+                "type": "string"
+              },
+              "route_found": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "distance_meters",
+              "duration_seconds",
+              "travel_mode",
+              "route_found"
+            ]
+          },
+          "guarantees": {
+            "collection_scope": "not_applicable",
+            "completeness": "conditional",
+            "supports_absence_proof": true,
+            "configuration": {
+              "kind": "semantic_enum",
+              "supported_values": [
+                "car"
+              ],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "When a route is found, returns route_found=true and numeric distance_meters and duration_seconds parsed from the route summary",
+            "When no route is available but the service responds successfully without routes, returns route_found=false rather than fabricated zeros",
+            "Uses the configured OSRM deployment internally and does not require callers to provide host/port/profile fragments"
+          ],
+          "source_evidence": {
+            "workflow_id": "task151_t36",
+            "template_id": "36",
+            "code_quote": "coords = f\"{cmu['lon']},{cmu['lat']};{pitt['lon']},{pitt['lat']}\"; requests.get(f'http://18.208.187.221:5000/route/v1/driving/{coords}', params={'overview':'false','steps':'true','annotations':'false'}, timeout=20) ... route = route_json['routes'][0] ... route.get('distance') ... route.get('duration')",
+            "explanation": "The workflow demonstrates a reusable route-summary acquisition from OSRM using origin/destination coordinates and the driving profile. The primitive should parameterize coordinates and expose a semantic travel_mode enum instead of low-level endpoint/profile details. Stable fields actually evidenced are distance and duration; the workflow accesses the first route, so the primitive can return the parsed route summary for the service-selected route, with explicit route_found status for valid absence handling.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        }
+      ]
+    },
+    "errors": []
+  }
+]

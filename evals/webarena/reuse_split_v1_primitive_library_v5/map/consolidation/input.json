@@ -1,0 +1,818 @@
+{
+  "site": "map",
+  "primitive_pool": [
+    {
+      "primitive_id": "map/search_places",
+      "method": "search_places",
+      "capability": "Search the map site's configured Nominatim geocoding service with a free-text query and return typed place candidate records in service order.",
+      "method_code": "def search_places(self, query: str, result_limit: int = 5) -> dict:\n    import json\n    import urllib.parse\n    import urllib.request\n\n    if not isinstance(query, str) or not query.strip():\n        raise ValueError(\"query must be a non-empty string\")\n    if not isinstance(result_limit, int) or result_limit <= 0:\n        raise ValueError(\"result_limit must be a positive integer\")\n\n    base_url = \"http://18.208.187.221:8085/search\"\n    params = {\n        \"q\": query,\n        \"format\": \"jsonv2\",\n        \"limit\": str(result_limit),\n    }\n    url = base_url + \"?\" + urllib.parse.urlencode(params)\n\n    with urllib.request.urlopen(url, timeout=30) as response:\n        payload = json.loads(response.read().decode(\"utf-8\"))\n\n    results = []\n    for item in payload:\n        lat_raw = item.get(\"lat\")\n        lon_raw = item.get(\"lon\")\n        results.append({\n            \"place_id\": item.get(\"place_id\"),\n            \"osm_type\": item.get(\"osm_type\"),\n            \"osm_id\": item.get(\"osm_id\"),\n            \"display_name\": item.get(\"display_name\"),\n            \"latitude\": float(lat_raw) if lat_raw is not None else None,\n            \"longitude\": float(lon_raw) if lon_raw is not None else None,\n            \"category\": item.get(\"category\"),\n            \"place_type\": item.get(\"type\"),\n            \"importance\": item.get(\"importance\"),\n        })\n\n    return {\n        \"query\": query,\n        \"result_limit\": result_limit,\n        \"results\": results,\n        \"result_count\": len(results),\n    }\n",
+      "owns": [
+        "Constructing the map site's configured Nominatim search request from a free-text query and result limit",
+        "Issuing the HTTP request to the site-coupled geocoding service",
+        "Parsing JSON geocoding candidates into typed place records",
+        "Returning stable objective fields exposed by the response, including identity metadata, coordinates, category/type, and importance"
+      ],
+      "does_not_own": [
+        "Choosing which query text to use for a task",
+        "Selecting the intended candidate among ambiguous results",
+        "Applying task-specific filters such as only Walmarts, cafes, or restaurants",
+        "Computing distances, route feasibility, or route optimality",
+        "Formatting final user answers"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Free-text place or address search query."
+          },
+          "result_limit": {
+            "type": "integer",
+            "description": "Maximum number of candidates to request from the geocoding service.",
+            "default": 5
+          }
+        },
+        "required": [
+          "query"
+        ]
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string"
+          },
+          "result_limit": {
+            "type": "integer"
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "place_id": {
+                  "type": [
+                    "integer",
+                    "string",
+                    "null"
+                  ]
+                },
+                "osm_type": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "osm_id": {
+                  "type": [
+                    "integer",
+                    "string",
+                    "null"
+                  ]
+                },
+                "display_name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "latitude": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "longitude": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "category": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "place_type": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "importance": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "display_name",
+                "latitude",
+                "longitude"
+              ]
+            }
+          },
+          "result_count": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "query",
+          "result_limit",
+          "results",
+          "result_count"
+        ]
+      },
+      "requires": [],
+      "provides": [
+        "map.geocoding.nominatim_search"
+      ],
+      "supported_patterns": [
+        "Search for place/address candidates by text query",
+        "Resolve user-provided locations into candidate coordinates before downstream workflow selection",
+        "Preserve service order and raw place metadata for workflow-level disambiguation"
+      ],
+      "guarantees": {
+        "collection_scope": "query",
+        "completeness": "partial",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "internal",
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "Given a query with matches, returns results in an array where each item includes display_name plus numeric latitude and longitude parsed from the service response.",
+        "Given a query with no matches, returns result_count=0 and results=[] rather than failing solely because there are zero results.",
+        "Returned result_count equals len(results) and never exceeds the requested result_limit.",
+        "The method uses the site-coupled Nominatim endpoint internally rather than exposing endpoint or format controls as public inputs."
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task154_t36",
+          "template_id": "36",
+          "code_quote": "base_nom = 'http://18.208.187.221:8085/search?format=json&q='\nwith urllib.request.urlopen(base_nom + urllib.parse.quote(queries['origin_resolved_query']), timeout=30) as r:\n    origin_results = json.load(r)\n...\norigin = origin_results[0]",
+          "explanation": "Generalized direct calls to the site's Nominatim search endpoint from fixed origin/destination queries into a reusable query+limit primitive that returns the full candidate list instead of only the first chosen result.",
+          "evidence_match_mode": "attributed_nonverbatim"
+        },
+        {
+          "workflow_id": "task37_t77",
+          "template_id": "77",
+          "code_quote": "origin_url = base_n + 'search?format=jsonv2&limit=5&q=' + urllib.parse.quote(origin_query)\norigin_results = fetch_json(origin_url)\n...\ndest_url = base_n + 'search?format=jsonv2&limit=5&q=' + urllib.parse.quote(dest_query)\ndest_results = fetch_json(dest_url)",
+          "explanation": "Confirmed the repeated site-owned Nominatim search pattern and jsonv2+limit parameter shape across separate geocoding lookups.",
+          "evidence_match_mode": "attributed_nonverbatim"
+        },
+        {
+          "workflow_id": "task59_t69",
+          "template_id": "69",
+          "code_quote": "hunt_url = SITE_NOMINATIM + 'search?' + urlencode({'format': 'jsonv2', 'limit': 8, 'q': 'Hunt Library Pittsburgh'})\nhunt_results = http_get_json(hunt_url)\n...\nrestaurants.append({\n    'display_name': item.get('display_name', ''),\n    'lat': float(item['lat']),\n    'lon': float(item['lon']),\n    'type': item.get('type'),\n})",
+          "explanation": "Confirmed that stable returned fields include display_name, coordinates, and place type/category semantics; filtering to restaurants remains workflow logic.",
+          "evidence_match_mode": "attributed_nonverbatim"
+        },
+        {
+          "workflow_id": "task58_t69",
+          "template_id": "69",
+          "code_quote": "hunt_url = NOMINATIM + \"search?\" + urlencode({\"q\": \"Hunt Library Pittsburgh\", \"format\": \"jsonv2\", \"limit\": 1})\nhunt = get_json(hunt_url)[0]\n...\n\"OSM type/id: {hunt.get('osm_type')} / {hunt.get('osm_id')}\",",
+          "explanation": "Added evidence that osm_type and osm_id are exposed by the same geocoding response and should be preserved in the typed record schema.",
+          "evidence_match_mode": "attributed_nonverbatim"
+        },
+        {
+          "workflow_id": "task39_t77",
+          "template_id": "77",
+          "code_quote": "origin_results = get_json(BASE_GEO + \"search?\" + urllib.parse.urlencode({\"q\": origin_q, \"format\": \"jsonv2\", \"limit\": 5})) ... dest_results = get_json(BASE_GEO + \"search?\" + urllib.parse.urlencode({\"q\": dest_q, \"format\": \"jsonv2\", \"limit\": 10}))",
+          "explanation": "Confirmed the same endpoint supports address and business-name searches and exposes stable place metadata suitable for a general search primitive.",
+          "evidence_match_mode": "attributed_nonverbatim"
+        }
+      ]
+    },
+    {
+      "primitive_id": "map/get_driving_route",
+      "method": "get_driving_route",
+      "capability": "Request a driving route between ordered coordinates from the site's OSRM service and return typed route summaries from the response.",
+      "method_code": "def get_driving_route(self, waypoints: list) -> dict:\n    import json\n    import urllib.parse\n    import urllib.request\n\n    if not isinstance(waypoints, list) or len(waypoints) < 2:\n        raise ValueError(\"waypoints must be a list of at least two coordinate objects\")\n\n    encoded_points = []\n    normalized_waypoints = []\n    for waypoint in waypoints:\n        if not isinstance(waypoint, dict):\n            raise ValueError(\"each waypoint must be an object with latitude and longitude\")\n        latitude = waypoint.get(\"latitude\")\n        longitude = waypoint.get(\"longitude\")\n        if latitude is None or longitude is None:\n            raise ValueError(\"each waypoint must include latitude and longitude\")\n        latitude = float(latitude)\n        longitude = float(longitude)\n        normalized_waypoints.append({\n            \"latitude\": latitude,\n            \"longitude\": longitude,\n        })\n        encoded_points.append(f\"{longitude},{latitude}\")\n\n    base_url = \"http://18.208.187.221:5000/route/v1/driving/\"\n    query = urllib.parse.urlencode({\n        \"overview\": \"false\",\n        \"steps\": \"true\",\n        \"geometries\": \"polyline\",\n    })\n    url = base_url + \";\".join(encoded_points) + \"?\" + query\n\n    with urllib.request.urlopen(url, timeout=30) as response:\n        payload = json.loads(response.read().decode(\"utf-8\"))\n\n    routes = []\n    for route in payload.get(\"routes\", []):\n        routes.append({\n            \"duration_seconds\": route.get(\"duration\"),\n            \"distance_meters\": route.get(\"distance\"),\n        })\n\n    return {\n        \"code\": payload.get(\"code\"),\n        \"waypoints\": normalized_waypoints,\n        \"routes\": routes,\n        \"route_count\": len(routes),\n    }\n",
+      "owns": [
+        "Constructing the site's OSRM driving route request from ordered waypoint coordinates",
+        "Issuing the HTTP request to the site-coupled OSRM routing service",
+        "Parsing route JSON into typed route summary records",
+        "Returning objective route metrics exposed by the service, including duration and distance for available routes",
+        "Hiding fixed request-shape details coupled to the demonstrated site service"
+      ],
+      "does_not_own": [
+        "Geocoding place names into coordinates",
+        "Choosing which places or waypoint order to route through",
+        "Comparing route durations against task-specific thresholds like one hour",
+        "Formatting duration into HH:MM:SS answer strings",
+        "Selecting the optimal order among multiple candidate routes"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "waypoints": {
+            "type": "array",
+            "description": "Ordered driving waypoints; at least two coordinate objects are required.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "latitude": {
+                  "type": "number",
+                  "description": "Waypoint latitude in decimal degrees."
+                },
+                "longitude": {
+                  "type": "number",
+                  "description": "Waypoint longitude in decimal degrees."
+                }
+              },
+              "required": [
+                "latitude",
+                "longitude"
+              ]
+            }
+          }
+        },
+        "required": [
+          "waypoints"
+        ]
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "waypoints": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "latitude": {
+                  "type": "number"
+                },
+                "longitude": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "latitude",
+                "longitude"
+              ]
+            }
+          },
+          "routes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "duration_seconds": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "distance_meters": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "duration_seconds",
+                "distance_meters"
+              ]
+            }
+          },
+          "route_count": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "code",
+          "waypoints",
+          "routes",
+          "route_count"
+        ]
+      },
+      "requires": [],
+      "provides": [
+        "map.routing.osrm_driving_route"
+      ],
+      "supported_patterns": [
+        "Get a driving route summary between two resolved coordinates",
+        "Get a driving route summary for a multi-stop ordered itinerary",
+        "Return route metrics for workflow-level comparison across candidate waypoint orders"
+      ],
+      "guarantees": {
+        "collection_scope": "query",
+        "completeness": "conditional",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "internal",
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "Given at least two valid waypoints, returns a parsed object containing code, normalized waypoints, routes, and route_count.",
+        "When the service returns code='Ok' with one or more routes, each route summary includes numeric duration_seconds and distance_meters parsed from the response.",
+        "If the service returns no routes in a parsed response, the method returns route_count=0 and routes=[] rather than fabricating route metrics.",
+        "The method keeps endpoint/profile/request-shape details internal and does not expose low-level routing controls as public inputs."
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task154_t36",
+          "template_id": "36",
+          "code_quote": "base_osrm = 'http://18.208.187.221:5000/route/v1/driving/'\ncoords = f\"{origin['lon']},{origin['lat']};{dest['lon']},{dest['lat']}\"\nroute_url = base_osrm + coords + '?overview=false&steps=true&geometries=polyline'\nwith urllib.request.urlopen(route_url, timeout=30) as r:\n    route = json.load(r)\n...\n'route_summary': {'duration_seconds': seconds, 'distance_meters': route['routes'][0]['distance']}",
+          "explanation": "Generalized the two-point OSRM driving request into an ordered-waypoints primitive while preserving the objective acquisition boundary of route duration and distance.",
+          "evidence_match_mode": "attributed_nonverbatim"
+        },
+        {
+          "workflow_id": "task37_t77",
+          "template_id": "77",
+          "code_quote": "osrm_url = f'http://18.208.187.221:5000/route/v1/driving/{orig_lon},{orig_lat};{dest_lon},{dest_lat}?steps=false&overview=false&alternatives=false'\nroute = fetch_json(osrm_url)\nduration_seconds = route['routes'][0]['duration']\ndistance_meters = route['routes'][0]['distance']",
+          "explanation": "Confirmed the same site-coupled driving route service and stable summary fields duration and distance, while excluding workflow-owned threshold comparison logic.",
+          "evidence_match_mode": "exact"
+        },
+        {
+          "workflow_id": "task75_t65",
+          "template_id": "65",
+          "code_quote": "def route(order, coord_map):\n    encoded = \";\".join(f\"{coord_map[name]['lon']},{coord_map[name]['lat']}\" for name in order)\n    url = OSRM_BASE + encoded + \"?overview=false&steps=true\"\n    data = fetch_json(url)\n    if data.get(\"code\") != \"Ok\":\n        raise RuntimeError(f\"OSRM error for {order}: {data}\")\n    route0 = data[\"routes\"][0]\n    return {\n        \"order\": order,\n        \"duration\": route0[\"duration\"],\n        \"distance\": route0[\"distance\"],\n        \"url\": url,\n    }",
+          "explanation": "Extended the primitive from two points to ordered multi-stop waypoints because the workflow demonstrates the same endpoint contract supporting semicolon-joined waypoint sequences; route-order optimization remains workflow logic.",
+          "evidence_match_mode": "exact"
+        },
+        {
+          "workflow_id": "task155_t36",
+          "template_id": "36",
+          "code_quote": "route = requests.get(OSRM_BASE + coords, params={'overview': 'false', 'geometries': 'polyline', 'steps': 'true'}, timeout=30).json()\nduration_seconds = route['routes'][0]['duration']\n... route['routes'][0]['distance']",
+          "explanation": "Confirmed the internal fixed parameterization used for the demonstrated OSRM driving contract and that route summary extraction is stable across workflows.",
+          "evidence_match_mode": "attributed_nonverbatim"
+        },
+        {
+          "workflow_id": "task39_t77",
+          "template_id": "77",
+          "code_quote": "route_url = BASE_OSRM + \"5000/route/v1/driving/\" + coords + \"?\" + urllib.parse.urlencode({\"overview\": \"false\", \"geometries\": \"polyline\", \"steps\": \"true\"})\nroute = get_json(route_url)\nduration = route[\"routes\"][0][\"duration\"]\ndistance = route[\"routes\"][0][\"distance\"]",
+          "explanation": "Confirmed the same OSRM acquisition boundary across another workflow using the site-coupled driving endpoint and objective route metrics only.",
+          "evidence_match_mode": "exact"
+        }
+      ]
+    },
+    {
+      "primitive_id": "map/search_local_geocoder_places",
+      "method": "search_local_geocoder_places",
+      "capability": "Search the site's CSRF-protected local geocoder endpoint within a specified map view and return typed place candidates parsed from the HTML response.",
+      "method_code": "def search_local_geocoder_places(self, query: str, map_bounds: dict, zoom: int) -> dict:\n    import html\n    import re\n    from urllib.parse import urlencode\n\n    if not isinstance(query, str) or not query.strip():\n        raise ValueError(\"query must be a non-empty string\")\n    if not isinstance(map_bounds, dict):\n        raise ValueError(\"map_bounds must be an object\")\n    for key in (\"minlon\", \"minlat\", \"maxlon\", \"maxlat\"):\n        if key not in map_bounds:\n            raise ValueError(f\"map_bounds must include {key}\")\n    if not isinstance(zoom, int):\n        raise ValueError(\"zoom must be an integer\")\n\n    base_url = \"http://ec2-18-223-172-69.us-east-2.compute.amazonaws.com:3000\"\n    search_url = base_url + \"/search?\" + urlencode({\"query\": query})\n    search_response = self.page.request.get(search_url, timeout=30000)\n    if not search_response.ok:\n        raise RuntimeError(f\"failed to load search page: {search_response.status}\")\n    search_html = search_response.text()\n\n    csrf_param_match = re.search(r'<meta name=\"csrf-param\" content=\"([^\"]+)\"', search_html)\n    csrf_token_match = re.search(r'<meta name=\"csrf-token\" content=\"([^\"]+)\"', search_html)\n    if not csrf_param_match or not csrf_token_match:\n        raise RuntimeError(\"failed to extract CSRF metadata from search page\")\n\n    csrf_param = csrf_param_match.group(1)\n    csrf_token = csrf_token_match.group(1)\n    form_data = {\n        \"query\": query,\n        \"zoom\": str(zoom),\n        \"minlon\": str(map_bounds[\"minlon\"]),\n        \"minlat\": str(map_bounds[\"minlat\"]),\n        \"maxlon\": str(map_bounds[\"maxlon\"]),\n        \"maxlat\": str(map_bounds[\"maxlat\"]),\n        csrf_param: csrf_token,\n    }\n\n    response = self.page.request.post(\n        base_url + \"/geocoder/search_osm_nominatim\",\n        form=form_data,\n        headers={\n            \"Referer\": search_url,\n            \"X-Requested-With\": \"XMLHttpRequest\",\n        },\n        timeout=30000,\n    )\n    if not response.ok:\n        raise RuntimeError(f\"local geocoder request failed: {response.status}\")\n    response_html = response.text()\n\n    pattern = re.compile(\n        r'<a class=\"set_position\"[^>]*data-lat=\"([^\"]+)\"[^>]*data-lon=\"([^\"]+)\"[^>]*data-prefix=\"([^\"]*)\"[^>]*data-name=\"([^\"]+)\"'\n    )\n\n    results = []\n    for match in pattern.finditer(response_html):\n        results.append({\n            \"prefix\": html.unescape(match.group(3)),\n            \"display_name\": html.unescape(match.group(4)),\n            \"latitude\": float(match.group(1)),\n            \"longitude\": float(match.group(2)),\n        })\n\n    return {\n        \"query\": query,\n        \"results\": results,\n        \"result_count\": len(results),\n        \"search_scope\": {\n            \"map_bounds\": {\n                \"minlon\": float(map_bounds[\"minlon\"]),\n                \"minlat\": float(map_bounds[\"minlat\"]),\n                \"maxlon\": float(map_bounds[\"maxlon\"]),\n                \"maxlat\": float(map_bounds[\"maxlat\"]),\n            },\n            \"zoom\": zoom,\n        },\n    }\n",
+      "owns": [
+        "Opening the site search page to establish session context and extract CSRF metadata required by the site's local geocoder workflow",
+        "Submitting a place query to the site's /geocoder/search_osm_nominatim endpoint with bounded map parameters and AJAX-style headers",
+        "Parsing returned HTML result anchors into typed place candidate records",
+        "Returning stable place fields actually exposed in the response, including category prefix, display name, and coordinates"
+      ],
+      "does_not_own": [
+        "Choosing which search terms to try for a task",
+        "Ranking results by distance or relevance beyond preserving parsed response order",
+        "Computing distances between places",
+        "Filtering to cafes, restaurants, or city-specific subsets for task purposes",
+        "Aggregating across multiple different queries into one deduplicated answer set"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Place search text submitted to the site's local geocoder."
+          },
+          "map_bounds": {
+            "type": "object",
+            "properties": {
+              "minlon": {
+                "type": "number"
+              },
+              "minlat": {
+                "type": "number"
+              },
+              "maxlon": {
+                "type": "number"
+              },
+              "maxlat": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "minlon",
+              "minlat",
+              "maxlon",
+              "maxlat"
+            ],
+            "description": "Visible map bounding box used by the site geocoder request."
+          },
+          "zoom": {
+            "type": "integer",
+            "description": "Map zoom level sent with the geocoder request."
+          }
+        },
+        "required": [
+          "query",
+          "map_bounds",
+          "zoom"
+        ]
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string"
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "prefix": {
+                  "type": "string",
+                  "description": "Site-displayed place category prefix from data-prefix, e.g. Cafe."
+                },
+                "display_name": {
+                  "type": "string",
+                  "description": "Full place name/location string from data-name."
+                },
+                "latitude": {
+                  "type": "number"
+                },
+                "longitude": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "prefix",
+                "display_name",
+                "latitude",
+                "longitude"
+              ]
+            }
+          },
+          "result_count": {
+            "type": "integer"
+          },
+          "search_scope": {
+            "type": "object",
+            "properties": {
+              "map_bounds": {
+                "type": "object",
+                "properties": {
+                  "minlon": {
+                    "type": "number"
+                  },
+                  "minlat": {
+                    "type": "number"
+                  },
+                  "maxlon": {
+                    "type": "number"
+                  },
+                  "maxlat": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "minlon",
+                  "minlat",
+                  "maxlon",
+                  "maxlat"
+                ]
+              },
+              "zoom": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "map_bounds",
+              "zoom"
+            ]
+          }
+        },
+        "required": [
+          "query",
+          "results",
+          "result_count",
+          "search_scope"
+        ]
+      },
+      "requires": [],
+      "provides": [
+        "map.geocoding.local_geocoder_search"
+      ],
+      "supported_patterns": [
+        "Search the site's local geocoder within the current map viewport",
+        "Acquire typed place candidates from the site's HTML geocoder result markup",
+        "Use bounded search scope when workflows need locality-sensitive candidate enumeration"
+      ],
+      "guarantees": {
+        "collection_scope": "query",
+        "completeness": "conditional",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "internal",
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "Returns a structured results array parsed from HTML anchors carrying data-lat, data-lon, data-prefix, and data-name attributes, not raw HTML.",
+        "Each returned record includes prefix, display_name, latitude, and longitude parsed from one result element.",
+        "An empty results array is valid when the geocoder response contains no matching parsed result anchors for the submitted query and bounded search scope.",
+        "The method establishes session context and extracts CSRF metadata from the site's search page before posting to /geocoder/search_osm_nominatim."
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task58_t69",
+          "template_id": "69",
+          "code_quote": "search_page = session.get(BASE + \"/search\", params={\"query\": \"Hunt Library Pittsburgh\"}, timeout=30)\ncsrf_param = re.search(r'<meta name=\"csrf-param\" content=\"([^\"]+)\"', search_page.text).group(1)\ncsrf_token = re.search(r'<meta name=\"csrf-token\" content=\"([^\"]+)\"', search_page.text).group(1)\n...\nresp = session.post(\n    BASE + \"/geocoder/search_osm_nominatim\",\n    data=dict(common, query=q),\n    headers={\"Referer\": search_page.url, \"X-Requested-With\": \"XMLHttpRequest\"},\n    timeout=30,\n)\nfor m in re.finditer(r'<a class=\"set_position\"[^>]*data-lat=\"([^\"]+)\"[^>]*data-lon=\"([^\"]+)\"[^>]*data-prefix=\"([^\"]*)\"[^>]*data-name=\"([^\"]+)\"', resp.text):\n    lat = float(m.group(1))\n    lon = float(m.group(2))\n    prefix = html.unescape(m.group(3))\n    name = html.unescape(m.group(4))",
+          "explanation": "Generalized the demonstrated site-specific workflow of establishing a session, extracting CSRF metadata, posting to the local geocoder endpoint with viewport bounds, and parsing typed place records from returned HTML anchors.",
+          "evidence_match_mode": "attributed_nonverbatim"
+        }
+      ]
+    },
+    {
+      "primitive_id": "map/get_route",
+      "method": "get_route",
+      "capability": "Request a route between ordered coordinates from the map site's configured OSRM service for a supported transportation mode and return typed route summaries plus snapped waypoint metadata.",
+      "method_code": "def get_route(self, waypoints: list, transportation_method: str) -> dict:\n    import json\n    import urllib.parse\n    import urllib.request\n\n    if not isinstance(waypoints, list) or len(waypoints) < 2:\n        raise ValueError(\"waypoints must be a list of at least two coordinate objects\")\n    if transportation_method not in {\"driving\", \"walking\", \"biking\"}:\n        raise ValueError(\"transportation_method must be one of: driving, walking, biking\")\n\n    mode_config = {\n        \"driving\": {\"port\": 5000, \"profile\": \"driving\"},\n        \"biking\": {\"port\": 5001, \"profile\": \"driving\"},\n        \"walking\": {\"port\": 5002, \"profile\": \"driving\"},\n    }\n    config = mode_config[transportation_method]\n\n    normalized_waypoints = []\n    encoded_points = []\n    for waypoint in waypoints:\n        if not isinstance(waypoint, dict):\n            raise ValueError(\"each waypoint must be an object with latitude and longitude\")\n        latitude = waypoint.get(\"latitude\")\n        longitude = waypoint.get(\"longitude\")\n        if latitude is None or longitude is None:\n            raise ValueError(\"each waypoint must include latitude and longitude\")\n        latitude = float(latitude)\n        longitude = float(longitude)\n        normalized_waypoints.append({\n            \"latitude\": latitude,\n            \"longitude\": longitude,\n        })\n        encoded_points.append(f\"{longitude},{latitude}\")\n\n    url = (\n        f\"http://18.208.187.221:{config['port']}/route/v1/{config['profile']}/\"\n        + \";\".join(encoded_points)\n        + \"?\"\n        + urllib.parse.urlencode({\n            \"overview\": \"false\",\n            \"steps\": \"true\",\n            \"alternatives\": \"false\",\n            \"annotations\": \"false\",\n            \"geometries\": \"polyline\",\n        })\n    )\n\n    request = urllib.request.Request(url, headers={\"User-Agent\": \"Mozilla/5.0\"})\n    with urllib.request.urlopen(request, timeout=30) as response:\n        payload = json.loads(response.read().decode(\"utf-8\"))\n\n    output_waypoints = []\n    for waypoint in payload.get(\"waypoints\", []):\n        location = waypoint.get(\"location\") or []\n        longitude = location[0] if len(location) > 0 else None\n        latitude = location[1] if len(location) > 1 else None\n        output_waypoints.append({\n            \"name\": waypoint.get(\"name\"),\n            \"latitude\": float(latitude) if latitude is not None else None,\n            \"longitude\": float(longitude) if longitude is not None else None,\n        })\n\n    routes = []\n    for route in payload.get(\"routes\", []):\n        legs_out = []\n        for leg in route.get(\"legs\", []):\n            steps_out = []\n            for step in leg.get(\"steps\", []):\n                steps_out.append({\n                    \"mode\": step.get(\"mode\"),\n                    \"distance_meters\": step.get(\"distance\"),\n                    \"duration_seconds\": step.get(\"duration\"),\n                    \"name\": step.get(\"name\"),\n                    \"maneuver\": step.get(\"maneuver\"),\n                })\n            legs_out.append({\"steps\": steps_out})\n        routes.append({\n            \"duration_seconds\": route.get(\"duration\"),\n            \"distance_meters\": route.get(\"distance\"),\n            \"legs\": legs_out,\n        })\n\n    return {\n        \"transportation_method\": transportation_method,\n        \"code\": payload.get(\"code\"),\n        \"input_waypoints\": normalized_waypoints,\n        \"waypoints\": output_waypoints,\n        \"routes\": routes,\n        \"route_count\": len(routes),\n    }\n",
+      "owns": [
+        "Constructing the site-configured OSRM route request from ordered waypoint coordinates",
+        "Resolving semantic transportation mode to the site's coupled OSRM deployment details internally",
+        "Issuing the HTTP request to the map site's routing service and parsing JSON",
+        "Returning typed route summaries including duration, distance, snapped waypoints, and leg/step records exposed by the response"
+      ],
+      "does_not_own": [
+        "Geocoding text place queries into coordinates",
+        "Choosing which origin/destination candidates to route between",
+        "Applying task-specific threshold comparisons such as within one hour",
+        "Formatting durations into HH:MM:SS strings for final answers",
+        "Selecting the nearest destination or best candidate across multiple searched places"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "waypoints": {
+            "type": "array",
+            "description": "Ordered route waypoints; at least two coordinate objects are required.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "latitude": {
+                  "type": "number"
+                },
+                "longitude": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "latitude",
+                "longitude"
+              ]
+            }
+          },
+          "transportation_method": {
+            "type": "string",
+            "enum": [
+              "driving",
+              "walking",
+              "biking"
+            ],
+            "description": "Semantic transportation mode. The primitive hides the site-coupled backend port/profile mapping."
+          }
+        },
+        "required": [
+          "waypoints",
+          "transportation_method"
+        ]
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "transportation_method": {
+            "type": "string",
+            "enum": [
+              "driving",
+              "walking",
+              "biking"
+            ]
+          },
+          "code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "input_waypoints": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "latitude": {
+                  "type": "number"
+                },
+                "longitude": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "latitude",
+                "longitude"
+              ]
+            }
+          },
+          "waypoints": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "latitude": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "longitude": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "name",
+                "latitude",
+                "longitude"
+              ]
+            }
+          },
+          "routes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "duration_seconds": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "distance_meters": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "legs": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "steps": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "mode": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "distance_meters": {
+                              "type": [
+                                "number",
+                                "null"
+                              ]
+                            },
+                            "duration_seconds": {
+                              "type": [
+                                "number",
+                                "null"
+                              ]
+                            },
+                            "name": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "maneuver": {
+                              "type": [
+                                "object",
+                                "null"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "mode",
+                            "distance_meters",
+                            "duration_seconds",
+                            "name",
+                            "maneuver"
+                          ]
+                        }
+                      }
+                    },
+                    "required": [
+                      "steps"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "duration_seconds",
+                "distance_meters",
+                "legs"
+              ]
+            }
+          },
+          "route_count": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "transportation_method",
+          "code",
+          "input_waypoints",
+          "waypoints",
+          "routes",
+          "route_count"
+        ]
+      },
+      "requires": [],
+      "provides": [
+        "map.routing.osrm_route"
+      ],
+      "supported_patterns": [
+        "Get a driving route summary between resolved coordinates",
+        "Get a walking route summary between resolved coordinates",
+        "Get a biking route summary between resolved coordinates",
+        "Return route metrics and snapped waypoint facts for workflow-level comparison across transportation methods"
+      ],
+      "guarantees": {
+        "collection_scope": "query",
+        "completeness": "conditional",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "semantic_enum",
+          "supported_values": [
+            "driving",
+            "walking",
+            "biking"
+          ],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "Given at least two valid waypoints and a supported transportation_method, returns a parsed object containing transportation_method, code, input_waypoints, waypoints, routes, and route_count.",
+        "When the service returns code='Ok' with one or more routes, each route summary includes duration_seconds and distance_meters from the response, and route_count equals len(routes).",
+        "When waypoints are present in the response, each returned waypoint record contains snapped name and parsed latitude/longitude from OSRM location coordinates.",
+        "If steps are returned within legs, each step is exposed as typed step data including mode, distance_meters, duration_seconds, name, and maneuver rather than raw JSON text.",
+        "The method hides the evidenced coupling between semantic transportation modes and site deployment controls; callers never provide port numbers or low-level profile fragments.",
+        "The request uses the evidenced fixed parameterization including overview=false, steps=true, alternatives=false, annotations=false, and geometries=polyline."
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task16_t73",
+          "template_id": "73",
+          "code_quote": "MODE_PORTS = {\"driving\": 5001, \"walking\": 5002} ... route_url = f\"http://18.208.187.221:{port}/route/v1/{mode}/{coord}?overview=false\" ... route['waypoints'][0]['name'] ... route['routes'][0]['distance']",
+          "explanation": "Generalized the demonstrated site-specific routing acquisition from hard-coded modes into a semantic transportation_method input while preserving the objective response boundary: code, snapped waypoints, route duration, and distance.",
+          "evidence_match_mode": "attributed_nonverbatim"
+        },
+        {
+          "workflow_id": "task221_t35",
+          "template_id": "35",
+          "code_quote": "ports = {\"Driving\":\"5000\", \"Biking\":\"5001\", \"Walking\":\"5002\"} ... url = f\"{OSRM_BASE}{port}/route/v1/driving/{src[1]},{src[0]};{dst[1]},{dst[0]}\" ... params = {\"overview\":\"false\",\"steps\":\"true\",\"annotations\":\"false\",\"geometries\":\"polyline\"}",
+          "explanation": "This workflow evidences the complete semantic mode mapping across driving, biking, and walking, including the site-coupled port mapping and stable route summary fields. The primitive hides those deployment controls behind one semantic enum.",
+          "evidence_match_mode": "attributed_nonverbatim"
+        },
+        {
+          "workflow_id": "task52_t68",
+          "template_id": "68",
+          "code_quote": "osrm_url = f\"{OSRM_BASE}5002/route/v1/driving/{origin_lon},{origin_lat};{dest_lon},{dest_lat}\" ... route = route_data['routes'][0] ... mode = route['legs'][0]['steps'][0].get('mode')",
+          "explanation": "This workflow confirms the semantic-mode abstraction is necessary: the low-level path label can remain 'driving' while another coupled deployment control changes and step evidence shows walking. The primitive therefore exposes semantic transportation_method and keeps the coupled mapping internal.",
+          "evidence_match_mode": "attributed_nonverbatim"
+        },
+        {
+          "workflow_id": "task54_t68",
+          "template_id": "68",
+          "code_quote": "ENGINE_ID = \"fossgis_osrm_foot\"; OSRM_PORT = \"5002\"; osrm_url = f\"{OSRM_BASE}{OSRM_PORT}/route/v1/driving/{coords}?overview=false&steps=true&alternatives=false&annotations=false\"; duration_seconds = route[\"routes\"][0][\"duration\"]; distance_m = route[\"routes\"][0][\"distance\"]",
+          "explanation": "This workflow adds direct evidence for the walking mode mapping to port 5002 under the site's configured foot engine and confirms alternatives=false as part of the stable request shape while preserving the same typed route summary boundary.",
+          "evidence_match_mode": "attributed_nonverbatim"
+        }
+      ]
+    }
+  ]
+}

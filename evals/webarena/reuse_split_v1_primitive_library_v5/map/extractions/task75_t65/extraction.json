@@ -1,0 +1,161 @@
+{
+  "decision": "CANDIDATES",
+  "candidates": [
+    {
+      "candidate_id": "task75_t65::geocode_location",
+      "proposed_method": "geocode_location",
+      "capability": "Geocode a place query on the map site's Nominatim-backed search service into a typed location match with coordinates and stable descriptive fields.",
+      "owns": [
+        "Constructing the Nominatim search URL for a place query",
+        "Requesting JSON geocoding results from the site's backing service",
+        "Parsing the first returned match into typed location fields",
+        "Raising an error when no geocoding result is returned"
+      ],
+      "does_not_own": [
+        "Choosing which user locations to geocode",
+        "Disambiguating among multiple returned candidates beyond the demonstrated first-result behavior",
+        "Comparing routes or optimizing visit order",
+        "Formatting final task answers"
+      ],
+      "input_contract": {
+        "query": {
+          "type": "string",
+          "description": "Free-text place query to geocode."
+        }
+      },
+      "output_contract": {
+        "match": {
+          "type": "object",
+          "fields": {
+            "query": {
+              "type": "string"
+            },
+            "display_name": {
+              "type": "string|null"
+            },
+            "latitude": {
+              "type": "number"
+            },
+            "longitude": {
+              "type": "number"
+            },
+            "type": {
+              "type": "string|null"
+            }
+          },
+          "description": "First geocoding match returned for the query."
+        }
+      },
+      "guarantees": {
+        "collection_scope": "query",
+        "completeness": "partial",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "none",
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "For a query with at least one result, returns a record containing numeric latitude and longitude parsed from the service response.",
+        "For a query with no results, fails explicitly instead of returning a fabricated location record.",
+        "Returned record preserves stable descriptive fields actually exposed by the response for the chosen match, including display_name and type when present."
+      ],
+      "source_evidence": {
+        "workflow_id": "task75_t65",
+        "template_id": "65",
+        "code_quote": "def geocode(name): url = NOMINATIM_URL + \"search?format=jsonv2&limit=3&q=\" + urllib.parse.quote(name); data = fetch_json(url); if not data: raise RuntimeError(...); row = data[0]; return {\"name\": name, \"display_name\": row.get(\"display_name\"), \"lat\": float(row[\"lat\"]), \"lon\": float(row[\"lon\"]), \"type\": row.get(\"type\")}",
+        "explanation": "The workflow demonstrates a reusable site operation for place geocoding against the map site's Nominatim service. Hard-coded endpoint constants are site configuration, while the reusable capability is parameterized by the query string. The typed output should preserve the demonstrated identity/description and coordinate fields from the acquisition boundary.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    },
+    {
+      "candidate_id": "task75_t65::get_driving_route",
+      "proposed_method": "get_driving_route",
+      "capability": "Get a driving route for an ordered list of coordinates from the map site's OSRM routing service, including total duration and distance.",
+      "owns": [
+        "Encoding ordered waypoint coordinates into the OSRM route URL path",
+        "Requesting route JSON from the site's backing OSRM service",
+        "Validating that the OSRM response code is Ok",
+        "Parsing total route duration and distance from the first returned route",
+        "Returning the request URL used for the route query"
+      ],
+      "does_not_own": [
+        "Geocoding place names into coordinates",
+        "Enumerating or ranking candidate waypoint orders",
+        "Selecting an optimal route among alternatives",
+        "Producing turn-by-turn reasoning beyond the demonstrated aggregate fields"
+      ],
+      "input_contract": {
+        "waypoints": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "fields": {
+              "longitude": {
+                "type": "number"
+              },
+              "latitude": {
+                "type": "number"
+              }
+            }
+          },
+          "description": "Ordered driving waypoints; at least two coordinates are required to form a route."
+        }
+      },
+      "output_contract": {
+        "route": {
+          "type": "object",
+          "fields": {
+            "waypoints": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "fields": {
+                  "longitude": {
+                    "type": "number"
+                  },
+                  "latitude": {
+                    "type": "number"
+                  }
+                }
+              }
+            },
+            "duration_seconds": {
+              "type": "number"
+            },
+            "distance_meters": {
+              "type": "number"
+            },
+            "request_url": {
+              "type": "string"
+            }
+          },
+          "description": "Aggregate route metrics for the first route returned by OSRM."
+        }
+      },
+      "guarantees": {
+        "collection_scope": "query",
+        "completeness": "conditional",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "none",
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "For a valid ordered waypoint list accepted by the service, returns numeric duration_seconds and distance_meters from the first route in the response.",
+        "If the service response code is not Ok, fails explicitly rather than returning partial route metrics.",
+        "Returned request_url corresponds to the waypoint order used in the query so callers can audit the acquisition."
+      ],
+      "source_evidence": {
+        "workflow_id": "task75_t65",
+        "template_id": "65",
+        "code_quote": "def route(order, coord_map): encoded = \";\".join(f\"{coord_map[name]['lon']},{coord_map[name]['lat']}\" for name in order); url = OSRM_BASE + encoded + \"?overview=false&steps=true\"; data = fetch_json(url); if data.get(\"code\") != \"Ok\": raise RuntimeError(...); route0 = data[\"routes\"][0]; return {\"order\": order, \"duration\": route0[\"duration\"], \"distance\": route0[\"distance\"], \"url\": url}",
+        "explanation": "The workflow demonstrates a reusable routing primitive against the site's OSRM backend. Generalizing from place-name lookup via coord_map, the primitive should directly accept ordered coordinates, because coordinate encoding is the demonstrated acquisition boundary for routing. The workflow only consumes duration and distance, but those are stable aggregate route fields explicitly exposed by the response and should be preserved with the queried waypoint order.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    }
+  ]
+}

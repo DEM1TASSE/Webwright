@@ -1,0 +1,192 @@
+{
+  "decision": "CANDIDATES",
+  "candidates": [
+    {
+      "candidate_id": "task40_t77::geocode_place_search",
+      "proposed_method": "geocode_place_search",
+      "capability": "Search OSM-compatible geocoding endpoints for place candidates and return typed geocoding results with coordinates and display metadata.",
+      "owns": [
+        "Submitting a free-text place query to supported geocoding endpoints",
+        "Collecting candidate place results from geocoding responses",
+        "Returning stable location identity/display fields actually exposed by the response, including coordinates and place classification"
+      ],
+      "does_not_own": [
+        "Choosing the semantically correct candidate for a task-specific intent",
+        "Comparing multiple candidate places to answer a downstream question",
+        "Routing between places",
+        "Applying workflow-specific include/exclude scoring heuristics"
+      ],
+      "input_contract": {
+        "query": {
+          "type": "string",
+          "description": "Free-text place query to geocode."
+        },
+        "max_results": {
+          "type": "integer",
+          "description": "Maximum number of results requested from endpoints when supported.",
+          "optional": true
+        },
+        "provider": {
+          "type": "string",
+          "enum": [
+            "maps_co_search",
+            "nominatim_search"
+          ],
+          "description": "Which supported geocoding endpoint to use."
+        }
+      },
+      "output_contract": {
+        "results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "fields": {
+              "display_name": {
+                "type": "string",
+                "nullable": true
+              },
+              "name": {
+                "type": "string",
+                "nullable": true
+              },
+              "lat": {
+                "type": "number"
+              },
+              "lon": {
+                "type": "number"
+              },
+              "type": {
+                "type": "string",
+                "nullable": true
+              },
+              "class": {
+                "type": "string",
+                "nullable": true
+              }
+            }
+          },
+          "description": "Candidate geocoding results returned by the provider, in provider response order."
+        }
+      },
+      "guarantees": {
+        "collection_scope": "query",
+        "completeness": "partial",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "semantic_enum",
+          "supported_values": [
+            "maps_co_search",
+            "nominatim_search"
+          ],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "Returns an array of zero or more geocoding result objects parsed from JSON, not raw response text.",
+        "Every returned result includes numeric latitude and longitude when present in the provider response and preserves exposed display/classification fields.",
+        "If no matches are found, returns an empty results array rather than raising solely because the query had no match."
+      ],
+      "source_evidence": {
+        "workflow_id": "task40_t77",
+        "template_id": "77",
+        "code_quote": "for base in ['https://geocode.maps.co/search?q=', 'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&q=']:\n    url = base + urllib.parse.quote(q)\n    data = http_get_json(url)\n    if isinstance(data, list):\n        candidates.extend(data)",
+        "explanation": "The workflow demonstrates reusable place-search geocoding against two OSM-compatible website endpoints. Generalized from hard-coded origin/destination query strings to an arbitrary free-text query, while preserving the typed candidate fields the workflow actually inspects and logs: display_name, lat, lon, type, and class, plus provider-exposed name when present.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    },
+    {
+      "candidate_id": "task40_t77::get_driving_route",
+      "proposed_method": "get_driving_route",
+      "capability": "Request driving directions between two coordinates from an OSRM-compatible routing service and return typed route summaries.",
+      "owns": [
+        "Calling an OSRM-compatible route endpoint with origin/destination coordinates",
+        "Parsing route JSON and extracting route summary fields from returned routes",
+        "Hiding provider-specific base URL coupling behind a semantic provider choice"
+      ],
+      "does_not_own": [
+        "Geocoding textual place names into coordinates",
+        "Selecting among multiple destinations for a task",
+        "Deciding whether a duration satisfies a user threshold",
+        "Summarizing turn-by-turn steps beyond fields actually demonstrated as consumed"
+      ],
+      "input_contract": {
+        "origin": {
+          "type": "object",
+          "fields": {
+            "lon": {
+              "type": "number"
+            },
+            "lat": {
+              "type": "number"
+            }
+          }
+        },
+        "destination": {
+          "type": "object",
+          "fields": {
+            "lon": {
+              "type": "number"
+            },
+            "lat": {
+              "type": "number"
+            }
+          }
+        },
+        "provider": {
+          "type": "string",
+          "enum": [
+            "routing_openstreetmap_de_car",
+            "project_osrm"
+          ],
+          "description": "Which demonstrated OSRM-compatible routing service to call."
+        }
+      },
+      "output_contract": {
+        "code": {
+          "type": "string",
+          "nullable": true
+        },
+        "routes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "fields": {
+              "distance_meters": {
+                "type": "number"
+              },
+              "duration_seconds": {
+                "type": "number"
+              }
+            }
+          },
+          "description": "Returned route summaries in provider order."
+        }
+      },
+      "guarantees": {
+        "collection_scope": "query",
+        "completeness": "conditional",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "semantic_enum",
+          "supported_values": [
+            "routing_openstreetmap_de_car",
+            "project_osrm"
+          ],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "When the provider responds with code 'Ok' and at least one route, returns a parsed routes array with numeric distance_meters and duration_seconds for each returned route.",
+        "Does not return raw JSON text; route summaries are converted into typed numeric fields.",
+        "If the provider indicates no successful route response, the method surfaces acquisition failure distinctly from a valid empty collection."
+      ],
+      "source_evidence": {
+        "workflow_id": "task40_t77",
+        "template_id": "77",
+        "code_quote": "f'https://routing.openstreetmap.de/routed-car/route/v1/driving/{olon},{olat};{dlon},{dlat}?overview=false&steps=true',\nf'https://router.project-osrm.org/route/v1/driving/{olon},{olat};{dlon},{dlat}?overview=false&steps=true'\n...\nif data.get('code') == 'Ok' and data.get('routes'):\n    return data, url\n...\nroute0 = route_data['routes'][0]\nduration_seconds = float(route0['duration'])\ndistance_meters = float(route0['distance'])",
+        "explanation": "The workflow demonstrates a reusable website routing operation against OSRM-compatible services. Generalized from hard-coded fallback URLs and task logic into a provider-selected driving-route primitive that returns typed route summaries. The evidence only supports route-level distance and duration extraction, not richer step records, because the workflow requests steps but never parses them into typed outputs.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    }
+  ]
+}

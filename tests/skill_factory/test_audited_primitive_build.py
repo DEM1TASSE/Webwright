@@ -70,6 +70,34 @@ def test_partition_is_deterministic_and_bounded():
     )
 
 
+def test_bare_extraction_candidate_gets_mechanical_envelope():
+    from webwright.skill_factory.audited_primitive_build import _normalize_extraction
+
+    candidate = extraction(WORKFLOWS[0])["candidates"][0]
+    assert _normalize_extraction(candidate) == {
+        "decision": "CANDIDATES", "candidates": [candidate]
+    }
+
+
+def test_workflow_attribution_is_derived_from_replacement_evidence():
+    from webwright.skill_factory.audited_primitive_build import _reconcile_workflow_attribution
+
+    proposal = {
+        "operations": [{"op": "ADD", "replacement": primitive()}],
+        "workflow_attribution": [
+            {"workflow_id": "w1", "decision": "SKIP", "reason": "model mismatch"},
+            {"workflow_id": "w2", "decision": "CONTRIBUTED", "operation_indices": [0]},
+        ],
+    }
+    reconciled = _reconcile_workflow_attribution(proposal, WORKFLOWS)
+    assert reconciled["workflow_attribution"] == [
+        {"workflow_id": "w1", "decision": "CONTRIBUTED", "operation_indices": [0]},
+        {"workflow_id": "w2", "decision": "SKIP",
+         "reason": "No generated ADD/UPDATE replacement cites this workflow as source evidence."},
+    ]
+    assert reconciled["model_workflow_attribution"] == proposal["workflow_attribution"]
+
+
 def test_consolidation_requires_exact_coverage():
     pool = {"gitlab/list_commits": primitive()}
     final, errors, _ = validate_consolidation(
@@ -121,6 +149,7 @@ def test_merge_and_split_generate_complete_classified_replacements():
     b = primitive("gitlab/commits/get_commit", "commits")
     b["method"] = "get_commit"
     b["method_code"] = "def get_commit(self, sha):\n    return {'sha': sha}\n"
+    b["input_contract"] = {"sha": "str"}
     final, errors, _ = validate_consolidation(
         {"operations": [{"op": "SPLIT", "source": "gitlab/list_commits",
                          "replacements": [a, b]}]},
@@ -128,6 +157,21 @@ def test_merge_and_split_generate_complete_classified_replacements():
         workflows={x["id"]: x for x in WORKFLOWS},
     )
     assert not errors and {x["method"] for x in final} == {"list_commits", "get_commit"}
+
+
+def test_consolidation_rejects_same_feature_and_input_contract_collision():
+    second = primitive("gitlab/get_commits")
+    second["method"] = "get_commits"
+    second["method_code"] = "def get_commits(self, project):\n    return []\n"
+    pool = {"gitlab/list_commits": primitive(), "gitlab/get_commits": second}
+    _, errors, _ = validate_consolidation(
+        {"operations": [
+            {"op": "KEEP", "source": "gitlab/list_commits", "feature": "commits"},
+            {"op": "KEEP", "source": "gitlab/get_commits", "feature": "commits"},
+        ]},
+        site="gitlab", pool=pool, workflows={x["id"]: x for x in WORKFLOWS},
+    )
+    assert any("overlapping commits primitives" in error for error in errors)
 
 
 def test_operation_alias_is_canonicalized_without_changing_raw_shape(tmp_path):
@@ -234,6 +278,15 @@ def test_gate_rejects_unsafe_or_underspecified_guarantees():
     value["acceptance_checks"] = []
     errors = validate_primitive(value, site="gitlab", workflows={"w1": WORKFLOWS[0]})
     assert "acceptance_checks must be non-empty strings" in errors
+
+    value = primitive()
+    value["input_contract"] = {
+        "type": "object",
+        "properties": {"backend": {"type": "string", "enum": ["a", "b"]}},
+    }
+    errors = validate_primitive(value, site="gitlab", workflows={"w1": WORKFLOWS[0]})
+    assert "public configuration enum requires semantic_enum guarantees" in errors
+    assert "guarantees supported_values must match public configuration enum" in errors
 
 
 def test_evidence_gate_records_template_escape_equivalence():

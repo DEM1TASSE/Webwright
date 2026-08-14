@@ -1,0 +1,390 @@
+{
+  "site": "map",
+  "status": "candidate",
+  "history": [
+    {
+      "batch": 0,
+      "workflows": [
+        "task154_t36",
+        "task248_t46",
+        "task59_t69",
+        "task37_t77",
+        "task75_t65",
+        "task155_t36",
+        "task58_t69",
+        "task39_t77"
+      ],
+      "diff": [
+        {
+          "op": "ADD",
+          "primitive_id": "map/search_places",
+          "before_hash": null,
+          "after_hash": "sha256:72a51497894b974cc78b14d1d1926060ff8b00500de4e272d5ea85e5889e180f"
+        },
+        {
+          "op": "ADD",
+          "primitive_id": "map/get_driving_route",
+          "before_hash": null,
+          "after_hash": "sha256:99bccba68231f64cb2d5433e45f2dcf5466e050e1bafa9f26cfaacf71bf60dd3"
+        },
+        {
+          "op": "ADD",
+          "primitive_id": "map/search_local_geocoder_places",
+          "before_hash": null,
+          "after_hash": "sha256:de238ac8a46bd92adab5793818ac35453e5c6fe8aafd610c5982158ee5b18428"
+        }
+      ],
+      "resumed": true
+    },
+    {
+      "batch": 1,
+      "workflows": [
+        "task85_t64",
+        "task40_t77",
+        "task52_t68",
+        "task16_t73",
+        "task87_t64",
+        "task221_t35",
+        "task84_t64",
+        "task151_t36"
+      ],
+      "diff": [
+        {
+          "op": "ADD",
+          "primitive_id": "map/get_route",
+          "before_hash": null,
+          "after_hash": "sha256:0d86f552833c23df3a5a77b5822c50931a96ad010a14fac60d8b9e5316584b56"
+        }
+      ]
+    },
+    {
+      "batch": 2,
+      "workflows": [
+        "task54_t68"
+      ],
+      "diff": [
+        {
+          "op": "UPDATE",
+          "primitive_id": "map/get_route",
+          "before_hash": "sha256:0d86f552833c23df3a5a77b5822c50931a96ad010a14fac60d8b9e5316584b56",
+          "after_hash": "sha256:f4a3761bb8ce4546aa5b83c0a7355f4323c16e2f6c8c735dfcadd05d6b4fe3bc"
+        }
+      ]
+    }
+  ],
+  "consolidation_operations": [
+    {
+      "op": "KEEP",
+      "source": "map/search_places",
+      "feature": "geocoding"
+    },
+    {
+      "op": "KEEP",
+      "source": "map/search_local_geocoder_places",
+      "feature": "geocoding"
+    },
+    {
+      "op": "MERGE",
+      "sources": [
+        "map/get_driving_route",
+        "map/get_route"
+      ],
+      "feature": "routing",
+      "replacement": {
+        "primitive_id": "map/routing/get_route",
+        "method": "get_route",
+        "capability": "Request a route between ordered coordinates from the map site's configured OSRM service for a supported transportation mode and return typed route summaries plus snapped waypoint metadata.",
+        "method_code": "def get_route(self, waypoints: list, transportation_method: str = \"driving\") -> dict:\n    import json\n    import urllib.parse\n    import urllib.request\n\n    if not isinstance(waypoints, list) or len(waypoints) < 2:\n        raise ValueError(\"waypoints must be a list of at least two coordinate objects\")\n    if transportation_method not in {\"driving\", \"walking\", \"biking\"}:\n        raise ValueError(\"transportation_method must be one of: driving, walking, biking\")\n\n    mode_config = {\n        \"driving\": {\"port\": 5000, \"profile\": \"driving\"},\n        \"biking\": {\"port\": 5001, \"profile\": \"driving\"},\n        \"walking\": {\"port\": 5002, \"profile\": \"driving\"},\n    }\n    config = mode_config[transportation_method]\n\n    normalized_waypoints = []\n    encoded_points = []\n    for waypoint in waypoints:\n        if not isinstance(waypoint, dict):\n            raise ValueError(\"each waypoint must be an object with latitude and longitude\")\n        latitude = waypoint.get(\"latitude\")\n        longitude = waypoint.get(\"longitude\")\n        if latitude is None or longitude is None:\n            raise ValueError(\"each waypoint must include latitude and longitude\")\n        latitude = float(latitude)\n        longitude = float(longitude)\n        normalized_waypoints.append({\n            \"latitude\": latitude,\n            \"longitude\": longitude,\n        })\n        encoded_points.append(f\"{longitude},{latitude}\")\n\n    url = (\n        f\"http://18.208.187.221:{config['port']}/route/v1/{config['profile']}/\"\n        + \";\".join(encoded_points)\n        + \"?\"\n        + urllib.parse.urlencode({\n            \"overview\": \"false\",\n            \"steps\": \"true\",\n            \"alternatives\": \"false\",\n            \"annotations\": \"false\",\n            \"geometries\": \"polyline\",\n        })\n    )\n\n    request = urllib.request.Request(url, headers={\"User-Agent\": \"Mozilla/5.0\"})\n    with urllib.request.urlopen(request, timeout=30) as response:\n        payload = json.loads(response.read().decode(\"utf-8\"))\n\n    output_waypoints = []\n    for waypoint in payload.get(\"waypoints\", []):\n        location = waypoint.get(\"location\") or []\n        longitude = location[0] if len(location) > 0 else None\n        latitude = location[1] if len(location) > 1 else None\n        output_waypoints.append({\n            \"name\": waypoint.get(\"name\"),\n            \"latitude\": float(latitude) if latitude is not None else None,\n            \"longitude\": float(longitude) if longitude is not None else None,\n        })\n\n    routes = []\n    for route in payload.get(\"routes\", []):\n        legs_out = []\n        for leg in route.get(\"legs\", []):\n            steps_out = []\n            for step in leg.get(\"steps\", []):\n                steps_out.append({\n                    \"mode\": step.get(\"mode\"),\n                    \"distance_meters\": step.get(\"distance\"),\n                    \"duration_seconds\": step.get(\"duration\"),\n                    \"name\": step.get(\"name\"),\n                    \"maneuver\": step.get(\"maneuver\"),\n                })\n            legs_out.append({\"steps\": steps_out})\n        routes.append({\n            \"duration_seconds\": route.get(\"duration\"),\n            \"distance_meters\": route.get(\"distance\"),\n            \"legs\": legs_out,\n        })\n\n    return {\n        \"transportation_method\": transportation_method,\n        \"code\": payload.get(\"code\"),\n        \"input_waypoints\": normalized_waypoints,\n        \"waypoints\": output_waypoints,\n        \"routes\": routes,\n        \"route_count\": len(routes),\n    }\n",
+        "owns": [
+          "Constructing the site-configured OSRM route request from ordered waypoint coordinates",
+          "Resolving semantic transportation mode to the site's coupled OSRM deployment details internally",
+          "Issuing the HTTP request to the map site's routing service and parsing JSON",
+          "Returning typed route summaries including duration, distance, snapped waypoints, and leg/step records exposed by the response"
+        ],
+        "does_not_own": [
+          "Geocoding text place queries into coordinates",
+          "Choosing which origin/destination candidates to route between",
+          "Applying task-specific threshold comparisons such as within one hour",
+          "Formatting durations into HH:MM:SS strings for final answers",
+          "Selecting the nearest destination or best candidate across multiple searched places"
+        ],
+        "input_contract": {
+          "type": "object",
+          "properties": {
+            "waypoints": {
+              "type": "array",
+              "description": "Ordered route waypoints; at least two coordinate objects are required.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "latitude": {
+                    "type": "number"
+                  },
+                  "longitude": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "latitude",
+                  "longitude"
+                ]
+              }
+            },
+            "transportation_method": {
+              "type": "string",
+              "enum": [
+                "driving",
+                "walking",
+                "biking"
+              ],
+              "default": "driving",
+              "description": "Semantic transportation mode. The primitive hides the site-coupled backend port/profile mapping."
+            }
+          },
+          "required": [
+            "waypoints"
+          ]
+        },
+        "output_contract": {
+          "type": "object",
+          "properties": {
+            "transportation_method": {
+              "type": "string",
+              "enum": [
+                "driving",
+                "walking",
+                "biking"
+              ]
+            },
+            "code": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "input_waypoints": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "latitude": {
+                    "type": "number"
+                  },
+                  "longitude": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "latitude",
+                  "longitude"
+                ]
+              }
+            },
+            "waypoints": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "latitude": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "longitude": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "name",
+                  "latitude",
+                  "longitude"
+                ]
+              }
+            },
+            "routes": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "duration_seconds": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "distance_meters": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "legs": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "steps": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "mode": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "distance_meters": {
+                                "type": [
+                                  "number",
+                                  "null"
+                                ]
+                              },
+                              "duration_seconds": {
+                                "type": [
+                                  "number",
+                                  "null"
+                                ]
+                              },
+                              "name": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "maneuver": {
+                                "type": [
+                                  "object",
+                                  "null"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "mode",
+                              "distance_meters",
+                              "duration_seconds",
+                              "name",
+                              "maneuver"
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "steps"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "duration_seconds",
+                  "distance_meters",
+                  "legs"
+                ]
+              }
+            },
+            "route_count": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "transportation_method",
+            "code",
+            "input_waypoints",
+            "waypoints",
+            "routes",
+            "route_count"
+          ]
+        },
+        "requires": [],
+        "provides": [
+          "map.routing.osrm_route"
+        ],
+        "supported_patterns": [
+          "Get a driving route summary between resolved coordinates",
+          "Get a walking route summary between resolved coordinates",
+          "Get a biking route summary between resolved coordinates",
+          "Get a driving route summary for a multi-stop ordered itinerary",
+          "Return route metrics and snapped waypoint facts for workflow-level comparison across transportation methods or waypoint orders"
+        ],
+        "guarantees": {
+          "collection_scope": "query",
+          "completeness": "conditional",
+          "supports_absence_proof": false,
+          "configuration": {
+            "kind": "semantic_enum",
+            "supported_values": [
+              "driving",
+              "walking",
+              "biking"
+            ],
+            "coupled_site_parameters_hidden": true
+          }
+        },
+        "acceptance_checks": [
+          "Given at least two valid waypoints and a supported transportation_method, returns a parsed object containing transportation_method, code, input_waypoints, waypoints, routes, and route_count.",
+          "When the service returns code='Ok' with one or more routes, each route summary includes duration_seconds and distance_meters from the response, and route_count equals len(routes).",
+          "When waypoints are present in the response, each returned waypoint record contains snapped name and parsed latitude/longitude from OSRM location coordinates.",
+          "If steps are returned within legs, each step is exposed as typed step data including mode, distance_meters, duration_seconds, name, and maneuver rather than raw JSON text.",
+          "If the service returns no routes in a parsed response, the method returns route_count=0 and routes=[] rather than fabricating route metrics.",
+          "The method hides the evidenced coupling between semantic transportation modes and site deployment controls; callers never provide port numbers or low-level profile fragments.",
+          "The request uses the evidenced fixed parameterization including overview=false, steps=true, alternatives=false, annotations=false, and geometries=polyline."
+        ],
+        "source_evidence": [
+          {
+            "workflow_id": "task154_t36",
+            "template_id": "36",
+            "code_quote": "base_osrm = 'http://18.208.187.221:5000/route/v1/driving/'\ncoords = f\"{origin['lon']},{origin['lat']};{dest['lon']},{dest['lat']}\"\nroute_url = base_osrm + coords + '?overview=false&steps=true&geometries=polyline'\nwith urllib.request.urlopen(route_url, timeout=30) as r:\n    route = json.load(r)\n...\n'route_summary': {'duration_seconds': seconds, 'distance_meters': route['routes'][0]['distance']}",
+            "explanation": "Source attribution from map/get_driving_route: generalized the two-point driving-only OSRM request into the unified routing primitive while preserving the objective route acquisition boundary and summary metrics.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          },
+          {
+            "workflow_id": "task75_t65",
+            "template_id": "65",
+            "code_quote": "def route(order, coord_map):\n    encoded = \";\".join(f\"{coord_map[name]['lon']},{coord_map[name]['lat']}\" for name in order)\n    url = OSRM_BASE + encoded + \"?overview=false&steps=true\"\n    data = fetch_json(url)\n    if data.get(\"code\") != \"Ok\":\n        raise RuntimeError(f\"OSRM error for {order}: {data}\")\n    route0 = data[\"routes\"][0]\n    return {\n        \"order\": order,\n        \"duration\": route0[\"duration\"],\n        \"distance\": route0[\"distance\"],\n        \"url\": url,\n    }",
+            "explanation": "Source attribution from map/get_driving_route: preserves demonstrated support for ordered multi-stop waypoint routing.",
+            "evidence_match_mode": "exact"
+          },
+          {
+            "workflow_id": "task221_t35",
+            "template_id": "35",
+            "code_quote": "ports = {\"Driving\":\"5000\", \"Biking\":\"5001\", \"Walking\":\"5002\"} ... url = f\"{OSRM_BASE}{port}/route/v1/driving/{src[1]},{src[0]};{dst[1]},{dst[0]}\" ... params = {\"overview\":\"false\",\"steps\":\"true\",\"annotations\":\"false\",\"geometries\":\"polyline\"}",
+            "explanation": "Source attribution from map/get_route: evidences the semantic mode mapping across the site's coupled deployments and stable request shape.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          },
+          {
+            "workflow_id": "task52_t68",
+            "template_id": "68",
+            "code_quote": "osrm_url = f\"{OSRM_BASE}5002/route/v1/driving/{origin_lon},{origin_lat};{dest_lon},{dest_lat}\" ... route = route_data['routes'][0] ... mode = route['legs'][0]['steps'][0].get('mode')",
+            "explanation": "Source attribution from map/get_route: confirms typed leg and step extraction belongs in the primitive and semantic transportation mode should remain abstracted from low-level path/profile details.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        ]
+      },
+      "reason": "map/get_route strictly subsumes map/get_driving_route: it preserves the same driving capability through a semantic enum default, keeps site-coupled deployment mapping internal, and strengthens the contract by also exposing snapped waypoints and typed legs/steps without moving workflow-owned selection logic into the primitive."
+    }
+  ],
+  "coverage": {
+    "expected": [
+      "map/get_driving_route",
+      "map/get_route",
+      "map/search_local_geocoder_places",
+      "map/search_places"
+    ],
+    "consumed": [
+      "map/search_places",
+      "map/search_local_geocoder_places",
+      "map/get_driving_route",
+      "map/get_route"
+    ]
+  }
+}

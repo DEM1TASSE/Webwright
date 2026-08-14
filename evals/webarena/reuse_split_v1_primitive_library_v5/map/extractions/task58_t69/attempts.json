@@ -1,0 +1,282 @@
+[
+  {
+    "attempt": 1,
+    "proposal": {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task58_t69::search_local_geocoder_places",
+          "proposed_method": "search_local_geocoder_places",
+          "capability": "Search the site's local geocoder endpoint for place candidates within a visible map area and parse typed place results from the HTML response.",
+          "owns": [
+            "Open the site search page to establish session context and extract CSRF metadata required by the site's geocoder POST workflow.",
+            "Submit a place query to the site's /geocoder/search_osm_nominatim endpoint with map bounds, zoom, session cookie, CSRF field, and AJAX-style headers.",
+            "Parse returned HTML anchors with class set_position into typed place candidate records.",
+            "Return stable place fields actually exposed in the response, including place category prefix, display name, coordinates, and whether results were obtained for the requested bounded query."
+          ],
+          "does_not_own": [
+            "Choosing which search terms to try for a task.",
+            "Ranking results by distance or relevance beyond preserving site response order.",
+            "Computing distances between places.",
+            "Filtering to cafes or to a city-specific subset for task purposes.",
+            "Aggregating across multiple different queries into one deduplicated answer set."
+          ],
+          "input_contract": {
+            "type": "object",
+            "properties": {
+              "query": {
+                "type": "string",
+                "description": "Place search text submitted to the site's local geocoder."
+              },
+              "map_bounds": {
+                "type": "object",
+                "properties": {
+                  "minlon": {
+                    "type": "number"
+                  },
+                  "minlat": {
+                    "type": "number"
+                  },
+                  "maxlon": {
+                    "type": "number"
+                  },
+                  "maxlat": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "minlon",
+                  "minlat",
+                  "maxlon",
+                  "maxlat"
+                ],
+                "description": "Visible map bounding box used by the site geocoder request."
+              },
+              "zoom": {
+                "type": "integer",
+                "description": "Map zoom level sent with the geocoder request."
+              }
+            },
+            "required": [
+              "query",
+              "map_bounds",
+              "zoom"
+            ]
+          },
+          "output_contract": {
+            "type": "object",
+            "properties": {
+              "query": {
+                "type": "string"
+              },
+              "results": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "prefix": {
+                      "type": "string",
+                      "description": "Site-displayed place category prefix from data-prefix, e.g. Cafe."
+                    },
+                    "display_name": {
+                      "type": "string",
+                      "description": "Full place name/location string from data-name."
+                    },
+                    "latitude": {
+                      "type": "number"
+                    },
+                    "longitude": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "prefix",
+                    "display_name",
+                    "latitude",
+                    "longitude"
+                  ]
+                }
+              },
+              "result_count": {
+                "type": "integer"
+              },
+              "search_scope": {
+                "type": "object",
+                "properties": {
+                  "map_bounds": {
+                    "type": "object",
+                    "properties": {
+                      "minlon": {
+                        "type": "number"
+                      },
+                      "minlat": {
+                        "type": "number"
+                      },
+                      "maxlon": {
+                        "type": "number"
+                      },
+                      "maxlat": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "minlon",
+                      "minlat",
+                      "maxlon",
+                      "maxlat"
+                    ]
+                  },
+                  "zoom": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "map_bounds",
+                  "zoom"
+                ]
+              }
+            },
+            "required": [
+              "query",
+              "results",
+              "result_count",
+              "search_scope"
+            ]
+          },
+          "guarantees": {
+            "collection_scope": "query",
+            "completeness": "conditional",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "internal",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "Returns a structured results array parsed from HTML anchors carrying data-lat, data-lon, data-prefix, and data-name attributes, not raw page HTML.",
+            "Each returned record includes prefix, display_name, latitude, and longitude parsed from one result element.",
+            "An empty results array is valid when the geocoder response contains no matching parsed result anchors for the submitted query and bounded search scope.",
+            "The primitive handles session establishment and CSRF extraction from the site's search page before posting to /geocoder/search_osm_nominatim."
+          ],
+          "source_evidence": {
+            "workflow_id": "task58_t69",
+            "template_id": "69",
+            "code_quote": "search_page = session.get(BASE + \"/search\", params={\"query\": \"Hunt Library Pittsburgh\"}, timeout=30)\ncsrf_param = re.search(r'<meta name=\"csrf-param\" content=\"([^\"]+)\"', search_page.text).group(1)\ncsrf_token = re.search(r'<meta name=\"csrf-token\" content=\"([^\"]+)\"', search_page.text).group(1)\n...\nresp = session.post(\n    BASE + \"/geocoder/search_osm_nominatim\",\n    data=dict(common, query=q),\n    headers={\"Referer\": search_page.url, \"X-Requested-With\": \"XMLHttpRequest\"},\n    timeout=30,\n)\nfor m in re.finditer(r'<a class=\"set_position\"[^>]*data-lat=\"([^\"]+)\"[^>]*data-lon=\"([^\"]+)\"[^>]*data-prefix=\"([^\"]*)\"[^>]*data-name=\"([^\"]+)\"', resp.text):\n    lat = float(m.group(1))\n    lon = float(m.group(2))\n    prefix = html.unescape(m.group(3))\n    name = html.unescape(m.group(4))",
+            "explanation": "The workflow demonstrates a reusable site operation: establish a valid session on the map site, extract CSRF metadata, call the site's local geocoder POST endpoint with bounded map parameters, and parse typed place candidates from returned HTML. Hard-coded query terms and task-specific filtering/ranking are not intrinsic to the capability and should be removed; bounds, zoom, and query become parameters.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        },
+        {
+          "candidate_id": "task58_t69::geocode_place_query_with_site_configured_nominatim",
+          "proposed_method": "geocode_place_query_with_site_configured_nominatim",
+          "capability": "Resolve a free-text place query using the map site's configured Nominatim service and parse typed geocoding results.",
+          "owns": [
+            "Call the same Nominatim service endpoint configured by the site for place resolution.",
+            "Submit a text query with format=jsonv2 and a result limit.",
+            "Parse geocoding JSON into typed place resolution records with stable identity and coordinate fields actually exposed by the response."
+          ],
+          "does_not_own": [
+            "Discovering the geocoder endpoint from arbitrary site assets at runtime if not already known in the component configuration.",
+            "Choosing which user query to geocode for a task.",
+            "Selecting one result according to task-specific heuristics beyond preserving returned order.",
+            "Computing distances or comparing resolved places with other entities."
+          ],
+          "input_contract": {
+            "type": "object",
+            "properties": {
+              "query": {
+                "type": "string",
+                "description": "Free-text place query to geocode."
+              },
+              "limit": {
+                "type": "integer",
+                "description": "Maximum number of geocoding results to request."
+              }
+            },
+            "required": [
+              "query"
+            ],
+            "defaultable": {
+              "limit": 1
+            }
+          },
+          "output_contract": {
+            "type": "object",
+            "properties": {
+              "query": {
+                "type": "string"
+              },
+              "results": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "display_name": {
+                      "type": "string"
+                    },
+                    "latitude": {
+                      "type": "number"
+                    },
+                    "longitude": {
+                      "type": "number"
+                    },
+                    "osm_type": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "osm_id": {
+                      "type": [
+                        "integer",
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "display_name",
+                    "latitude",
+                    "longitude"
+                  ]
+                }
+              },
+              "result_count": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "query",
+              "results",
+              "result_count"
+            ]
+          },
+          "guarantees": {
+            "collection_scope": "query",
+            "completeness": "partial",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "internal",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "Issues a request to the site's configured Nominatim service and parses JSON results into structured records.",
+            "Each returned record includes display_name, latitude, and longitude; osm_type and osm_id are included when present in the response.",
+            "If the service returns zero results, the primitive returns an empty results array rather than failing parsing."
+          ],
+          "source_evidence": {
+            "workflow_id": "task58_t69",
+            "template_id": "69",
+            "code_quote": "NOMINATIM = \"http://18.208.187.221:8085/\"\n...\nhunt_url = NOMINATIM + \"search?\" + urlencode({\"q\": \"Hunt Library Pittsburgh\", \"format\": \"jsonv2\", \"limit\": 1})\nhunt = get_json(hunt_url)[0]\nhlat = float(hunt[\"lat\"])\nhlon = float(hunt[\"lon\"])\n...\nf\"OSM type/id: {hunt.get('osm_type')} / {hunt.get('osm_id')}\",",
+            "explanation": "The workflow explicitly uses the same Nominatim endpoint configured for the map site and parses geocoding response fields including display name, coordinates, and OSM identifiers. The demonstrated operation is reusable as a site-coupled geocoding primitive parameterized by query and optional limit, while the specific target place ('Hunt Library Pittsburgh') is task-specific.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        }
+      ]
+    },
+    "errors": []
+  }
+]

@@ -1,0 +1,184 @@
+{
+  "decision": "CANDIDATES",
+  "candidates": [
+    {
+      "candidate_id": "task39_t77::geocode_place_search",
+      "proposed_method": "geocode_place_search",
+      "capability": "Search the map site's Nominatim geocoding service for place/address candidates and return typed geocoding records.",
+      "owns": [
+        "Constructing the site's /search request with query text and supported parameters such as result limit and jsonv2 format",
+        "Calling the map site's geocoding endpoint",
+        "Parsing returned geocoding candidate objects into typed records with identity, display text, and coordinates",
+        "Returning multiple candidates in the service-provided order"
+      ],
+      "does_not_own": [
+        "Task-specific filtering such as selecting only Walmart candidates or only Pittsburgh matches",
+        "Choosing the best candidate for a downstream task",
+        "Distance computations between candidates",
+        "Routing or travel-time estimation"
+      ],
+      "input_contract": {
+        "query": {
+          "type": "string",
+          "description": "Free-text place or address query submitted to the site's geocoding search."
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Maximum number of candidates to request from the geocoding service.",
+          "default": 10
+        }
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "display_name": {
+                  "type": "string"
+                },
+                "latitude": {
+                  "type": "number"
+                },
+                "longitude": {
+                  "type": "number"
+                },
+                "raw_place_id": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "raw_osm_type": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "raw_osm_id": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "raw_category": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "raw_type": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "raw_importance": {
+                  "type": "number",
+                  "nullable": true
+                }
+              }
+            }
+          }
+        }
+      },
+      "guarantees": {
+        "collection_scope": "query",
+        "completeness": "partial",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "none",
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "Returns a results array where each item includes display_name, latitude, and longitude parsed from the geocoder response.",
+        "If the geocoder returns no matches, the method returns an empty results array rather than failing solely because no place was found.",
+        "Returned results count does not exceed the requested limit."
+      ],
+      "source_evidence": {
+        "workflow_id": "task39_t77",
+        "template_id": "77",
+        "code_quote": "origin_results = get_json(BASE_GEO + \"search?\" + urllib.parse.urlencode({\"q\": origin_q, \"format\": \"jsonv2\", \"limit\": 5})) ... dest_results = get_json(BASE_GEO + \"search?\" + urllib.parse.urlencode({\"q\": dest_q, \"format\": \"jsonv2\", \"limit\": 10}))",
+        "explanation": "The workflow demonstrates a reusable geocoding search against the site's Nominatim /search endpoint. Hard-coded queries can be parameterized into a general query input, and the response clearly exposes stable candidate fields including display_name, lat, lon, and additional raw identity/type metadata present in the returned JSON.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    },
+    {
+      "candidate_id": "task39_t77::get_driving_route",
+      "proposed_method": "get_driving_route",
+      "capability": "Request a driving route between two coordinates from the site's OSRM service and return route distance and duration.",
+      "owns": [
+        "Constructing the site's OSRM driving route request from origin and destination coordinates",
+        "Calling the route endpoint used by the site",
+        "Parsing the primary returned route's duration and distance",
+        "Returning route status code and route metrics from the response"
+      ],
+      "does_not_own": [
+        "Geocoding text queries into coordinates",
+        "Task-specific threshold checks such as whether duration is within one hour",
+        "Ranking multiple destinations",
+        "Narrative interpretation of route steps"
+      ],
+      "input_contract": {
+        "origin": {
+          "type": "object",
+          "properties": {
+            "longitude": {
+              "type": "number"
+            },
+            "latitude": {
+              "type": "number"
+            }
+          }
+        },
+        "destination": {
+          "type": "object",
+          "properties": {
+            "longitude": {
+              "type": "number"
+            },
+            "latitude": {
+              "type": "number"
+            }
+          }
+        }
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "nullable": true
+          },
+          "route_found": {
+            "type": "boolean"
+          },
+          "distance_meters": {
+            "type": "number",
+            "nullable": true
+          },
+          "duration_seconds": {
+            "type": "number",
+            "nullable": true
+          }
+        }
+      },
+      "guarantees": {
+        "collection_scope": "single",
+        "completeness": "conditional",
+        "supports_absence_proof": true,
+        "configuration": {
+          "kind": "none",
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "When the service returns a routable result, route_found is true and both distance_meters and duration_seconds are populated from the first route.",
+        "When the service indicates no route or returns no routes, route_found is false instead of fabricating distance or duration values.",
+        "The returned metrics correspond to the driving profile endpoint demonstrated by the workflow."
+      ],
+      "source_evidence": {
+        "workflow_id": "task39_t77",
+        "template_id": "77",
+        "code_quote": "route_url = BASE_OSRM + \"5000/route/v1/driving/\" + coords + \"?\" + urllib.parse.urlencode({\"overview\": \"false\", \"geometries\": \"polyline\", \"steps\": \"true\"})\nroute = get_json(route_url)\nduration = route[\"routes\"][0][\"duration\"]\ndistance = route[\"routes\"][0][\"distance\"]",
+        "explanation": "The workflow demonstrates a concrete reusable capability: calling the map site's OSRM driving route endpoint for two coordinates and extracting objective route metrics. The primitive should generalize the hard-coded coordinates into origin/destination inputs while preserving the demonstrated acquisition boundary of route code, distance, and duration.",
+        "evidence_match_mode": "exact"
+      }
+    }
+  ]
+}

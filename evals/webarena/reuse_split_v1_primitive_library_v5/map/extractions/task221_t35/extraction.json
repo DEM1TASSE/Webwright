@@ -1,0 +1,165 @@
+{
+  "decision": "CANDIDATES",
+  "candidates": [
+    {
+      "candidate_id": "task221_t35::search_places",
+      "proposed_method": "search_places",
+      "capability": "search map/geocoding data for places and return typed place records",
+      "owns": [
+        "Submitting place-search queries to the site's Nominatim search service",
+        "Applying site-required default search parameters such as response format and detail flags",
+        "Optional inclusion of bounded search parameters like viewbox and bounded",
+        "Parsing JSON search results into typed place records with geographic coordinates, category/type, names, and metadata"
+      ],
+      "does_not_own": [
+        "Choosing which query strings to issue for a task",
+        "Task-specific filtering such as excluding post boxes or selecting USPS only",
+        "Computing nearest result to an origin",
+        "Aggregating across multiple searches into one deduplicated business decision"
+      ],
+      "input_contract": {
+        "query": {
+          "type": "string",
+          "description": "Free-text place query submitted to the site's search service"
+        },
+        "viewbox": {
+          "type": "string",
+          "required": false,
+          "description": "Optional bounding box string accepted by the site search service"
+        },
+        "bounded": {
+          "type": "boolean",
+          "required": false,
+          "description": "Whether to constrain results to the provided viewbox"
+        },
+        "limit": {
+          "type": "integer",
+          "required": false,
+          "description": "Maximum number of results to request; defaults to the site's demonstrated search limit"
+        }
+      },
+      "output_contract": {
+        "places": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "fields": {
+              "osm_type": "string",
+              "osm_id": "string|integer",
+              "lat": "number",
+              "lon": "number",
+              "display_name": "string",
+              "category": "string",
+              "class": "string",
+              "type": "string",
+              "addressdetails": "object|null",
+              "extratags": "object|null",
+              "namedetails": "object|null"
+            }
+          }
+        }
+      },
+      "guarantees": {
+        "collection_scope": "query",
+        "completeness": "partial",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "none",
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "Returns a JSON-parsed array of place records for the submitted query rather than raw response text",
+        "Each returned record includes parseable latitude and longitude coordinates",
+        "An empty array is returned when the service succeeds with no matches; HTTP or malformed-response failures are surfaced as acquisition failure"
+      ],
+      "source_evidence": {
+        "workflow_id": "task221_t35",
+        "template_id": "35",
+        "code_quote": "def search_nominatim(**params):\n    p = {\"format\":\"jsonv2\",\"limit\":20,\"addressdetails\":1,\"extratags\":1,\"namedetails\":1}\n    p.update(params)\n    r = requests.get(NOM + \"search\", params=p, headers=HEADERS, timeout=60)\n    r.raise_for_status()\n    return r.json()",
+        "explanation": "The workflow demonstrates a reusable place-search primitive against the map site's Nominatim service. The hard-coded defaults are site-specific acquisition details, while query text and optional bounding parameters are task inputs. The response is already parsed into structured place records with stable identity/location/metadata fields exposed by the service.",
+        "evidence_match_mode": "exact"
+      }
+    },
+    {
+      "candidate_id": "task221_t35::get_route_between_places",
+      "proposed_method": "get_route_between_places",
+      "capability": "retrieve route summary information between two coordinates for a transportation mode using the site's OSRM service",
+      "owns": [
+        "Constructing the site's OSRM route request for a source and destination coordinate pair",
+        "Resolving transportation mode to the site's coupled OSRM deployment parameter",
+        "Requesting route data and parsing the primary route summary",
+        "Returning typed route summary data including duration and distance"
+      ],
+      "does_not_own": [
+        "Choosing origin and destination places for a task",
+        "Ranking multiple destinations or deciding which destination is nearest",
+        "Formatting duration for final answer presentation beyond exposing route duration",
+        "Interpreting route steps for task-specific instructions"
+      ],
+      "input_contract": {
+        "source": {
+          "type": "object",
+          "fields": {
+            "lat": "number",
+            "lon": "number"
+          }
+        },
+        "destination": {
+          "type": "object",
+          "fields": {
+            "lat": "number",
+            "lon": "number"
+          }
+        },
+        "transportation_method": {
+          "type": "string",
+          "enum": [
+            "driving",
+            "biking",
+            "walking"
+          ],
+          "description": "Semantic travel mode; primitive resolves the corresponding site-specific OSRM service port internally"
+        }
+      },
+      "output_contract": {
+        "route": {
+          "type": "object",
+          "fields": {
+            "transportation_method": "string",
+            "duration_seconds": "number",
+            "distance_meters": "number",
+            "service_status_code": "string"
+          }
+        }
+      },
+      "guarantees": {
+        "collection_scope": "single",
+        "completeness": "complete",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "semantic_enum",
+          "supported_values": [
+            "driving",
+            "biking",
+            "walking"
+          ],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "Returns one parsed route summary when OSRM responds with code 'Ok' and at least one route",
+        "Returned duration_seconds and distance_meters are numeric values from the first route summary",
+        "If the service response code is not 'Ok' or routes are missing, the primitive signals acquisition failure rather than returning an empty route"
+      ],
+      "source_evidence": {
+        "workflow_id": "task221_t35",
+        "template_id": "35",
+        "code_quote": "def route_osrm(src, dst, port):\n    url = f\"{OSRM_BASE}{port}/route/v1/driving/{src[1]},{src[0]};{dst[1]},{dst[0]}\"\n    params = {\"overview\":\"false\",\"steps\":\"true\",\"annotations\":\"false\",\"geometries\":\"polyline\"}\n    r = requests.get(url, params=params, headers=HEADERS, timeout=60)\n    r.raise_for_status()\n    data = r.json()\n    if data.get(\"code\") != \"Ok\" or not data.get(\"routes\"):\n        raise RuntimeError(f\"OSRM failed for port {port}: {data}\")\n    return data\n...\nports = {\"Driving\":\"5000\", \"Biking\":\"5001\", \"Walking\":\"5002\"}\n...\nroute = data[\"routes\"][0]\n... route[\"duration\"] ... route[\"distance\"]",
+        "explanation": "The workflow demonstrates a reusable route-summary acquisition primitive from the site's OSRM service. Although the code hard-codes ports and uses the OSRM 'driving' path shape, the workflow evidence explicitly maps semantic modes to site-specific ports, so the generalized primitive should expose only the semantic enum and hide the deployment coupling. The consumed response clearly contains stable duration and distance summary fields.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    }
+  ]
+}

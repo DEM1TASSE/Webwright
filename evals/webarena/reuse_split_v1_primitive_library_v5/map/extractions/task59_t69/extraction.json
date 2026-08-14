@@ -1,0 +1,162 @@
+{
+  "decision": "CANDIDATES",
+  "candidates": [
+    {
+      "candidate_id": "task59_t69::search_places_by_text_query",
+      "proposed_method": "search_places_by_text_query",
+      "capability": "Search map/geocoder-backed places by free-text query and return typed place candidates with coordinates and stable place metadata",
+      "owns": [
+        "Constructing the site's geocoder search request from a free-text query",
+        "Calling the demonstrated Nominatim search endpoint with required format and limit parameters",
+        "Parsing JSON search results into typed place records",
+        "Preserving stable place metadata exposed by the response, including display identity, coordinates, and category/type semantics",
+        "Returning multiple candidate place matches in result order"
+      ],
+      "does_not_own": [
+        "Choosing the best candidate for an ambiguous query",
+        "Filtering to task-specific business categories such as only restaurants",
+        "Computing distances between places",
+        "Ranking by proximity or other derived metrics",
+        "Combining results from multiple different geocoding services"
+      ],
+      "input_contract": {
+        "query": {
+          "type": "string",
+          "description": "Free-text place search query."
+        },
+        "result_limit": {
+          "type": "integer",
+          "description": "Maximum number of candidates to request from the search endpoint.",
+          "default": 8
+        }
+      },
+      "output_contract": {
+        "records": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "fields": {
+              "display_name": {
+                "type": "string"
+              },
+              "latitude": {
+                "type": "number"
+              },
+              "longitude": {
+                "type": "number"
+              },
+              "category": {
+                "type": "string",
+                "nullable": true
+              },
+              "place_type": {
+                "type": "string",
+                "nullable": true
+              }
+            }
+          },
+          "description": "Ordered place candidates returned by the geocoder for the query."
+        }
+      },
+      "guarantees": {
+        "collection_scope": "query",
+        "completeness": "partial",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "internal",
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "Given a query that has matches, returns one record per parsed JSON result with numeric latitude and longitude fields.",
+        "If the endpoint returns an empty JSON array, returns an empty records array rather than failing parsing.",
+        "Each returned record preserves the endpoint's displayed identity (`display_name`) and exposed category/type metadata when present."
+      ],
+      "source_evidence": {
+        "workflow_id": "task59_t69",
+        "template_id": "69",
+        "code_quote": "hunt_url = SITE_NOMINATIM + 'search?' + urlencode({'format': 'jsonv2', 'limit': 8, 'q': 'Hunt Library Pittsburgh'})\nhunt_results = http_get_json(hunt_url)\n...\ncandidate_url = PUBLIC_NOMINATIM + 'search?' + urlencode({'q': candidate_query, 'format': 'jsonv2', 'limit': 20})\ncandidate_results = http_get_json(candidate_url)\n...\nrestaurants.append({\n    'name': (item.get('display_name', '').split(',')[0]).strip(),\n    'display_name': item.get('display_name', ''),\n    'lat': float(item['lat']),\n    'lon': float(item['lon']),\n    'type': item.get('type'),\n})",
+        "explanation": "The workflow demonstrates a reusable place-search acquisition against a map/geocoder website: it parameterizes a text query, issues a Nominatim search request, and parses structured candidate records with display_name, coordinates, and category/type semantics. The reusable primitive should generalize the hard-coded queries and internalize the site-specific endpoint choice rather than exposing low-level URL assembly.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    },
+    {
+      "candidate_id": "task59_t69::search_restaurants_by_text_query",
+      "proposed_method": "search_restaurants_by_text_query",
+      "capability": "Search the map/geocoder site by free-text query and return only candidates objectively labeled as restaurants",
+      "owns": [
+        "Issuing the demonstrated geocoder text search request",
+        "Parsing returned place candidates",
+        "Applying the objective inclusion rule demonstrated by the workflow: keep only results whose returned place type is exactly `restaurant`",
+        "Returning typed restaurant place records with names, display identity, coordinates, and place type"
+      ],
+      "does_not_own": [
+        "Inventing restaurant classifications beyond the site's returned type field",
+        "Determining closeness to another place",
+        "Ranking by task-specific criteria beyond returned order",
+        "Merging duplicates across unrelated queries"
+      ],
+      "input_contract": {
+        "query": {
+          "type": "string",
+          "description": "Free-text search query intended to surface restaurant candidates."
+        },
+        "result_limit": {
+          "type": "integer",
+          "description": "Maximum number of raw candidates to request before applying the restaurant type filter.",
+          "default": 20
+        }
+      },
+      "output_contract": {
+        "records": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "fields": {
+              "name": {
+                "type": "string",
+                "description": "Short name derived from the leading segment of display_name, when present in the source."
+              },
+              "display_name": {
+                "type": "string"
+              },
+              "latitude": {
+                "type": "number"
+              },
+              "longitude": {
+                "type": "number"
+              },
+              "place_type": {
+                "type": "string"
+              }
+            }
+          },
+          "description": "Only search results whose returned type is exactly `restaurant`."
+        }
+      },
+      "guarantees": {
+        "collection_scope": "query",
+        "completeness": "conditional",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "internal",
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "Every returned record has `place_type` equal to `restaurant`.",
+        "If raw search results contain no entries with type `restaurant`, returns an empty records array.",
+        "Returned restaurant records include numeric latitude/longitude and preserve the original `display_name` from the site response."
+      ],
+      "source_evidence": {
+        "workflow_id": "task59_t69",
+        "template_id": "69",
+        "code_quote": "candidate_query = 'restaurants near Carnegie Mellon University Pittsburgh'\ncandidate_results = http_get_json(candidate_url)\n...\nfor item in candidate_results:\n    if item.get('type') != 'restaurant':\n        continue\n    restaurants.append({\n        'name': (item.get('display_name', '').split(',')[0]).strip(),\n        'display_name': item.get('display_name', ''),\n        'lat': float(item['lat']),\n        'lon': float(item['lon']),\n        'type': item.get('type'),\n    })",
+        "explanation": "Beyond generic place search, the workflow explicitly demonstrates a reusable site operation that acquires restaurant records by applying an objective site-derived type filter (`type == 'restaurant'`). This is a stable acquisition boundary because the filter is based on returned structured metadata, not task-specific subjective reasoning.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    }
+  ]
+}

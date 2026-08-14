@@ -27,6 +27,14 @@ def main():
     parser.add_argument("--sites", nargs="*", help="Optional site subset for resumable builds")
     parser.add_argument("--max-attempts", type=int, default=3)
     parser.add_argument(
+        "--force-consolidation", action="store_true",
+        help="Reuse accepted extraction/batch snapshots but rerun consolidation and rendering.",
+    )
+    parser.add_argument(
+        "--rebuild-from-batch", type=int,
+        help="Reuse earlier accepted batch snapshots and regenerate this batch and all later ones.",
+    )
+    parser.add_argument(
         "--model-config", required=True,
         help="Webwright YAML containing an explicit top-level model mapping.",
     )
@@ -47,7 +55,8 @@ def main():
         if args.sites and site not in set(args.sites):
             continue
         existing_index = Path(args.output) / site / "final_candidate" / "index.json"
-        if existing_index.exists():
+        if (existing_index.exists() and not args.force_consolidation
+                and args.rebuild_from_batch is None):
             existing = load(existing_index)
             write_candidate_review(
                 existing_index.parent, site=site, primitives=existing.get("primitives") or []
@@ -62,6 +71,7 @@ def main():
             batch_size=args.batch_size, seed=args.seed,
             llm_fn=lambda system, user: llm_json(system, user, max_tokens=24000),
             max_attempts=args.max_attempts,
+            rebuild_from_batch=args.rebuild_from_batch,
         )
         summary["sites"][site] = result
     Path(args.output).mkdir(parents=True, exist_ok=True)

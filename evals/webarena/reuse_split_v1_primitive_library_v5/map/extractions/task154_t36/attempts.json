@@ -1,0 +1,203 @@
+[
+  {
+    "attempt": 1,
+    "proposal": {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task154_t36::geocode_place_query",
+          "proposed_method": "geocode_place_query",
+          "capability": "Resolve a free-text place query on the map site's Nominatim search service into typed place candidates with coordinates and stable place metadata.",
+          "owns": [
+            "Constructing the map site's Nominatim search URL with format=json and a query string",
+            "Issuing the HTTP request to the site-local geocoding service",
+            "Parsing the JSON response into place candidate records",
+            "Returning stable fields actually exposed by the response for each candidate, including identity/display metadata and coordinates"
+          ],
+          "does_not_own": [
+            "Choosing which query text to search for",
+            "Selecting the best candidate for a task-specific intent",
+            "Comparing or ranking candidates beyond service order",
+            "Computing routes between places",
+            "Formatting a final answer string for the user"
+          ],
+          "input_contract": {
+            "query": {
+              "type": "string",
+              "description": "Free-text place search query."
+            }
+          },
+          "output_contract": {
+            "type": "object",
+            "properties": {
+              "results": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "place_id": {
+                      "type": [
+                        "string",
+                        "number"
+                      ]
+                    },
+                    "osm_type": {
+                      "type": "string"
+                    },
+                    "osm_id": {
+                      "type": [
+                        "string",
+                        "number"
+                      ]
+                    },
+                    "lat": {
+                      "type": "string"
+                    },
+                    "lon": {
+                      "type": "string"
+                    },
+                    "display_name": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "lat",
+                    "lon",
+                    "display_name"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "results"
+            ]
+          },
+          "guarantees": {
+            "collection_scope": "query",
+            "completeness": "partial",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "Returns an object with a results array when the geocoding request succeeds, even if the array is empty.",
+            "Each returned candidate includes parseable latitude and longitude strings and a display_name.",
+            "An empty results array is distinguishable from request/acquisition failure."
+          ],
+          "source_evidence": {
+            "workflow_id": "task154_t36",
+            "template_id": "36",
+            "code_quote": "base_nom = 'http://18.208.187.221:8085/search?format=json&q='\nwith urllib.request.urlopen(base_nom + urllib.parse.quote(queries['origin_resolved_query']), timeout=30) as r:\n    origin_results = json.load(r)\n...\norigin = origin_results[0]\n...\nlog(f\"... resolve the destination as '{dest['display_name']}' ...\")",
+            "explanation": "The workflow directly calls the site's Nominatim search endpoint and parses the JSON array of place candidates. Although the task consumes only the first result's display_name/lat/lon, the demonstrated acquisition boundary is the full query-level candidate list. Stable fields evidenced by the raw result usage and preserved evidence dump include coordinate and display metadata; task-specific candidate choice should remain outside the primitive.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        },
+        {
+          "candidate_id": "task154_t36::get_osrm_driving_route",
+          "proposed_method": "get_osrm_driving_route",
+          "capability": "Retrieve driving route summaries between two coordinates from the site's OSRM direction service.",
+          "owns": [
+            "Constructing the OSRM route request for the driving profile using origin and destination coordinates",
+            "Issuing the HTTP request to the site-local OSRM service",
+            "Parsing the JSON route response",
+            "Returning route summary fields actually evidenced by the workflow, including duration and distance for available routes"
+          ],
+          "does_not_own": [
+            "Geocoding human-readable place names into coordinates",
+            "Choosing origin/destination coordinates from ambiguous search results",
+            "Formatting duration into HH:MM:SS for a specific task",
+            "Guaranteeing the globally optimal route beyond what the service returns as its first route"
+          ],
+          "input_contract": {
+            "origin": {
+              "type": "object",
+              "properties": {
+                "lon": {
+                  "type": "string"
+                },
+                "lat": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "lon",
+                "lat"
+              ]
+            },
+            "destination": {
+              "type": "object",
+              "properties": {
+                "lon": {
+                  "type": "string"
+                },
+                "lat": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "lon",
+                "lat"
+              ]
+            }
+          },
+          "output_contract": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "routes": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "duration_seconds": {
+                      "type": "number"
+                    },
+                    "distance_meters": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "duration_seconds",
+                    "distance_meters"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "code",
+              "routes"
+            ]
+          },
+          "guarantees": {
+            "collection_scope": "query",
+            "completeness": "conditional",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "internal",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "Returns code='Ok' and a routes array when the routing request succeeds.",
+            "Each returned route summary includes numeric duration_seconds and distance_meters.",
+            "If the service returns no routes or a non-Ok code, the primitive surfaces routing failure distinctly from a valid empty success."
+          ],
+          "source_evidence": {
+            "workflow_id": "task154_t36",
+            "template_id": "36",
+            "code_quote": "base_osrm = 'http://18.208.187.221:5000/route/v1/driving/'\ncoords = f\"{origin['lon']},{origin['lat']};{dest['lon']},{dest['lat']}\"\nroute_url = base_osrm + coords + '?overview=false&steps=true&geometries=polyline'\nwith urllib.request.urlopen(route_url, timeout=30) as r:\n    route = json.load(r)\n...\nseconds = route['routes'][0]['duration']\n...\n'route_summary': {'duration_seconds': seconds, 'distance_meters': route['routes'][0]['distance']}",
+            "explanation": "The workflow demonstrates a reusable site operation against the site's OSRM backend: given two coordinates, request a driving route and parse the returned route JSON. The primitive should generalize hard-coded coordinates into inputs while preserving objective route summary fields actually used or persisted by the workflow. The driving profile is coupled to the endpoint path in the demonstrated contract and is therefore kept internal rather than exposed as independently combinable low-level parameters.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        }
+      ]
+    },
+    "errors": []
+  }
+]

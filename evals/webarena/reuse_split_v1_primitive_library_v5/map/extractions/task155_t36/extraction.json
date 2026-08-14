@@ -1,0 +1,175 @@
+{
+  "decision": "CANDIDATES",
+  "candidates": [
+    {
+      "candidate_id": "task155_t36::geocode_place_search",
+      "proposed_method": "geocode_place_search",
+      "capability": "Geocode a place-name query against the site's configured Nominatim search service and return structured place candidates with identity and coordinates.",
+      "owns": [
+        "Calling the map site's configured Nominatim search endpoint",
+        "Submitting the textual place query and required response format",
+        "Parsing the JSON response into typed geocoding candidate records",
+        "Preserving objective fields actually exposed by the response such as display name and latitude/longitude"
+      ],
+      "does_not_own": [
+        "Choosing which place query to search for",
+        "Selecting the intended candidate among multiple returned candidates",
+        "Computing routes or travel times",
+        "Formatting task-specific final answers"
+      ],
+      "input_contract": {
+        "query": {
+          "type": "string",
+          "description": "Free-text place search query."
+        }
+      },
+      "output_contract": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "display_name": {
+              "type": "string"
+            },
+            "lat": {
+              "type": "string",
+              "description": "Latitude as returned by the service."
+            },
+            "lon": {
+              "type": "string",
+              "description": "Longitude as returned by the service."
+            }
+          },
+          "required": [
+            "display_name",
+            "lat",
+            "lon"
+          ]
+        }
+      },
+      "guarantees": {
+        "collection_scope": "query",
+        "completeness": "partial",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "none",
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "Returns a parsed JSON array; each emitted record includes display_name, lat, and lon from the service response.",
+        "For a successful non-empty search, the first returned record has non-empty lat and lon strings.",
+        "An empty array is preserved as a valid no-match result rather than treated as success with fabricated coordinates."
+      ],
+      "source_evidence": {
+        "workflow_id": "task155_t36",
+        "template_id": "36",
+        "code_quote": "o = requests.get(NOMINATIM_URL, params={'q': ORIGIN, 'format': 'json'}, timeout=30).json()[0]\nd = requests.get(NOMINATIM_URL, params={'q': DEST, 'format': 'json'}, timeout=30).json()[0]",
+        "explanation": "The workflow directly uses the site's configured Nominatim search service to geocode arbitrary text queries, then reads stable returned fields display_name, lat, and lon. Hard-coded origin/destination strings can be generalized into a query input. Candidate selection among multiple results is not demonstrated beyond taking the first result, so the reusable capability is query-to-candidate-list geocoding, not disambiguation.",
+        "evidence_match_mode": "exact"
+      }
+    },
+    {
+      "candidate_id": "task155_t36::get_osrm_driving_route",
+      "proposed_method": "get_osrm_driving_route",
+      "capability": "Request a driving route from the site's OSRM service between two coordinates and return route metrics from the response.",
+      "owns": [
+        "Calling the site's OSRM driving route endpoint",
+        "Encoding origin and destination coordinates into the endpoint path",
+        "Supplying the demonstrated route parameters needed by the site workflow",
+        "Parsing the route response into typed route records with duration and distance"
+      ],
+      "does_not_own": [
+        "Geocoding place names into coordinates",
+        "Choosing transportation mode beyond the demonstrated driving service",
+        "Ranking or comparing multiple routes for a task",
+        "Formatting duration into task-specific output unless separately requested by workflow"
+      ],
+      "input_contract": {
+        "origin": {
+          "type": "object",
+          "properties": {
+            "lon": {
+              "type": "string"
+            },
+            "lat": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "lon",
+            "lat"
+          ]
+        },
+        "destination": {
+          "type": "object",
+          "properties": {
+            "lon": {
+              "type": "string"
+            },
+            "lat": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "lon",
+            "lat"
+          ]
+        }
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "routes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "duration_seconds": {
+                  "type": "number"
+                },
+                "distance_meters": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "duration_seconds",
+                "distance_meters"
+              ]
+            }
+          }
+        },
+        "required": [
+          "code",
+          "routes"
+        ]
+      },
+      "guarantees": {
+        "collection_scope": "query",
+        "completeness": "conditional",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "none",
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "Successful acquisition returns a parsed object with a top-level code field and a routes array.",
+        "For a successful routable pair, the first route record includes numeric duration_seconds and distance_meters.",
+        "If the service returns no routes, that is distinguishable from transport or parsing failure by the preserved parsed response structure."
+      ],
+      "source_evidence": {
+        "workflow_id": "task155_t36",
+        "template_id": "36",
+        "code_quote": "OSRM_BASE = 'http://18.208.187.221:5000/route/v1/driving/'\ncoords = f\"{o['lon']},{o['lat']};{d['lon']},{d['lat']}\"\nroute = requests.get(OSRM_BASE + coords, params={'overview': 'false', 'geometries': 'polyline', 'steps': 'true'}, timeout=30).json()\nduration_seconds = route['routes'][0]['duration']\n... route['routes'][0]['distance']",
+        "explanation": "The workflow demonstrates the site's OSRM driving-route acquisition using coordinate pairs, parses the JSON, and extracts stable route metrics duration and distance from the first returned route. The hard-coded endpoint and fixed parameters can be internalized as part of the primitive because they are coupled to the site's demonstrated driving routing service.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    }
+  ]
+}
