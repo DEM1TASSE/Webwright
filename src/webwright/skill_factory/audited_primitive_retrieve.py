@@ -19,6 +19,7 @@ class AuditedRetrieval:
     remaining_gap: list[str] = field(default_factory=list)
     scratch_plan: dict | None = None
     patches: list[dict] = field(default_factory=list)
+    contract_verdict: dict = field(default_factory=dict)
 
     @property
     def sources(self):
@@ -100,6 +101,7 @@ def render_frozen_scratch_plan(plan: dict) -> str:
 def retrieve_audited_primitives(
     task: str, library: str | Path, *, site: str, max_primitives: int = 5,
     decide_fn: Callable[[str, list[dict]], dict] | None = None,
+    verify_fn: Callable[[str, dict, list[dict]], dict] | None = None,
     scratch_plan: dict | None = None,
 ) -> AuditedRetrieval:
     index = load_candidate_index(library, site)
@@ -158,6 +160,35 @@ def retrieve_audited_primitives(
         selected = []
     step_ids = {str(x.get("id")) for x in (scratch_plan or {}).get("steps", [])}
     selected_ids = {x["primitive_id"] for x in selected}
+    contract_verdict = {}
+    if decision in {"use", "adapt"} and selected and verify_fn is not None:
+        raw_verdict = verify_fn(task, raw, selected) or {}
+        verdict = str(raw_verdict.get("verdict") or "reject").lower()
+        checks = raw_verdict.get("checks") or {}
+        allowed_checks = {"input_reachability", "guarantee_sufficiency",
+                          "closed_acquisition"}
+        checks_valid = (
+            isinstance(checks, dict)
+            and set(checks) == allowed_checks
+            and all(value in {"pass", "fail"} for value in checks.values())
+        )
+        contract_verdict = {
+            "verdict": verdict if verdict in {"accept", "reject"} else "reject",
+            "checks": checks if checks_valid else {},
+            "closed_acquisitions": [
+                str(x) for x in raw_verdict.get("closed_acquisitions") or []
+                if str(x).strip()
+            ],
+            "reason": str(raw_verdict.get("reason") or "malformed verifier output"),
+        }
+        if (
+            contract_verdict["verdict"] != "accept"
+            or not checks_valid
+            or any(value != "pass" for value in checks.values())
+            or not contract_verdict["closed_acquisitions"]
+        ):
+            decision, selected = "skip", []
+            selected_ids = set()
     patches = []
     for patch in raw.get("patches") or []:
         if not isinstance(patch, dict):
@@ -193,7 +224,7 @@ def retrieve_audited_primitives(
         site=site, decision=decision, primitives=selected,
         reason=str(raw.get("reason") or ""),
         remaining_gap=[str(x) for x in raw.get("remaining_gap") or [] if isinstance(x, str)],
-        scratch_plan=scratch_plan, patches=patches,
+        scratch_plan=scratch_plan, patches=patches, contract_verdict=contract_verdict,
     )
 
 
@@ -215,6 +246,10 @@ def render_audited_primitive_hint(
          "code usage; solve using the frozen scratch plan plus contract metadata only."),
         "Write primitive_usage.json with used primitive ids/hashes and a coverage_assessment.",
     ]
+    if result.contract_verdict:
+        lines.insert(3, "Contract verifier: " + json.dumps(
+            result.contract_verdict, ensure_ascii=False, sort_keys=True
+        ))
     if result.scratch_plan:
         lines[3:3] = [
             "Apply only the approved local patches below. Do not redesign, replace, or reorder "
@@ -239,8 +274,13 @@ def render_audited_primitive_hint(
             "Do not write primitive execution events because implementation code is withheld.",
         ]
     else:
-        lines.insert(3, "Use only useful parts. Vendor/adapt selected code into a standalone "
-                     "final_script.py; do not import this candidate package at runtime.")
+        lines.insert(3, "Use only the verified closed acquisitions. Vendor selected primitive "
+                     "method bodies verbatim into standalone final_script.py; ADAPT means compose "
+                     "them with task-layer code, not rewrite their selectors, endpoints, filters, "
+                     "pagination, or parsers. If an exact method cannot run in the chosen runtime, "
+                     "do not emulate it under the original provenance marker: fall back to the "
+                     "scratch acquisition. An empty primitive result is not proof of absence unless "
+                     "the relevant acquisition is accepted and complete for the task scope.")
     if result.remaining_gap:
         lines.append("Router-declared remaining gaps: " + "; ".join(result.remaining_gap))
     if result.scratch_plan:
@@ -270,5 +310,5 @@ def write_audited_retrieval(path: str | Path, result: AuditedRetrieval, *, task:
         "task": task, "site": result.site, "decision": result.decision,
         "retrieved": result.sources, "reason": result.reason,
         "remaining_gap": result.remaining_gap, "scratch_plan": result.scratch_plan,
-        "patches": result.patches,
+        "patches": result.patches, "contract_verdict": result.contract_verdict,
     }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

@@ -25,6 +25,11 @@ deduplication. Return JSON with either:
 {"decision":"CANDIDATES","candidates":[{"candidate_id":"<workflow-id>::<snake-name>",
  "proposed_method":"snake_case","capability":"reusable website capability",
  "owns":[...],"does_not_own":[...],"input_contract":{...},"output_contract":{...},
+ "guarantees":{"collection_scope":"single|page|query|scope|not_applicable",
+ "completeness":"complete|partial|conditional|not_applicable",
+ "supports_absence_proof":true|false,
+ "configuration":{"kind":"none|internal|semantic_enum","supported_values":[],
+ "coupled_site_parameters_hidden":true}},"acceptance_checks":["runtime postcondition",...],
  "source_evidence":{"workflow_id":"exact id","template_id":"exact id",
  "code_quote":"representative source excerpt or concise source description",
  "explanation":"what was generalized from the workflow and why it supports this capability"}}]}
@@ -48,6 +53,12 @@ search results to an apparently complete list when richer facts/completeness are
 Reserve the input name `page` for the component's browser object (`self.page`). Describe numeric
 pagination inputs as `page_number` in candidate input contracts.
 
+Guarantees describe only what the demonstrated acquisition can establish. Ranked or page-scoped
+collections do not support absence proof. If site deployment parameters are coupled (for example
+transport mode to endpoint/port/profile), expose one semantic enum and resolve the coupling inside
+the primitive; never expose independently combinable low-level controls. Acceptance checks state
+observable postconditions that distinguish valid empty output from acquisition failure.
+
 Do not compare against a library, merge candidates, generate code, or discard a real capability
 merely because an API/embedded JSON source would be more stable. Source evidence is attribution,
 not a demand to copy code verbatim: explicitly describe parameterization of hard-coded instance
@@ -66,6 +77,11 @@ ADD and UPDATE must contain a complete `replacement`:
  helper methods must start `_`>",
  "owns":[...],"does_not_own":[...],"input_contract":{...},"output_contract":{...},
  "requires":[...],"provides":[...],"supported_patterns":[...],
+ "guarantees":{"collection_scope":"single|page|query|scope|not_applicable",
+ "completeness":"complete|partial|conditional|not_applicable",
+ "supports_absence_proof":true|false,
+ "configuration":{"kind":"none|internal|semantic_enum","supported_values":[],
+ "coupled_site_parameters_hidden":true}},"acceptance_checks":["runtime postcondition",...],
  "source_evidence":[{"workflow_id":"exact id","template_id":"exact id",
  "code_quote":"representative source excerpt or concise source description",
  "explanation":"what was generalized from the source"}]}.
@@ -92,6 +108,10 @@ the acquisition boundary, not minimal projections tailored to the source task. P
 identity fields, distinct site timestamps, stable hrefs/ids/state, and explicit pagination or
 enumeration-completeness metadata when supported by evidence. Never claim a collection is complete
 merely because the current source task stopped after one page.
+Every replacement must state machine-readable guarantees and observable acceptance checks. A
+configuration contract may be `semantic_enum` only when code accepts the semantic parameter,
+internally maps every supported value to coupled deployment controls, and checks the response.
+Never expose coupled endpoint/port/profile controls as independently combinable public inputs.
 
 Every workflow in the batch must occur exactly once in workflow_attribution:
 {"workflow_id":"...","decision":"CONTRIBUTED","operation_indices":[0]} or
@@ -125,6 +145,9 @@ Feature classes are composition components such as auth, reviews, commits, order
 they are not inheritance subclasses. Choose cohesive site features. Preserve the primitive/workflow
 boundary: site mechanics and typed parsing belong in primitives; task filtering, aggregation,
 ranking, subjective decisions, and answer formatting remain in workflows. Do not alter KEEP code.
+MERGE/SPLIT replacements preserve or strengthen explicit guarantees and acceptance checks. Do not
+turn conflicting configuration evidence into freely combinable public parameters; use a semantic
+enum with an internal mapping, or keep the capability narrower.
 Do not emit package/class code; the deterministic Class Manager renders it."""
 
 _QUALITY_SYS = r"""Act as an independent quality-and-coverage gate. Return JSON
@@ -148,6 +171,10 @@ FAIL a lossy task-tailored projection when the cited evidence demonstrates addit
 objective record fields needed to interpret identity, time, state, links, or collection
 completeness. FAIL an output that looks like a complete collection but neither traverses nor
 reports pagination/completeness. Do not demand fields absent from the supplied evidence.
+FAIL missing, unsupported, or internally inconsistent guarantees/acceptance checks. FAIL when
+coupled site configuration is exposed as independent public controls, when `semantic_enum` lacks
+an internal mapping for every supported value, or when valid empty output cannot be distinguished
+from acquisition/filter/parser failure.
 
 A REJECT passes only when removing task logic leaves no reusable website acquisition/parsing core.
 If a count candidate demonstrates listing record IDs, it must be narrowed to a list-records
@@ -238,7 +265,7 @@ def validate_extraction(raw: dict, *, workflow: dict) -> list[str]:
         if cid != f"{workflow['id']}::{method}" or not isinstance(method, str) or not _SAFE.fullmatch(method):
             errors.append(f"candidates[{i}] id/method invalid")
         for key in ("capability", "owns", "does_not_own", "input_contract", "output_contract",
-                    "source_evidence"):
+                    "guarantees", "acceptance_checks", "source_evidence"):
             if not candidate.get(key):
                 errors.append(f"candidates[{i}].{key} must be non-empty")
         evidence = candidate.get("source_evidence") or {}
@@ -300,6 +327,51 @@ def _schema_shape(value):
     return value
 
 
+def _validate_guarantees(value: dict) -> list[str]:
+    errors = []
+    guarantees = value.get("guarantees")
+    if not isinstance(guarantees, dict):
+        return ["guarantees must be an object"]
+    required = {"collection_scope", "completeness", "supports_absence_proof", "configuration"}
+    if set(guarantees) != required:
+        errors.append(f"guarantees keys must be exactly {sorted(required)}")
+    if guarantees.get("collection_scope") not in {
+        "single", "page", "query", "scope", "not_applicable"
+    }:
+        errors.append("guarantees.collection_scope is invalid")
+    completeness = guarantees.get("completeness")
+    if completeness not in {"complete", "partial", "conditional", "not_applicable"}:
+        errors.append("guarantees.completeness is invalid")
+    absence = guarantees.get("supports_absence_proof")
+    if not isinstance(absence, bool):
+        errors.append("guarantees.supports_absence_proof must be boolean")
+    elif absence and completeness != "complete":
+        errors.append("absence proof requires complete acquisition")
+    configuration = guarantees.get("configuration")
+    if not isinstance(configuration, dict):
+        errors.append("guarantees.configuration must be an object")
+    else:
+        config_required = {"kind", "supported_values", "coupled_site_parameters_hidden"}
+        if set(configuration) != config_required:
+            errors.append(f"guarantees.configuration keys must be exactly {sorted(config_required)}")
+        kind = configuration.get("kind")
+        values = configuration.get("supported_values")
+        if kind not in {"none", "internal", "semantic_enum"}:
+            errors.append("guarantees.configuration.kind is invalid")
+        if not isinstance(values, list) or any(not isinstance(item, str) for item in values):
+            errors.append("guarantees.configuration.supported_values must be strings")
+        elif kind == "semantic_enum" and not values:
+            errors.append("semantic_enum configuration requires supported_values")
+        if configuration.get("coupled_site_parameters_hidden") is not True:
+            errors.append("coupled site parameters must be hidden")
+    checks = value.get("acceptance_checks")
+    if not isinstance(checks, list) or not checks or any(
+        not isinstance(item, str) or not item.strip() for item in checks
+    ):
+        errors.append("acceptance_checks must be non-empty strings")
+    return errors
+
+
 def validate_primitive(value: dict, *, site: str, workflows: dict[str, dict], classified=False) -> list[str]:
     errors = []
     name = value.get("method")
@@ -312,9 +384,10 @@ def validate_primitive(value: dict, *, site: str, workflows: dict[str, dict], cl
     if value.get("primitive_id") != expected_id:
         errors.append(f"primitive_id must be {expected_id!r}")
     for key in ("capability", "method_code", "owns", "does_not_own", "input_contract",
-                "output_contract", "source_evidence"):
+                "output_contract", "guarantees", "acceptance_checks", "source_evidence"):
         if not value.get(key):
             errors.append(f"{key} must be non-empty")
+    errors.extend(_validate_guarantees(value))
     _, code_errors = _parse_methods(str(value.get("method_code") or ""), str(name or ""))
     errors.extend(code_errors)
     output = _norm(_schema_shape(value.get("output_contract"))).lower()

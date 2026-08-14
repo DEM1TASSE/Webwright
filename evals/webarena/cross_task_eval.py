@@ -318,6 +318,52 @@ def configure_router_model(model_config):
     configure_llm(model)
 
 
+def verify_direct_primitive_contract(task, proposal, selected, *, llm_fn=None):
+    """Verify a proposed direct reuse plan against selected primitive contracts."""
+    if llm_fn is None:
+        from webwright.skill_factory.llm import llm_json as llm_fn
+    contracts = [{key: primitive.get(key) for key in (
+        "primitive_id", "capability", "owns", "does_not_own", "input_contract",
+        "output_contract", "requires", "provides", "supported_patterns", "guarantees",
+        "acceptance_checks", "source_evidence",
+    )} for primitive in selected]
+    return llm_fn(
+        "Verify one proposed primitive reuse plan as a contract refinement of at least one "
+        "closed website-acquisition sub-operation. Do not require the primitives to solve the "
+        "whole task. Check exactly three obligations: (1) input_reachability: every selected "
+        "primitive input needed by the proposal is available from the task or an earlier "
+        "selected output, without leaving an internal site identifier/configuration gap; "
+        "(2) guarantee_sufficiency: the primitive guarantees are strong enough for the claim "
+        "made for the specific local acquisition it replaces, not necessarily for the final task. "
+        "A page/search/detail acquisition may pass even when workflow code must repeat it, select "
+        "candidates, paginate, filter, or format, provided the contract exposes usable records and "
+        "a defensible continuation/stopping signal. Ranked/partial/query-scoped results still "
+        "cannot close open-world entity discovery or prove exhaustive sets, global nearest/shortest, "
+        "or absence. When a task requires a non-default value or a combination of independently "
+        "exposed site-configuration inputs, source examples are not sufficient: an explicit "
+        "`guarantees` field must enumerate or validate the supported combination, otherwise "
+        "guarantee_sufficiency MUST fail. Site configuration means transport profile, endpoint, "
+        "base URL, port, backend, authentication/session mode, or another deployment control. "
+        "Ordinary task inputs such as a product brand, search query, place name, filter value, "
+        "page number, or page size are NOT site configuration and must not trigger this rule; "
+        "(3) closed_acquisition: at least one concrete site acquisition is fully replaced, not "
+        "merely assisted while that same local acquisition still has to run. Fetching and parsing "
+        "one declared search page, filtered page, feed-metadata page, or detail page counts as a "
+        "closed acquisition when its typed output is directly usable; do not reject it merely "
+        "because other task acquisitions remain. Remaining task discovery, repetition, filtering, "
+        "aggregation, semantic choice, and formatting are allowed. Be conservative only about the "
+        "guarantee needed by the claimed local substitution. Return only JSON: "
+        "{\"verdict\":\"accept|reject\","
+        "\"checks\":{\"input_reachability\":\"pass|fail\","
+        "\"guarantee_sufficiency\":\"pass|fail\","
+        "\"closed_acquisition\":\"pass|fail\"},"
+        "\"closed_acquisitions\":[\"...\"],\"reason\":\"...\"}. ACCEPT requires all "
+        "three checks to pass and at least one specific closed acquisition.",
+        json.dumps({"task": task, "proposal": proposal,
+                    "selected_contracts": contracts}, ensure_ascii=False),
+    )
+
+
 def retrieve_direct_primitives(task, library, *, site, max_primitives=5, llm_fn=None):
     """Metadata-first primitive routing without a scratch-first plan."""
     from webwright.skill_factory.audited_primitive_retrieve import retrieve_audited_primitives
@@ -341,9 +387,14 @@ def retrieve_direct_primitives(task, library, *, site, max_primitives=5, llm_fn=
             json.dumps({"task": current_task, "candidates": candidates}, ensure_ascii=False),
         )
 
+    def verify(current_task, proposal, selected):
+        return verify_direct_primitive_contract(
+            current_task, proposal, selected, llm_fn=llm_fn,
+        )
+
     return retrieve_audited_primitives(
         task, library, site=site, max_primitives=max_primitives,
-        decide_fn=decide, scratch_plan=None,
+        decide_fn=decide, verify_fn=verify, scratch_plan=None,
     )
 
 

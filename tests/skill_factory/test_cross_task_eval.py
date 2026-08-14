@@ -153,9 +153,21 @@ def test_direct_primitive_router_does_not_require_scratch_plan(tmp_path):
     seen = {}
 
     def fake_llm(system, user):
-        seen.update(system=system, user=user)
-        return {"decision": "adapt", "primitive_ids": ["map/search"],
-                "reason": "useful acquisition", "remaining_gap": ["filter"]}
+        if system.startswith("Route site primitives"):
+            seen.update(system=system, user=user)
+            return {"decision": "adapt", "primitive_ids": ["map/search"],
+                    "reason": "useful acquisition", "remaining_gap": ["filter"]}
+        seen.update(verifier_system=system, verifier_user=user)
+        return {
+            "verdict": "accept",
+            "checks": {
+                "input_reachability": "pass",
+                "guarantee_sufficiency": "pass",
+                "closed_acquisition": "pass",
+            },
+            "closed_acquisitions": ["place lookup"],
+            "reason": "closes place lookup",
+        }
 
     out = E.retrieve_direct_primitives(
         "find a place", tmp_path, site="map", llm_fn=fake_llm,
@@ -164,6 +176,8 @@ def test_direct_primitive_router_does_not_require_scratch_plan(tmp_path):
     assert [item["primitive_id"] for item in out.primitives] == ["map/search"]
     assert "Do not require or mention a scratch plan" in seen["system"]
     assert "scratch_plan" not in seen["user"]
+    assert "contract refinement" in seen["verifier_system"]
+    assert out.contract_verdict["verdict"] == "accept"
 
 
 def test_reads_valid_primitive_execution_events(tmp_path):

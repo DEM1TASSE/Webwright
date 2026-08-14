@@ -50,6 +50,69 @@ def test_skip_injects_no_code(tmp_path):
     assert render_audited_primitive_hint(result) == ""
 
 
+def _accept_verdict(*_):
+    return {
+        "verdict": "accept",
+        "checks": {
+            "input_reachability": "pass",
+            "guarantee_sufficiency": "pass",
+            "closed_acquisition": "pass",
+        },
+        "closed_acquisitions": ["GitLab commit acquisition"],
+        "reason": "the primitive closes typed commit acquisition",
+    }
+
+
+def test_contract_verifier_accepts_one_closed_local_acquisition(tmp_path):
+    result = retrieve_audited_primitives(
+        "top commits", _library(tmp_path), site="gitlab",
+        decide_fn=lambda *_: {
+            "decision": "adapt", "primitive_ids": ["gitlab/commits/list_commits"],
+            "remaining_gap": ["rank commits"],
+        },
+        verify_fn=_accept_verdict,
+    )
+    assert result.decision == "adapt"
+    assert result.contract_verdict["verdict"] == "accept"
+    assert "Contract verifier:" in render_audited_primitive_hint(result)
+
+
+def test_contract_verifier_rejects_insufficient_guarantee(tmp_path):
+    result = retrieve_audited_primitives(
+        "all commits", _library(tmp_path), site="gitlab",
+        decide_fn=lambda *_: {
+            "decision": "adapt", "primitive_ids": ["gitlab/commits/list_commits"],
+        },
+        verify_fn=lambda *_: {
+            "verdict": "reject",
+            "checks": {
+                "input_reachability": "pass",
+                "guarantee_sufficiency": "fail",
+                "closed_acquisition": "pass",
+            },
+            "closed_acquisitions": ["one result page"],
+            "reason": "page-scoped output cannot prove an exhaustive set",
+        },
+    )
+    assert result.decision == "skip"
+    assert result.primitives == []
+    assert result.contract_verdict["checks"]["guarantee_sufficiency"] == "fail"
+    assert render_audited_primitive_hint(result) == ""
+
+
+def test_contract_verifier_fails_closed_on_malformed_output(tmp_path):
+    result = retrieve_audited_primitives(
+        "top commits", _library(tmp_path), site="gitlab",
+        decide_fn=lambda *_: {
+            "decision": "adapt", "primitive_ids": ["gitlab/commits/list_commits"],
+        },
+        verify_fn=lambda *_: {"verdict": "accept"},
+    )
+    assert result.decision == "skip"
+    assert result.contract_verdict["verdict"] == "accept"
+    assert result.contract_verdict["checks"] == {}
+
+
 def _plan():
     return {
         "site": "gitlab", "task": "top commits",

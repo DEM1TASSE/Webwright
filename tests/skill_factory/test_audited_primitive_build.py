@@ -24,6 +24,13 @@ def extraction(workflow):
         "owns": ["GitLab commit parsing"], "does_not_own": ["ranking"],
         "input_contract": {"project": "str"},
         "output_contract": {"type": "list[CommitRecord]"},
+        "guarantees": {
+            "collection_scope": "page", "completeness": "partial",
+            "supports_absence_proof": False,
+            "configuration": {"kind": "none", "supported_values": [],
+                              "coupled_site_parameters_hidden": True},
+        },
+        "acceptance_checks": ["the commit page loaded and parsed without error"],
         "source_evidence": {"workflow_id": workflow["id"],
                             "template_id": workflow["template_id"],
                             "code_quote": SOURCE, "explanation": "direct"},
@@ -41,6 +48,13 @@ def primitive(pid="gitlab/list_commits", feature=None):
         "output_contract": {"type": "list[CommitRecord]", "fields": {"title": "str"}},
         "requires": ["authenticated_session"], "provides": ["typed_commit_records"],
         "supported_patterns": [],
+        "guarantees": {
+            "collection_scope": "page", "completeness": "partial",
+            "supports_absence_proof": False,
+            "configuration": {"kind": "none", "supported_values": [],
+                              "coupled_site_parameters_hidden": True},
+        },
+        "acceptance_checks": ["the commit page loaded and parsed without error"],
         "source_evidence": [{"workflow_id": "w1", "template_id": 10,
                              "code_quote": SOURCE,
                              "explanation": "The source directly reads and parses commit rows."}],
@@ -199,6 +213,27 @@ def test_gate_rejects_cosmetic_class_page_argument_and_answer_formatter():
     value["method_code"] = "def count_commits(self, project):\n    return 3\n"
     errors = validate_primitive(value, site="gitlab", workflows={"w1": WORKFLOWS[0]})
     assert any("record aggregation" in error for error in errors)
+
+
+def test_gate_rejects_unsafe_or_underspecified_guarantees():
+    value = primitive()
+    value["guarantees"]["supports_absence_proof"] = True
+    errors = validate_primitive(value, site="gitlab", workflows={"w1": WORKFLOWS[0]})
+    assert "absence proof requires complete acquisition" in errors
+
+    value = primitive()
+    value["guarantees"]["configuration"] = {
+        "kind": "semantic_enum",
+        "supported_values": [],
+        "coupled_site_parameters_hidden": True,
+    }
+    errors = validate_primitive(value, site="gitlab", workflows={"w1": WORKFLOWS[0]})
+    assert "semantic_enum configuration requires supported_values" in errors
+
+    value = primitive()
+    value["acceptance_checks"] = []
+    errors = validate_primitive(value, site="gitlab", workflows={"w1": WORKFLOWS[0]})
+    assert "acceptance_checks must be non-empty strings" in errors
 
 
 def test_evidence_gate_records_template_escape_equivalence():
