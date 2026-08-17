@@ -12,6 +12,19 @@ from pathlib import Path
 SHOT_INDEX = re.compile(r"final_execution_(\d+)_")
 
 
+def is_supported_image(path: Path) -> bool:
+    """Reject text/error artifacts that merely use an image extension."""
+    try:
+        header = path.read_bytes()[:16]
+    except OSError:
+        return False
+    return (
+        header.startswith(b"\x89PNG\r\n\x1a\n")
+        or header.startswith((b"\xff\xd8\xff", b"GIF87a", b"GIF89a"))
+        or (header.startswith(b"RIFF") and header[8:12] == b"WEBP")
+    )
+
+
 def task_identity(workspace: Path) -> str:
     value = str(json.loads((workspace / "task.json").read_text())["task_id"])
     for suffix in ("_scratch", "_primitive"):
@@ -94,9 +107,12 @@ def export(task_id: str, runs: Path, output: Path, *, allow_incomplete: bool = F
     shots_source = final_run / "screenshots"
     if shots_source.is_dir():
         shutil.copytree(shots_source, shots_destination)
-    shots = sorted(shots_destination.glob("*.png"), key=lambda path: (
+    shots = sorted((path for path in shots_destination.glob("*.png")
+                    if is_supported_image(path)), key=lambda path: (
         int(match.group(1)) if (match := SHOT_INDEX.search(path.name)) else 10**9, path.name,
     )) if shots_destination.is_dir() else []
+    invalid_shots = sorted(path.name for path in shots_destination.glob("*.png")
+                           if path not in shots) if shots_destination.is_dir() else []
     action = (destination / "final_script_log.txt").read_text(errors="replace")
     rows = [{"step_num": 1, "action": action}]
     if shots:
@@ -107,7 +123,8 @@ def export(task_id: str, runs: Path, output: Path, *, allow_incomplete: bool = F
         "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows), encoding="utf-8")
     (destination / "result.txt").write_text("1.0\n", encoding="utf-8")
     return {"task_id": task_id, "workspace": str(workspace), "final_run": str(final_run),
-            "output": str(destination), "screenshots": len(shots)}
+            "output": str(destination), "screenshots": len(shots),
+            "invalid_screenshots_omitted": invalid_shots}
 
 
 def main(argv=None):

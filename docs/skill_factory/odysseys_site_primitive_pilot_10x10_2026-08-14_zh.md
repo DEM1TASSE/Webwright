@@ -2,7 +2,7 @@
 
 ## 一句话结论
 
-当前结果不能说明 primitive 在 Odysseys 上整体有效：修复 prompt 污染后的正式 v2 中，GPT-4o Rubric Avg 从 scratch 的 **48.4% 降到 35.9%**，目标能力 rubric 从 **7/13 降到 4/13**；agent 探索步数从平均 **56.7 降到 44.3**，但质量没有保住。10 个 held-out 任务中只有 1 个提升、3 个持平、6 个退化。唯一强正例是 MIT apartment/Google Maps 任务，从 0/7 提升到 6/7；因此有局部 transfer 信号，但还没有 aggregate gain。
+当前结果不能说明 primitive 在 Odysseys 上整体有效：修复 prompt 污染后，v2 的原始 GPT-4o 输出是 35.9%，但其中一题的伪 PNG 触发了 7 个 API transport error；去掉无效图片并用文本证据重判后，Rubric Avg 为 **40.6%**，仍低于 scratch 的 **48.4%**。目标能力 rubric 从 **7/13 降到 4/13**；agent 探索步数从平均 **56.7 降到 44.3**，但质量没有保住。10 个 held-out 任务中只有 1 个提升、3 个持平、6 个退化。唯一强正例是 MIT apartment/Google Maps 任务，从 0/7 提升到 6/7；因此有局部 transfer 信号，但还没有 aggregate gain。
 
 ## 实验设置
 
@@ -44,7 +44,8 @@ YouTube：
 |---|---:|---:|---:|---:|---:|
 | Scratch | 48.4% | 2/10 | 7/13 | 567 / 56.7 | 114 |
 | Primitive v1（无效，prompt confound） | 21.9% | 0/10 | 5/13 | 277 / 27.7 | 52 |
-| Primitive v2（修复后） | 35.9% | 1/10 | 4/13 | 443 / 44.3 | 102 |
+| Primitive v2（修复后，原始 judge 输出） | 35.9% | 1/10 | 4/13 | 443 / 44.3 | 102 |
+| Primitive v2（修正无效图片 transport error） | 40.6% | 1/10 | 4/13 | 443 / 44.3 | 102 |
 
 v1 不能作为 primitive 效果估计。它把局部 segment 的完整 frozen scratch plan 放在原始整题之前，而且 gate=skip 也注入计划，导致 agent 常把 YouTube/Maps 局部 rubric 当成整题并提前结束。v2 做了两项修复：skip 完全不改变原 prompt；adapt 明确原始整题是唯一完成目标，primitive 只能替换局部 acquisition 步骤。
 
@@ -58,12 +59,12 @@ v1 不能作为 primitive 效果估计。它把局部 segment 的完整 frozen s
 | `148dc4d` | YouTube | 6→4 / 6 | 2→1 / 2 | 75→69 | adapt | 是（search、watch） |
 | `265abf0` | YouTube | 4→0 / 7 | 2→0 / 3 | 92→20 | adapt | 否 |
 | `3add0c2` | Maps | 1→0 / 6 | 0→0 / 1 | 49→16 | skip | 否；两次均无 final run，按 failure 计 0 |
-| `4523f5c` | Maps | 5→0 / 7 | 1→0 / 1 | 82→19 | skip | 否 |
+| `4523f5c` | Maps | 5→3 / 7（文本重判） | 1→0 / 1 | 82→19 | skip | 否 |
 | `8464610` | Maps | 1→0 / 6 | 0→0 / 1 | 30→22 | skip | 否 |
 | `5d157ce` | Maps | 0→0 / 7 | 0→0 / 1 | 41→37 | adapt | 否 |
 | `940d8aa` | Maps | 0→6 / 7 | 0→1 / 1 | 16→88 | adapt | 是（driving directions） |
 
-注意：v2 有 6 个 `adapt`，但被评分 final run 只有 2 个真的调用 primitive。router 的 `adapt` 不是 usage；必须结合 `primitive_usage.json` 和 `primitive_execution_trace.jsonl` 报告实际调用。4 个 `skip` 已做到 prompt-neutral，但单次 live-agent rollout 仍有很大随机性：例如 `4523f5c` 在完全不注入 primitive 的情况下从 scratch 5/7 变成 0/7。因此这个 10-pair 单次 pilot 不能把所有差值都归因于 primitive。
+注意：v2 有 6 个 `adapt`，但被评分 final run 只有 2 个真的调用 primitive。router 的 `adapt` 不是 usage；必须结合 `primitive_usage.json` 和 `primitive_execution_trace.jsonl` 报告实际调用。4 个 `skip` 已做到 prompt-neutral，但单次 live-agent rollout 仍有很大随机性：例如 `4523f5c` 在完全不注入 primitive 的情况下从 scratch 5/7 变成文本重判后的 3/7。因此这个 10-pair 单次 pilot 不能把所有差值都归因于 primitive。
 
 ## 为什么目前仍退化
 
@@ -72,6 +73,7 @@ v1 不能作为 primitive 效果估计。它把局部 segment 的完整 frozen s
 3. **局部 primitive 不保证整题收益。** MIT Maps 是强正例，但 robot-vacuum 的 YouTube primitive 满足局部 acquisition 后，整题仍从 6/6 降到 4/6。
 4. **Live rollout 方差高。** prompt-neutral skip 也出现大幅差异，单 seed、10 对任务不足以做稳定因果判断。
 5. **执行环境自诊断不稳。** `3add0c2` 两次错误判断缺少 Playwright/自反思工具，未生成 final run；本报告保守按 0 分，不删除任务。
+6. **Judge artifact 也需要验证。** `4523f5c` 的 4 个 `.png` 实际是 UTF-8 文本，导致 GPT-4o 将 7 个 rubric 全部报 invalid-image error。文本重判恢复 3 分，但目标 R4 仍因没有有效视觉证据失败。Exporter 已增加图片 magic-byte 校验，后续不会再上传这类伪图片。
 
 ## 已修的基础设施问题
 
@@ -91,4 +93,3 @@ v1 不能作为 primitive 效果估计。它把局部 segment 的完整 frozen s
 - Primitive v1 judge：`/home/t-demiwang/odysseys-10x10-pilot/heldout_eval_primitive.json`
 - Primitive v2 judge：`/home/t-demiwang/odysseys-10x10-pilot/heldout_v2_eval_primitive.json`
 - v2 paired summary：`/home/t-demiwang/odysseys-10x10-pilot/heldout_v2_paired_summary.json`
-
