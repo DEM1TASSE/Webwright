@@ -9,6 +9,7 @@ import argparse
 import json
 import os
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .om2w_eval import ResponsesEngine, discover_task_dirs, latest_run, load_screenshots
@@ -92,6 +93,46 @@ def verdict_label(response: str) -> int | None:
     return int(matches[-1].group(1).upper() == "SUCCESS")
 
 
+def evaluate_evidence(task_id, task, run, screenshots, answer, engine, mode=None,
+                      repetitions=3, judge_mode="WebVoyager_original_protocol",
+                      evaluation_date=None):
+    """Judge an explicit evidence set.
+
+    This is also used by composite-task evaluation: one browser run can be judged
+    independently against each original WebVoyager instruction without inventing a
+    new ground truth or collapsing partial completion into one opaque label.
+    """
+    screenshots = [str(path) for path in screenshots]
+    evaluation_date = evaluation_date or datetime.now(timezone.utc).date().isoformat()
+    content = [{"type": "text", "text": (
+        f"EVALUATION DATE (UTC): {evaluation_date}\n"
+        f"TASK: {task['task']}\nResult Response: {answer}\n"
+        f"{len(screenshots)} screenshots from the trajectory follow."
+    )}]
+    content.extend({"type": "image_url", "image_url": path} for path in screenshots)
+    content.append({"type": "text", "text": "Your verdict:"})
+    responses, labels = [], []
+    for _ in range(repetitions):
+        response = engine.generate([
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": content},
+        ], max_new_tokens=1200)[0]
+        responses.append(response)
+        labels.append(verdict_label(response))
+    valid_labels = [label for label in labels if label in (0, 1)]
+    majority = (int(sum(valid_labels) * 2 > len(valid_labels))
+                if len(valid_labels) == repetitions else None)
+    return {
+        "task_id": task_id, "web_name": task.get("web_name"), "website": task["website"],
+        "task": task["task"], "mode": mode, "judge_mode": judge_mode,
+        "final_run_dir": str(run), "final_response": answer,
+        "screenshot_paths": screenshots, "evaluation_responses": responses,
+        "judge_labels": labels, "judge_model": engine.model,
+        "judge_repetitions": repetitions, "aggregation": "majority_vote",
+        "predicted_label": majority, "evaluation_date_utc": evaluation_date,
+    }
+
+
 def evaluate_task(task_id, task_dir, task, engine, mode=None, max_images=5, repetitions=3):
     newest = latest_run(task_dir)
     if newest is None:
@@ -111,32 +152,10 @@ def evaluate_task(task_id, task_dir, task, engine, mode=None, max_images=5, repe
     if run is None:
         raise RuntimeError(f"no judgeable final run under {run_root}")
     screenshots = screenshots[-max_images:]
-    content = [{"type": "text", "text": (
-        f"TASK: {task['task']}\nResult Response: {answer}\n"
-        f"{len(screenshots)} screenshots from the end of the trajectory follow."
-    )}]
-    content.extend({"type": "image_url", "image_url": path} for path in screenshots)
-    content.append({"type": "text", "text": "Your verdict:"})
-    responses, labels = [], []
-    for _ in range(repetitions):
-        response = engine.generate([
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": content},
-        ], max_new_tokens=1200)[0]
-        responses.append(response)
-        labels.append(verdict_label(response))
-    valid_labels = [label for label in labels if label in (0, 1)]
-    majority = (int(sum(valid_labels) * 2 > len(valid_labels))
-                if len(valid_labels) == repetitions else None)
-    return {
-        "task_id": task_id, "web_name": task.get("web_name"), "website": task["website"],
-        "task": task["task"], "mode": mode, "judge_mode": "WebVoyager_original_protocol",
-        "final_run_dir": str(run), "final_response": answer,
-        "screenshot_paths": screenshots, "evaluation_responses": responses,
-        "judge_labels": labels, "judge_model": engine.model,
-        "judge_repetitions": repetitions, "aggregation": "majority_vote",
-        "predicted_label": majority,
-    }
+    return evaluate_evidence(
+        task_id, task, run, screenshots, answer, engine, mode=mode,
+        repetitions=repetitions,
+    )
 
 
 def main(argv=None) -> int:

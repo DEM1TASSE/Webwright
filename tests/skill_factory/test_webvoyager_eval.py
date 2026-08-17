@@ -1,7 +1,7 @@
 import json
 
 from webwright.skill_factory.webvoyager_eval import (
-    evaluate_task, load_final_response, load_task_map, verdict_label,
+    evaluate_evidence, evaluate_task, load_final_response, load_task_map, verdict_label,
 )
 
 
@@ -60,3 +60,25 @@ def test_evaluate_task_uses_three_vote_majority(tmp_path):
     )
     assert record["judge_labels"] == [1, 0, 1]
     assert record["predicted_label"] == 1
+
+
+def test_evaluate_explicit_composite_evidence(tmp_path):
+    shot = tmp_path / "github_15_evidence.png"
+    shot.write_bytes(b"png")
+
+    class Engine:
+        model = "gpt-4o"
+        def generate(self, messages, **_kwargs):
+            assert "original subtask" in messages[1]["content"][0]["text"]
+            return ["VERDICT: SUCCESS"]
+
+    record = evaluate_evidence(
+        "bundle::GitHub--15",
+        {"task": "original subtask", "website": "https://github.com"},
+        tmp_path, [shot], "SUBTASK GitHub--15: done", Engine(), repetitions=1,
+        judge_mode="WebVoyager_composite_per_original_subtask", evaluation_date="2026-08-17",
+    )
+    assert record["predicted_label"] == 1
+    assert record["screenshot_paths"] == [str(shot)]
+    assert record["judge_mode"] == "WebVoyager_composite_per_original_subtask"
+    assert record["evaluation_date_utc"] == "2026-08-17"
