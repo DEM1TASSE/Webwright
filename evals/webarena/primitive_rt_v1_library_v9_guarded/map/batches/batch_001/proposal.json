@@ -1,0 +1,422 @@
+{
+  "operations": [
+    {
+      "op": "ADD",
+      "replacement": {
+        "primitive_id": "map/get_route_summary",
+        "method": "get_route_summary",
+        "capability": "submit origin and destination on the map site's directions page, optionally select a supported transport mode, and parse the displayed route summary into typed route details",
+        "method_code": "def get_route_summary(self, origin_query, destination_query, transport_mode=None):\n    import re\n    from urllib.parse import urlparse\n\n    host = urlparse(self.page.url).netloc\n    directions_url = f\"{self.page.url.split('/search')[0].split('/directions')[0].rstrip('/')}/directions\" if host else \"/directions\"\n    self.page.goto(directions_url, wait_until=\"domcontentloaded\")\n\n    from_box = self.page.get_by_role(\"textbox\", name=\"From\")\n    to_box = self.page.get_by_role(\"textbox\", name=\"To\")\n    from_box.fill(origin_query)\n    to_box.fill(destination_query)\n\n    mode_control = self.page.get_by_role(\"combobox\")\n    selected_transport_mode = None\n    if transport_mode is not None:\n        mode_map = {\n            \"car_osrm\": \"Car (OSRM)\",\n        }\n        if transport_mode not in mode_map:\n            raise ValueError(f\"Unsupported transport_mode: {transport_mode}\")\n        mode_control.select_option(label=mode_map[transport_mode])\n        selected_transport_mode = transport_mode\n\n    self.page.get_by_role(\"button\", name=\"Go\").click()\n    self.page.get_by_role(\"heading\", name=\"Directions\").wait_for(timeout=20000)\n    summary_locator = self.page.locator(\"p\").filter(has_text=\"Distance:\").first\n    summary_locator.wait_for(timeout=20000)\n\n    summary_text = summary_locator.inner_text().strip()\n    resolved_origin = from_box.input_value().strip()\n    resolved_destination = to_box.input_value().strip()\n    displayed_mode_value = mode_control.input_value().strip()\n\n    distance_text = None\n    duration_text = None\n    m = re.search(r\"Distance:\\s*(.*?)\\.\\s*Time:\\s*(.*?)\\.\", summary_text)\n    if m:\n        distance_text = m.group(1).strip()\n        duration_text = m.group(2).strip()\n    else:\n        distance_match = re.search(r\"Distance:\\s*([^\\.]+)\", summary_text)\n        time_match = re.search(r\"Time:\\s*([^\\.]+)\", summary_text)\n        if distance_match:\n            distance_text = distance_match.group(1).strip()\n        if time_match:\n            duration_text = time_match.group(1).strip()\n\n    if not resolved_origin or not resolved_destination:\n        raise RuntimeError(\"Directions results did not expose resolved endpoints\")\n    if not summary_text:\n        raise RuntimeError(\"Directions summary text was empty\")\n\n    return {\n        \"resolved_origin\": resolved_origin,\n        \"resolved_destination\": resolved_destination,\n        \"travel_mode\": selected_transport_mode or displayed_mode_value,\n        \"displayed_travel_mode\": displayed_mode_value,\n        \"summary_text\": summary_text,\n        \"distance_text\": distance_text,\n        \"duration_text\": duration_text,\n    }\n",
+        "owns": [
+          "Navigate to the site's directions page",
+          "Fill the From and To textboxes with caller-supplied locations",
+          "Optionally select a supported transport mode through a semantic mode input",
+          "Submit the directions form via the site's Go button",
+          "Wait for the site's directions results view to render",
+          "Read the site's displayed travel mode selection",
+          "Parse the site's summary paragraph containing distance and time",
+          "Return resolved origin and destination values as displayed by the site"
+        ],
+        "does_not_own": [
+          "Choosing whether the route satisfies a user threshold such as one hour",
+          "Comparing returned duration against task-specific limits",
+          "Selecting among multiple destinations beyond the caller-provided destination string",
+          "Formatting a yes/no natural-language answer",
+          "Ranking or comparing multiple route options"
+        ],
+        "input_contract": {
+          "type": "object",
+          "properties": {
+            "origin_query": {
+              "type": "string",
+              "description": "User-supplied origin text to enter in the From field"
+            },
+            "destination_query": {
+              "type": "string",
+              "description": "User-supplied destination text to enter in the To field"
+            },
+            "transport_mode": {
+              "type": "string",
+              "enum": [
+                "car_osrm"
+              ],
+              "description": "Optional semantic route mode; when provided, the implementation maps it to the site's coupled selector option"
+            }
+          },
+          "required": [
+            "origin_query",
+            "destination_query"
+          ]
+        },
+        "output_contract": {
+          "type": "object",
+          "properties": {
+            "resolved_origin": {
+              "type": "string",
+              "description": "Origin text as resolved/displayed by the site after submission"
+            },
+            "resolved_destination": {
+              "type": "string",
+              "description": "Destination text as resolved/displayed by the site after submission"
+            },
+            "travel_mode": {
+              "type": "string",
+              "description": "Semantic transport mode when one was requested, otherwise the site's displayed mode value"
+            },
+            "displayed_travel_mode": {
+              "type": "string",
+              "description": "Current travel mode label/value shown by the site's mode combobox after submission"
+            },
+            "summary_text": {
+              "type": "string",
+              "description": "Full route summary text rendered by the site"
+            },
+            "distance_text": {
+              "type": "string",
+              "nullable": true,
+              "description": "Distance string parsed from the site's route summary when present"
+            },
+            "duration_text": {
+              "type": "string",
+              "nullable": true,
+              "description": "Travel time string parsed from the site's route summary when present"
+            }
+          },
+          "required": [
+            "resolved_origin",
+            "resolved_destination",
+            "travel_mode",
+            "displayed_travel_mode",
+            "summary_text"
+          ]
+        },
+        "requires": [],
+        "provides": [
+          "typed_route_summary"
+        ],
+        "supported_patterns": [
+          "One-shot directions lookup between caller-supplied endpoints",
+          "Driving-mode directions lookup using semantic mode mapping",
+          "Return of site-resolved endpoint text alongside route metrics"
+        ],
+        "guarantees": {
+          "collection_scope": "single",
+          "completeness": "conditional",
+          "supports_absence_proof": false,
+          "configuration": {
+            "kind": "semantic_enum",
+            "supported_values": [
+              "car_osrm"
+            ],
+            "coupled_site_parameters_hidden": true
+          }
+        },
+        "acceptance_checks": [
+          "After submission, a heading named 'Directions' is visible on the page.",
+          "A paragraph containing 'Distance:' becomes visible and returned summary_text is non-empty.",
+          "The returned resolved_origin and resolved_destination are non-empty strings read back from the site's inputs after submission.",
+          "If duration_text is present, it is parsed from the displayed route summary rather than invented client-side.",
+          "If transport_mode='car_osrm' is supplied, the method selects the coupled site option internally before submission."
+        ],
+        "source_evidence": [
+          {
+            "workflow_id": "task39_t77",
+            "template_id": "77",
+            "code_quote": "await from_box.fill(ORIGIN)\nawait to_box.fill(DESTINATION)\nawait page.get_by_role('button', name='Go').click()\nawait page.get_by_role('heading', name='Directions').wait_for(timeout=20000)\nsummary_text = await page.locator('p').filter(has_text='Distance:').first.inner_text()\nsummary_match = re.search(r'Distance:\\s*(.*?)\\.\\s*Time:\\s*(.*?)\\.', summary_text)",
+            "explanation": "Generalized hard-coded origin and destination strings into caller inputs and preserved the site's displayed resolved endpoints, mode value, distance, and duration as typed outputs."
+          },
+          {
+            "workflow_id": "task84_t64",
+            "template_id": "64",
+            "code_quote": "await page.get_by_role('textbox', name='From').fill('DoubleTree by Hilton New York Downtown')\nawait page.get_by_role('textbox', name='To').fill('Keens Steakhouse')\nawait page.get_by_role('combobox').select_option(label='Car (OSRM)')\nsummary = await page.locator('p').filter(has_text='Distance:').first.inner_text()",
+            "explanation": "Added evidence that the directions operation supports a semantic transport-mode configuration mapped internally to the coupled selector option 'Car (OSRM)' while preserving the same core route-summary acquisition boundary."
+          }
+        ]
+      }
+    },
+    {
+      "op": "ADD",
+      "replacement": {
+        "primitive_id": "map/search_places_with_address_details",
+        "method": "search_places_with_address_details",
+        "capability": "Search OpenStreetMap Nominatim for place records by free-text query and return typed place/address details from the site-backed search results.",
+        "method_code": "def search_places_with_address_details(self, query):\n    from urllib.parse import quote\n\n    if not query or not str(query).strip():\n        raise ValueError(\"query must be a non-empty string\")\n\n    encoded_query = quote(str(query).strip())\n    api_url = (\n        \"https://nominatim.openstreetmap.org/search\"\n        f\"?q={encoded_query}&format=jsonv2&addressdetails=1\"\n    )\n    response = self.page.request.get(\n        api_url,\n        headers={\"User-Agent\": \"Mozilla/5.0 WebArena Agent\"},\n    )\n    if not response.ok:\n        raise RuntimeError(f\"Nominatim search failed with status {response.status}\")\n\n    payload = response.json()\n    if not isinstance(payload, list):\n        raise RuntimeError(\"Expected list payload from Nominatim search\")\n\n    results = []\n    for item in payload:\n        if not isinstance(item, dict):\n            continue\n        results.append({\n            \"place_id\": item.get(\"place_id\"),\n            \"osm_type\": item.get(\"osm_type\"),\n            \"osm_id\": item.get(\"osm_id\"),\n            \"name\": item.get(\"name\"),\n            \"display_name\": item.get(\"display_name\"),\n            \"lat\": item.get(\"lat\"),\n            \"lon\": item.get(\"lon\"),\n            \"category\": item.get(\"category\"),\n            \"type\": item.get(\"type\"),\n            \"address\": item.get(\"address\") if isinstance(item.get(\"address\"), dict) else None,\n            \"boundingbox\": item.get(\"boundingbox\") if isinstance(item.get(\"boundingbox\"), list) else None,\n        })\n\n    return {\"results\": results}\n",
+        "owns": [
+          "Constructing the OpenStreetMap Nominatim search request for a caller-supplied free-text query",
+          "Requesting JSON-formatted search results with address details enabled",
+          "Parsing site-returned place records into typed results including stable identity and address fields",
+          "Returning zero or more matching place records for the supplied query"
+        ],
+        "does_not_own": [
+          "Choosing the query text for a specific task",
+          "Selecting the correct record among multiple returned candidates using task-specific criteria",
+          "Formatting a final answer for the user",
+          "Using unrelated third-party/public fallback providers beyond the demonstrated OpenStreetMap Nominatim mechanism"
+        ],
+        "input_contract": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "Free-text place search query."
+            }
+          },
+          "required": [
+            "query"
+          ]
+        },
+        "output_contract": {
+          "type": "object",
+          "properties": {
+            "results": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "place_id": {
+                    "type": "number"
+                  },
+                  "osm_type": {
+                    "type": "string"
+                  },
+                  "osm_id": {
+                    "type": "number"
+                  },
+                  "name": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "display_name": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "lat": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "lon": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "category": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "type": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "address": {
+                    "type": "object",
+                    "nullable": true,
+                    "description": "Site-provided address object with any stable fields returned by Nominatim, such as postcode when present."
+                  },
+                  "boundingbox": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "required": [
+            "results"
+          ]
+        },
+        "requires": [],
+        "provides": [
+          "typed_place_search_results"
+        ],
+        "supported_patterns": [
+          "Free-text place search against the site's Nominatim-backed endpoint",
+          "Return of multiple candidate records with stable IDs and address details",
+          "Workflow-side selection of one matching record from returned candidates"
+        ],
+        "guarantees": {
+          "collection_scope": "query",
+          "completeness": "partial",
+          "supports_absence_proof": false,
+          "configuration": {
+            "kind": "internal",
+            "supported_values": [],
+            "coupled_site_parameters_hidden": true
+          }
+        },
+        "acceptance_checks": [
+          "Returns an object containing a results array when the site request succeeds, even if the array is empty.",
+          "Each returned record preserves site-provided identity fields (place_id, osm_type, osm_id) when present.",
+          "If an address object is present in a result, site-provided fields such as postcode remain available in the returned typed record.",
+          "The request includes address details in the generated site query and parses the JSON response body."
+        ],
+        "source_evidence": [
+          {
+            "workflow_id": "task73_t70",
+            "template_id": "70",
+            "code_quote": "const apiUrl = 'https://nominatim.openstreetmap.org/search?q=Columbia%20University&format=jsonv2&addressdetails=1';\nconst apiResp = await fetch(apiUrl, { headers: { 'User-Agent': 'Mozilla/5.0 WebArena Agent' } });\nconst apiJson = await apiResp.json();\nconst hit = apiJson.find(x => x && x.name === 'Columbia University' && x.address && x.address.postcode);",
+            "explanation": "Generalized the hard-coded query into an input while preserving the demonstrated site-backed Nominatim request shape, JSON acquisition, and typed result parsing with address details including postcode."
+          }
+        ]
+      }
+    },
+    {
+      "op": "ADD",
+      "replacement": {
+        "primitive_id": "map/search_places_by_query_from_results_ui",
+        "method": "search_places_by_query_from_results_ui",
+        "capability": "Search the map site by a caller-supplied text query and parse visible result links into typed place records from the results UI.",
+        "method_code": "def search_places_by_query_from_results_ui(self, query):\n    import re\n    from urllib.parse import quote\n\n    if not query or not str(query).strip():\n        raise ValueError(\"query must be a non-empty string\")\n\n    base = self.page.url.split(\"/search\")[0].split(\"/directions\")[0].rstrip(\"/\")\n    search_url = f\"{base}/search?query={quote(str(query).strip())}\"\n    self.page.goto(search_url, wait_until=\"domcontentloaded\")\n    self.page.wait_for_timeout(1500)\n\n    link_locator = self.page.get_by_role(\"link\")\n    count = link_locator.count()\n    results = []\n    seen = set()\n    for i in range(count):\n        link = link_locator.nth(i)\n        label = link.inner_text().strip()\n        href = link.get_attribute(\"href\")\n        if not label:\n            continue\n        key = (label, href)\n        if key in seen:\n            continue\n        seen.add(key)\n\n        parts = [p.strip() for p in label.split(\",\")]\n        result_name = parts[0] if parts else label\n        address_components = [p for p in parts[1:] if p]\n        results.append({\n            \"result_name\": result_name,\n            \"result_label\": label,\n            \"address_components\": address_components,\n            \"detail_href\": href,\n        })\n\n    return {\"results\": results}\n",
+        "owns": [
+          "Entering a free-text query into the site's Search flow",
+          "Submitting the search request through the site's search URL/UI semantics",
+          "Waiting for the search results view to render",
+          "Parsing visible search-result link text into typed place result records",
+          "Returning stable displayed location semantics present in the result label such as venue name and address hierarchy"
+        ],
+        "does_not_own": [
+          "Choosing task-specific query terms",
+          "Determining which returned result is 'near Pitt' or otherwise best for the user task",
+          "Opening a chosen result's description/details page",
+          "Returning raw page text or raw DOM without parsing"
+        ],
+        "input_contract": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "Free-text place search query to submit on the site."
+            }
+          },
+          "required": [
+            "query"
+          ]
+        },
+        "output_contract": {
+          "type": "object",
+          "properties": {
+            "results": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "result_name": {
+                    "type": "string"
+                  },
+                  "result_label": {
+                    "type": "string",
+                    "description": "Full visible link label as rendered in the results list."
+                  },
+                  "address_components": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Ordered location/address segments parsed from the visible result label after the primary name, when present."
+                  },
+                  "detail_href": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "Link target for the result, when exposed in the rendered anchor."
+                  }
+                },
+                "required": [
+                  "result_label"
+                ]
+              }
+            }
+          },
+          "required": [
+            "results"
+          ]
+        },
+        "requires": [],
+        "provides": [
+          "typed_ui_search_results"
+        ],
+        "supported_patterns": [
+          "UI search by free-text query",
+          "Parsing displayed result labels into structured name-plus-address-components records",
+          "Returning multiple visible result candidates for workflow-side choice"
+        ],
+        "guarantees": {
+          "collection_scope": "query",
+          "completeness": "partial",
+          "supports_absence_proof": false,
+          "configuration": {
+            "kind": "none",
+            "supported_values": [],
+            "coupled_site_parameters_hidden": true
+          }
+        },
+        "acceptance_checks": [
+          "After submitting the query, the method returns a results array corresponding to visible link entries on the search results page.",
+          "Each returned record has a non-empty result_label parsed from rendered UI text.",
+          "When a rendered anchor exposes an href, the returned detail_href matches that anchor target.",
+          "address_components are derived from the visible label segments after the primary result name."
+        ],
+        "source_evidence": [
+          {
+            "workflow_id": "task371_t52",
+            "template_id": "52",
+            "code_quote": "await page.get_by_role(\"textbox\", name=\"Search\").fill(\"Piada Pittsburgh\")\nawait page.get_by_role(\"button\", name=\"Go\").click()\n...\npiada_link = page.get_by_role(\"link\", name=re.compile(r\"Piada Italian Street Food, 3600, Forbes Avenue, Oakland, Central Oakland, Pittsburgh\", re.I))",
+            "explanation": "Generalized the hard-coded search term into a query input and preserved the evidenced UI search flow and visible-result-link parsing boundary, returning typed labels and address segments instead of raw page text."
+          }
+        ]
+      }
+    }
+  ],
+  "workflow_attribution": [
+    {
+      "workflow_id": "task39_t77",
+      "decision": "CONTRIBUTED",
+      "operation_indices": [
+        0
+      ]
+    },
+    {
+      "workflow_id": "task73_t70",
+      "decision": "CONTRIBUTED",
+      "operation_indices": [
+        1
+      ]
+    },
+    {
+      "workflow_id": "task84_t64",
+      "decision": "CONTRIBUTED",
+      "operation_indices": [
+        0
+      ]
+    },
+    {
+      "workflow_id": "task371_t52",
+      "decision": "CONTRIBUTED",
+      "operation_indices": [
+        2
+      ]
+    }
+  ],
+  "candidate_attribution": [
+    {
+      "candidate_id": "task39_t77::get_route_summary_from_directions_form",
+      "decision": "ADD",
+      "operation_index": 0
+    },
+    {
+      "candidate_id": "task73_t70::search_places_with_address_details",
+      "decision": "ADD",
+      "operation_index": 1
+    },
+    {
+      "candidate_id": "task84_t64::get_route_summary",
+      "decision": "ADD",
+      "operation_index": 0
+    },
+    {
+      "candidate_id": "task371_t52::search_places_by_query_from_results_ui",
+      "decision": "ADD",
+      "operation_index": 2
+    }
+  ]
+}

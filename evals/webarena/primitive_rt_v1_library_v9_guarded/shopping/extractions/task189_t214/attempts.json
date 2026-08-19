@@ -1,0 +1,209 @@
+[
+  {
+    "attempt": 1,
+    "proposal": {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task189_t214::authenticate_customer_graphql",
+          "proposed_method": "authenticate_customer_graphql",
+          "capability": "authenticate a shopping-site customer via the site's GraphQL generateCustomerToken mutation and return a bearer token for subsequent customer-scoped requests",
+          "owns": [
+            "Submitting the site-local GraphQL mutation `generateCustomerToken` to `/graphql`",
+            "Passing customer credentials as GraphQL variables",
+            "Parsing the GraphQL response to extract the customer token",
+            "Returning a token suitable for Authorization Bearer headers on this site"
+          ],
+          "does_not_own": [
+            "Choosing which user account to log into for a task",
+            "Storing credentials outside the call",
+            "Using the token to answer any specific business question",
+            "Retry/fallback to non-site authentication providers"
+          ],
+          "input_contract": {
+            "email": {
+              "type": "string",
+              "description": "Customer account email address"
+            },
+            "password": {
+              "type": "string",
+              "description": "Customer account password"
+            }
+          },
+          "output_contract": {
+            "token": {
+              "type": "string",
+              "description": "Customer bearer token returned by `generateCustomerToken`"
+            }
+          },
+          "guarantees": {
+            "collection_scope": "not_applicable",
+            "completeness": "not_applicable",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "Returns a non-empty token string extracted from `data.generateCustomerToken.token`",
+            "Token can be used as a Bearer token in subsequent authenticated site GraphQL requests"
+          ],
+          "source_evidence": {
+            "workflow_id": "task189_t214",
+            "template_id": "214",
+            "code_quote": "q_token = 'mutation GenerateCustomerToken($email: String!, $password: String!) { generateCustomerToken(email: $email, password: $password) { token } }'\nr = requests.post(BASE + 'graphql', json={'query': q_token, 'variables': {'email': EMAIL, 'password': PASSWORD}}, timeout=30)\ntoken = r.json()['data']['generateCustomerToken']['token']",
+            "explanation": "The workflow directly demonstrates a reusable site authentication primitive against the shopping site's own GraphQL endpoint. Hard-coded credentials are naturally parameterized into email and password inputs.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        },
+        {
+          "candidate_id": "task189_t214::list_authenticated_customer_orders_graphql",
+          "proposed_method": "list_authenticated_customer_orders_graphql",
+          "capability": "retrieve an authenticated customer's order records from the shopping site's GraphQL API with pagination metadata and stable order fields",
+          "owns": [
+            "Issuing the authenticated site-local GraphQL customer orders query to `/graphql`",
+            "Applying caller-supplied pagination inputs to `orders(pageSize, currentPage)`",
+            "Including Bearer authorization in the request header",
+            "Parsing customer identity and order collection payloads into typed records",
+            "Returning pagination metadata exposed by the site response"
+          ],
+          "does_not_own": [
+            "Filtering orders by task-specific status such as pending",
+            "Selecting the latest order",
+            "Comparing timestamps across records for a task-specific answer",
+            "Formatting totals into a final natural-language response"
+          ],
+          "input_contract": {
+            "token": {
+              "type": "string",
+              "description": "Authenticated customer bearer token"
+            },
+            "page_size": {
+              "type": "integer",
+              "description": "Requested number of orders per page"
+            },
+            "page_number": {
+              "type": "integer",
+              "description": "Requested orders page number, mapped to GraphQL `currentPage`"
+            }
+          },
+          "output_contract": {
+            "customer": {
+              "type": "object",
+              "fields": {
+                "firstname": {
+                  "type": "string"
+                },
+                "lastname": {
+                  "type": "string"
+                },
+                "email": {
+                  "type": "string"
+                }
+              }
+            },
+            "orders": {
+              "type": "object",
+              "fields": {
+                "total_count": {
+                  "type": "integer",
+                  "description": "Total number of orders reported by the site for the customer"
+                },
+                "page_info": {
+                  "type": "object",
+                  "fields": {
+                    "current_page": {
+                      "type": "integer"
+                    },
+                    "page_size": {
+                      "type": "integer"
+                    },
+                    "total_pages": {
+                      "type": "integer"
+                    }
+                  }
+                },
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "fields": {
+                      "number": {
+                        "type": "string",
+                        "description": "Site order identifier"
+                      },
+                      "status": {
+                        "type": "string",
+                        "description": "Order status label returned by the site"
+                      },
+                      "created_at": {
+                        "type": "string",
+                        "description": "Order creation timestamp as returned by the site"
+                      },
+                      "grand_total": {
+                        "type": [
+                          "number",
+                          "string",
+                          "null"
+                        ],
+                        "description": "Top-level grand_total field if present in this deployment"
+                      },
+                      "total": {
+                        "type": "object",
+                        "fields": {
+                          "grand_total": {
+                            "type": "object",
+                            "fields": {
+                              "value": {
+                                "type": [
+                                  "number",
+                                  "null"
+                                ]
+                              },
+                              "currency": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "guarantees": {
+            "collection_scope": "page",
+            "completeness": "partial",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "Response includes a parsed `customer` object and an `orders` object",
+            "Returned `orders.page_info.current_page` matches the requested page_number when the request succeeds",
+            "Each returned order item contains the demonstrated stable fields `number`, `status`, and `created_at`",
+            "Empty `items` on a successful response is treated as a valid empty page, not acquisition failure"
+          ],
+          "source_evidence": {
+            "workflow_id": "task189_t214",
+            "template_id": "214",
+            "code_quote": "headers = {'Authorization': f'Bearer {token}'}\nq_orders = 'query { customer { firstname lastname email orders(pageSize: 200, currentPage: 1) { total_count page_info { current_page page_size total_pages } items { number status created_at grand_total total { grand_total { value currency } } } } } }'\nr2 = requests.post(BASE + 'graphql', json={'query': q_orders}, headers=headers, timeout=30)\ndata = r2.json()['data']['customer']\norders = data['orders']['items']",
+            "explanation": "The workflow demonstrates a site-specific authenticated order-list retrieval capability. The task-specific logic only begins after retrieval, where it filters `pending` and chooses the latest order. The reusable boundary is the authenticated paginated acquisition of customer orders with customer identity, item fields, and pagination metadata.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        }
+      ]
+    },
+    "errors": []
+  }
+]

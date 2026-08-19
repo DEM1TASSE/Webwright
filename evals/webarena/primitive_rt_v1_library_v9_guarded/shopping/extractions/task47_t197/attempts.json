@@ -1,0 +1,167 @@
+[
+  {
+    "attempt": 1,
+    "proposal": {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task47_t197::login_and_fetch_order_history",
+          "proposed_method": "login_and_fetch_order_history",
+          "capability": "authenticate to the shopping site and retrieve the My Orders history page HTML for the signed-in customer",
+          "owns": [
+            "Fetching the login page",
+            "Extracting the hidden form_key required by the site's login form",
+            "Submitting site-specific login credentials to the site's login endpoint",
+            "Retaining authenticated cookies across requests",
+            "Requesting the authenticated /sales/order/history/ page",
+            "Returning the retrieved order history page HTML and request metadata"
+          ],
+          "does_not_own": [
+            "Parsing order rows into typed records",
+            "Filtering by date range",
+            "Classifying which statuses count as fulfilled",
+            "Summing or counting order amounts",
+            "Any task-specific reporting or answer formatting"
+          ],
+          "input_contract": {
+            "base_url": {
+              "type": "string",
+              "description": "Base URL of the shopping site deployment"
+            },
+            "username": {
+              "type": "string",
+              "description": "Customer login username/email"
+            },
+            "password": {
+              "type": "string",
+              "description": "Customer login password"
+            }
+          },
+          "output_contract": {
+            "final_url": {
+              "type": "string"
+            },
+            "document_status": {
+              "type": "integer|null"
+            },
+            "html": {
+              "type": "string",
+              "description": "Authenticated My Orders page HTML"
+            },
+            "response_headers": {
+              "type": "object"
+            },
+            "authenticated": {
+              "type": "boolean",
+              "description": "Whether authenticated session cookies were retained and the orders page was requested"
+            }
+          },
+          "guarantees": {
+            "collection_scope": "page",
+            "completeness": "conditional",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "Returned HTML is from a request made after login form submission using retained cookies",
+            "Returned HTML corresponds to the My Orders page request, e.g. final_url targets /sales/order/history/",
+            "HTML indicates the orders page was reached rather than an unauthenticated login page, such as containing the My Orders title or equivalent page marker"
+          ],
+          "source_evidence": {
+            "workflow_id": "task47_t197",
+            "template_id": "197",
+            "code_quote": "fetch(normal_opener, BASE + '/customer/account/login/') ... re.search(r'name=\"form_key\" type=\"hidden\" value=\"([^\"]+)\"', login_html) ... fetch(no_redirect_opener, BASE + '/customer/account/loginPost/', data={'form_key': form_key, 'login[username]': USERNAME, 'login[password]': PASSWORD} ... ) ... fetch(normal_opener, BASE + '/sales/order/history/')",
+            "explanation": "The workflow demonstrates a reusable site-local authentication sequence coupled to fetching the authenticated order history page. Hard-coded credentials and base URL can be parameterized. The primitive should stop at delivering the authenticated page HTML, because downstream row parsing and date/status filtering are task-specific in this workflow.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        },
+        {
+          "candidate_id": "task47_t197::extract_order_history_records_from_orders_page",
+          "proposed_method": "extract_order_history_records_from_orders_page",
+          "capability": "parse the shopping site's My Orders page HTML into typed order-history records",
+          "owns": [
+            "Parsing order table rows from the My Orders page HTML",
+            "Extracting stable order fields shown on the page",
+            "Normalizing text content from HTML cells",
+            "Converting displayed order date into a machine-readable ISO date",
+            "Converting displayed currency total into a numeric amount"
+          ],
+          "does_not_own": [
+            "Authenticating or navigating to the orders page",
+            "Choosing a date window",
+            "Defining which statuses should be counted for a particular task",
+            "Aggregating counts or spend totals across records",
+            "Proving that the entire account history is complete beyond the retrieved page content"
+          ],
+          "input_contract": {
+            "html": {
+              "type": "string",
+              "description": "HTML of the shopping site's My Orders page"
+            }
+          },
+          "output_contract": {
+            "orders": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "order_id": {
+                    "type": "string"
+                  },
+                  "date_text": {
+                    "type": "string",
+                    "description": "Displayed order date text from the page"
+                  },
+                  "date": {
+                    "type": "string",
+                    "description": "ISO date parsed from the displayed order date"
+                  },
+                  "total_text": {
+                    "type": "string",
+                    "description": "Displayed total including currency symbol"
+                  },
+                  "amount": {
+                    "type": "number",
+                    "description": "Parsed numeric order total"
+                  },
+                  "status": {
+                    "type": "string",
+                    "description": "Displayed order status text"
+                  }
+                }
+              }
+            }
+          },
+          "guarantees": {
+            "collection_scope": "page",
+            "completeness": "conditional",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "Each returned record contains non-empty order_id, date_text, total_text, and status fields sourced from a single table row",
+            "For every returned record, date is a valid ISO date parsed from the page's displayed date",
+            "For every returned record, amount is a numeric parse of total_text",
+            "If no matching order rows are present in the supplied HTML, the method returns an empty orders array rather than failing"
+          ],
+          "source_evidence": {
+            "workflow_id": "task47_t197",
+            "template_id": "197",
+            "code_quote": "row_pattern = re.compile(r'<tr>\\s*<td[^>]*class=\"col id\"[^>]*>(.*?)</td>\\s*<td[^>]*class=\"col date\"[^>]*>(.*?)</td>.*?<td[^>]*class=\"col total\"[^>]*>.*?<span class=\"price\">(.*?)</span>.*?</td>\\s*<td[^>]*class=\"col status\"[^>]*>(.*?)</td>', re.S) ... rows.append({'order_id': oid, 'date': dtx, 'date_obj': d.isoformat(), 'total': ttx, 'amount': amt, 'status': stx})",
+            "explanation": "The workflow demonstrates DOM/text acquisition that is immediately parsed into typed order records, which qualifies as a reusable website capability. The generalized primitive should preserve all stable fields actually exposed at this acquisition boundary: order identity, displayed and parsed date, displayed and parsed total, and displayed status.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        }
+      ]
+    },
+    "errors": []
+  }
+]

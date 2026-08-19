@@ -130,7 +130,11 @@ def retrieve_audited_primitives(
                 "result set, or satisfy the step's acceptance checks. Fallback must be conditional "
                 "on primitive failure; it is not permission to perform both strategies every time. "
                 "Prefer SKIP when a primitive only adds an extra probe without avoiding meaningful "
-                "scratch work. "
+                "scratch work. For an open-ended nearest/all/vicinity request, a single query- or "
+                "page-scoped search primitive does not replace candidate discovery. Preserve the "
+                "scratch discovery step unless a selected primitive explicitly owns a sufficiently "
+                "complete candidate-set acquisition; partial search may only patch later parsing, "
+                "enrichment, or routing after scratch has established the candidate set. "
                 "Return JSON {\"decision\":\"use|adapt|skip\",\"primitive_ids\":[],"
                 "\"reason\":\"...\",\"remaining_gap\":[],\"patches\":[{"
                 "\"scratch_step_id\":\"S1\",\"primitive_id\":\"...\","
@@ -280,7 +284,20 @@ def render_audited_primitive_hint(
                      "pagination, or parsers. If an exact method cannot run in the chosen runtime, "
                      "do not emulate it under the original provenance marker: fall back to the "
                      "scratch acquisition. An empty primitive result is not proof of absence unless "
-                     "the relevant acquisition is accepted and complete for the task scope.")
+                     "the relevant acquisition is accepted and complete for the task scope. For an "
+                     "exhaustive request, a partial acquisition that finds no qualifying candidate "
+                     "must fall back to scratch discovery rather than emit a successful empty list. "
+                     "For open-ended nearest/all/vicinity requests, do not let a single query- or "
+                     "page-scoped primitive define the candidate set: preserve scratch candidate "
+                     "discovery unless a primitive explicitly guarantees the required scope. "
+                     "Preserve the goal's cardinality: wording such as 'a', 'an', or 'the nearest' "
+                     "requires at most one selected entity unless the goal explicitly asks for all. "
+                     "Before SUCCESS, validate every requested output field against acquired facts. "
+                     "Preserve site-returned address values verbatim (for example, do not abbreviate "
+                     "a full state name). If a field is absent but is unambiguously entailed by other "
+                     "acquired facts, derive and record it explicitly; otherwise use scratch "
+                     "enrichment or the original acquisition. Never silently emit a placeholder "
+                     "value merely because the primitive response omitted the field.")
     if result.remaining_gap:
         lines.append("Router-declared remaining gaps: " + "; ".join(result.remaining_gap))
     if result.scratch_plan:

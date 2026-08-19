@@ -1,0 +1,158 @@
+[
+  {
+    "attempt": 1,
+    "proposal": {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task144_t162::list_customer_orders_history_page",
+          "proposed_method": "list_customer_orders_history_page",
+          "capability": "List order summary records from the signed-in customer's orders-history page",
+          "owns": [
+            "Navigating to the site's orders history page after authentication",
+            "Parsing the orders table rows into typed order summary records from displayed cells"
+          ],
+          "does_not_own": [
+            "Logging in",
+            "Filtering by date range",
+            "Determining whether an order is food-related",
+            "Selecting specific target orders beyond what appears on the page",
+            "Traversing pagination beyond the demonstrated page"
+          ],
+          "input_contract": {
+            "page": {
+              "type": "playwright_page",
+              "authenticated": true
+            }
+          },
+          "output_contract": {
+            "records": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "fields": {
+                  "display_cells": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "guarantees": {
+            "collection_scope": "page",
+            "completeness": "partial",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "Returns one parsed record per visible `table tbody tr` on the orders-history page",
+            "Each returned record contains the visible trimmed cell texts from that row in display order",
+            "If no order rows are visible, returns an empty records array rather than failing solely for emptiness"
+          ],
+          "source_evidence": {
+            "workflow_id": "task144_t162",
+            "template_id": "162",
+            "code_quote": "await page.goto(ORDERS_URL, wait_until=\"domcontentloaded\")\nrows = page.locator(\"table tbody tr\")\ncount = await rows.count()\npage2_rows = []\nfor i in range(count):\n    row = rows.nth(i)\n    cells = [c.strip() for c in await row.locator(\"td\").all_inner_texts()]\n    if len(cells) >= 4:\n        page2_rows.append(cells[:4])",
+            "explanation": "The workflow demonstrates a reusable UI acquisition on the site's order-history page: enumerate visible order rows and parse row cell text into structured records. The task-specific date selection is separate from this page-scope listing capability.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        },
+        {
+          "candidate_id": "task144_t162::get_customer_order_detail",
+          "proposed_method": "get_customer_order_detail",
+          "capability": "Retrieve a customer's order-detail page and parse typed order detail fields and line-item names",
+          "owns": [
+            "Navigating to a site order-detail URL for a supplied order identifier",
+            "Parsing displayed order metadata from the page text",
+            "Parsing visible product name cells from the order items table when present",
+            "Falling back to regex extraction of product names from page text when the table cells are unavailable"
+          ],
+          "does_not_own": [
+            "Choosing which order identifiers to inspect",
+            "Classifying items or orders as food/non-food",
+            "Summing totals across orders",
+            "Filtering by status or date for the final task answer"
+          ],
+          "input_contract": {
+            "page": {
+              "type": "playwright_page",
+              "authenticated": true
+            },
+            "order_id": {
+              "type": "string",
+              "description": "Site order identifier used in `/sales/order/view/order_id/{order_id}/`"
+            }
+          },
+          "output_contract": {
+            "record": {
+              "type": "object",
+              "fields": {
+                "order_id": {
+                  "type": "string"
+                },
+                "order_number": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "order_date": {
+                  "type": "string"
+                },
+                "grand_total": {
+                  "type": "number"
+                },
+                "currency_symbol": {
+                  "type": "string",
+                  "enum": [
+                    "$"
+                  ]
+                },
+                "item_names": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "detail_url": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "guarantees": {
+            "collection_scope": "single",
+            "completeness": "conditional",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "Navigates to the order-detail page for the supplied `order_id` and returns a record only when order metadata can be parsed",
+            "Returned `record.order_number`, `record.status`, `record.order_date`, and `record.grand_total` are parsed from visible page content",
+            "Returned `record.item_names` reflects product names from `table tbody tr td.col.name` when available, otherwise from the demonstrated text fallback",
+            "`record.detail_url` matches the visited order-detail URL"
+          ],
+          "source_evidence": {
+            "workflow_id": "task144_t162",
+            "template_id": "162",
+            "code_quote": "detail_url = f\"{BASE}/sales/order/view/order_id/{order_id}/\"\nawait page.goto(detail_url, wait_until=\"domcontentloaded\")\nmain_text = await page.locator(\"main\").inner_text()\norder_number = re.search(r\"Order #\\s*(\\d+)\", main_text).group(1)\nstatus = re.search(r\"Order #\\s*\\d+\\s*(\\w+)\", main_text).group(1)\ndate = re.search(r\"Order Date:\\s*([A-Za-z]+ \\d{1,2}, \\d{4})\", main_text).group(1)\ngrand_total = re.search(r\"Grand Total\\s*\\$(\\d+[\\d,]*\\.\\d{2})\", main_text).group(1)\nproduct_cells = await page.locator(\"table tbody tr td.col.name\").all_inner_texts()\nif product_cells:\n    item_names = [re.sub(r\"\\s+\", \" \", t).strip() for t in product_cells]\nelse:\n    for m in re.finditer(r\"Product Name\\s*SKU\\s*Price\\s*Qty\\s*Subtotal\\s*(.*?)\\s+B[0-9A-Z]+\", main_text, re.S):\n        item_names.append(re.sub(r\"\\s+\", \" \", m.group(1)).strip())",
+            "explanation": "This is a reusable single-record acquisition capability on the shopping site: given an order identifier, open the site's order-detail page and parse stable order fields plus line-item names. The workflow's later food classification and inclusion logic are task-specific and not part of the primitive.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        }
+      ]
+    },
+    "errors": []
+  }
+]

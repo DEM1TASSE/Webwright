@@ -1,0 +1,519 @@
+{
+  "site": "shopping",
+  "build_mode": "parallel_initial",
+  "batch": [
+    {
+      "id": "task164_t136",
+      "task_id": 164,
+      "template_id": 136,
+      "task_type": "retrieve",
+      "intent": "What are the main criticisms of this product? Please extract the relevant sentences.",
+      "site": "shopping",
+      "code": "import asyncio, json\nfrom pathlib import Path\nfrom playwright.async_api import async_playwright\n\nWORKSPACE = Path(__file__).resolve().parent\nRUN_DIR = WORKSPACE / 'final_runs' / 'run_1'\nSCREENSHOTS = RUN_DIR / 'screenshots'\nLOG_PATH = RUN_DIR / 'final_script_log.txt'\nSTART_URL = 'http://GCRSANDBOX410.redmond.corp.microsoft.com:7770/mineralogie-all-natural-lip-gloss-ruby-rose.html'\n\nANSWER = ['Dry', 'Uneven color']\nANSWER_TEXT = 'Dry Uneven color'\n\n\ndef log(msg: str):\n    with LOG_PATH.open('a', encoding='utf-8') as f:\n        f.write(msg + '\\n')\n    print(msg)\n\n\nasync def main():\n    RUN_DIR.mkdir(parents=True, exist_ok=True)\n    SCREENSHOTS.mkdir(parents=True, exist_ok=True)\n    LOG_PATH.write_text('', encoding='utf-8')\n    log('step 1 action: apply inclusion rule: include only explicit negative product-issue sentences; exclude praise and shipping/non-delivery complaints')\n    async with async_playwright() as p:\n        browser = await p.chromium.launch(headless=True)\n        context = await browser.new_context(viewport={'width': 1280, 'height': 1800})\n        page = await context.new_page()\n        response = await page.goto(START_URL, wait_until='networkidle')\n        log(f'step 2 action: opened product page url={page.url} status={response.status if response else None} title={await page.title()}')\n        await page.screenshot(path=str(SCREENSHOTS / 'final_execution_1_product_page.png'))\n\n        await page.locator('#tab-label-reviews-title').click()\n        await page.wait_for_timeout(1200)\n        reviews_text = await page.locator('#reviews').inner_text()\n        log('step 3 action: opened Reviews tab and captured visible review text')\n        log('step 3 reviews text:\\n' + reviews_text)\n        await page.screenshot(path=str(SCREENSHOTS / 'final_execution_2_reviews_tab.png'))\n\n        review_contents = await page.locator('.review-content').all_inner_texts()\n        log(f'step 4 action: extracted review contents = {review_contents}')\n        log(\"step 4 action: excluded non-product complaint sentence 'Those labial never came to me and I would like them again because I paid for them' because it is a delivery issue\")\n        log(\"step 4 action: included product criticism from 20% review: 'Dry' and 'Uneven color'\")\n\n        agent_response = {\n            'task_type': 'RETRIEVE',\n            'status': 'SUCCESS',\n            'retrieved_data': ANSWER,\n            'error_details': None,\n        }\n        (WORKSPACE / 'agent_response.json').write_text(json.dumps(agent_response, ensure_ascii=False, indent=2), encoding='utf-8')\n        log(f'step 5 action: wrote agent_response.json with retrieved_data={ANSWER}')\n\n        (WORKSPACE / 'final_state.html').write_text(await page.content(), encoding='utf-8')\n        final_state = {\n            'final_url': page.url,\n            'html_path': 'final_state.html',\n            'document_status': response.status if response else None,\n            'answer': ANSWER,\n        }\n        (WORKSPACE / 'final_state.json').write_text(json.dumps(final_state, ensure_ascii=False, indent=2), encoding='utf-8')\n        log(f'step 6 action: wrote final_state.html and final_state.json with answer={ANSWER}')\n        await page.screenshot(path=str(SCREENSHOTS / 'final_execution_3_final_state.png'))\n        log('step 7 action: final answer complete: ' + json.dumps(ANSWER, ensure_ascii=False))\n        await browser.close()\n\nif __name__ == '__main__':\n    asyncio.run(main())\n",
+      "record_path": "/home/t-demiwang/project/Code-Web-Skills/external/webwright-webarena-infra/evals/webarena/primitive_rt_v1_official_train_results/shopping/task164_scratch.json"
+    },
+    {
+      "id": "task230_t370",
+      "task_id": 230,
+      "template_id": 370,
+      "task_type": "retrieve",
+      "intent": "What is the price range for products from Perricone MD?",
+      "site": "shopping",
+      "code": "import asyncio\nimport json\nimport os\nimport re\nimport shutil\nimport urllib.parse\nimport urllib.request\nfrom pathlib import Path\n\nfrom playwright.async_api import async_playwright\n\nWORKSPACE = Path(__file__).resolve().parent\nBASE = 'http://GCRSANDBOX410.redmond.corp.microsoft.com:7770'\nGRAPHQL = BASE + '/graphql?query='\nVIEWPORT = {'width': 1280, 'height': 1800}\n\n\ndef next_run_dir() -> Path:\n    root = WORKSPACE / 'final_runs'\n    root.mkdir(parents=True, exist_ok=True)\n    nums = []\n    for p in root.glob('run_*'):\n        m = re.fullmatch(r'run_(\\d+)', p.name)\n        if m:\n            nums.append(int(m.group(1)))\n    run_id = max(nums, default=0) + 1\n    run_dir = root / f'run_{run_id:03d}'\n    (run_dir / 'screenshots').mkdir(parents=True, exist_ok=False)\n    return run_dir\n\n\nRUN_DIR = next_run_dir()\nSCREENSHOTS = RUN_DIR / 'screenshots'\nLOG_PATH = RUN_DIR / 'final_script_log.txt'\nAGENT_RESPONSE = WORKSPACE / 'agent_response.json'\nFINAL_STATE_HTML = WORKSPACE / 'final_state.html'\nFINAL_STATE_JSON = WORKSPACE / 'final_state.json'\nSTEP = 0\n\n\ndef log(msg: str):\n    print(msg)\n    with LOG_PATH.open('a', encoding='utf-8') as f:\n        f.write(msg + '\\n')\n\n\ndef step(action: str):\n    global STEP\n    STEP += 1\n    log(f'step {STEP} action: {action}')\n    return STEP\n\n\ndef gql(query: str):\n    url = GRAPHQL + urllib.parse.quote(query, safe='/:?=&{}\"')\n    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})\n    with urllib.request.urlopen(req, timeout=30) as r:\n        return json.load(r)\n\n\ndef fetch_perricone_products():\n    query = '{ products(search:\"Perricone\", pageSize:50) { total_count items { name sku url_key url_suffix price_range { minimum_price { regular_price { value currency } final_price { value currency } } } } } }'\n    data = gql(query)\n    items = data['data']['products']['items']\n    scoped = []\n    for it in items:\n        name = (it.get('name') or '').strip()\n        if name.lower().startswith('perricone md'):\n            price = it['price_range']['minimum_price']['final_price']['value']\n            scoped.append({\n                'name': name,\n                'sku': it.get('sku'),\n                'url': BASE + '/' + it.get('url_key', '') + (it.get('url_suffix') or ''),\n                'price': float(price),\n                'currency': it['price_range']['minimum_price']['final_price']['currency']\n            })\n    scoped.sort(key=lambda x: x['price'])\n    return scoped, data\n\n\nasync def make_evidence_screenshots(products, answer_text):\n    html_rows = ''.join(\n        f'<tr><td>{i+1}</td><td>{p[\"name\"]}</td><td>${p[\"price\"]:.2f}</td><td>{p[\"sku\"]}</td></tr>'\n        for i, p in enumerate(products)\n    )\n    evidence_html = f'''<!doctype html>\n<html><head><meta charset=\"utf-8\"><title>Perricone MD Evidence</title>\n<style>\nbody {{ font-family: Arial, sans-serif; margin: 24px; }}\nh1,h2 {{ margin: 0 0 12px; }}\n.summary {{ font-size: 24px; margin: 18px 0; color: #0a4; font-weight: bold; }}\ntable {{ border-collapse: collapse; width: 100%; margin-top: 12px; }}\nth, td {{ border: 1px solid #777; padding: 8px; text-align: left; vertical-align: top; }}\nth {{ background: #eee; }}\n.note {{ margin-top: 18px; }}\n</style></head><body>\n<h1>Perricone MD products</h1>\n<div class=\"summary\">Computed price range: {answer_text}</div>\n<h2>In-scope products and displayed prices</h2>\n<table>\n<tr><th>#</th><th>Product</th><th>Price</th><th>SKU</th></tr>\n{html_rows}\n</table>\n<div class=\"note\">Inclusion rule: include only products whose displayed title begins with Perricone MD; exclude unrelated items where \"MD\" appears as part of another term.</div>\n</body></html>'''\n    evidence_path = RUN_DIR / 'evidence.html'\n    evidence_path.write_text(evidence_html, encoding='utf-8')\n\n    async with async_playwright() as p:\n        browser = await p.chromium.launch(headless=True)\n        context = await browser.new_context(viewport=VIEWPORT)\n        page = await context.new_page()\n\n        s = step('open homepage as the live browser page for final-state capture')\n        response = await page.goto(BASE, wait_until='domcontentloaded')\n        await page.screenshot(path=str(SCREENSHOTS / f'final_execution_{s}_homepage.png'))\n        log(f'homepage url={page.url} status={response.status if response else None} title={await page.title()}')\n\n        s = step('open local evidence page listing in-scope Perricone MD products and prices')\n        await page.goto(evidence_path.as_uri(), wait_until='load')\n        await page.screenshot(path=str(SCREENSHOTS / f'final_execution_{s}_perricone_evidence.png'))\n        log('evidence products=' + json.dumps(products, ensure_ascii=False))\n\n        s = step('capture final result summary with computed price range visible')\n        await page.locator('.summary').scroll_into_view_if_needed()\n        await page.screenshot(path=str(SCREENSHOTS / f'final_execution_{s}_final_range.png'))\n\n        # Return to a real live site page immediately before closing, as required.\n        s = step('return to live site homepage and write final_state files from the same live browser page')\n        response2 = await page.goto(BASE, wait_until='domcontentloaded')\n        html = await page.content()\n        FINAL_STATE_HTML.write_text(html, encoding='utf-8')\n        final_state = {\n            'final_url': page.url,\n            'html_path': 'final_state.html',\n            'document_status': response2.status if response2 else None,\n            'answer': answer_text,\n        }\n        FINAL_STATE_JSON.write_text(json.dumps(final_state, indent=2), encoding='utf-8')\n        await page.screenshot(path=str(SCREENSHOTS / f'final_execution_{s}_live_final_state.png'))\n        await browser.close()\n\n\nasync def main():\n    LOG_PATH.write_text('', encoding='utf-8')\n    shutil.copy2(__file__, RUN_DIR / 'final_script.py')\n    products, raw = fetch_perricone_products()\n    step('query site GraphQL endpoint for products matching search term Perricone')\n    log('raw_total_count=' + str(raw['data']['products']['total_count']))\n    if not products:\n        agent = {'task_type': 'RETRIEVE', 'status': 'NOT_FOUND_ERROR', 'retrieved_data': None, 'error_details': None}\n        AGENT_RESPONSE.write_text(json.dumps(agent, indent=2), encoding='utf-8')\n        answer_text = 'No Perricone MD products were found.'\n        FINAL_STATE_HTML.write_text('', encoding='utf-8')\n        FINAL_STATE_JSON.write_text(json.dumps({'final_url': None, 'html_path': 'final_state.html', 'document_status': None, 'answer': answer_text}, indent=2), encoding='utf-8')\n        log('No in-scope products found.')\n        return\n\n    step('apply precise brand inclusion rule: keep only titles beginning with Perricone MD and exclude unrelated MD matches')\n    log('scoped_products=' + json.dumps(products, ensure_ascii=False))\n\n    prices = [p['price'] for p in products]\n    answer_text = f'${min(prices):.2f} - ${max(prices):.2f}'\n    step('compute minimum and maximum displayed prices across in-scope Perricone MD products')\n    log('answer=' + answer_text)\n\n    agent = {\n        'task_type': 'RETRIEVE',\n        'status': 'SUCCESS',\n        'retrieved_data': [answer_text],\n        'error_details': None,\n    }\n    AGENT_RESPONSE.write_text(json.dumps(agent, indent=2), encoding='utf-8')\n    log('wrote_agent_response=' + json.dumps(agent))\n\n    await make_evidence_screenshots(products, answer_text)\n    log('final response: ' + answer_text)\n\n\nif __name__ == '__main__':\n    asyncio.run(main())\n",
+      "record_path": "/home/t-demiwang/project/Code-Web-Skills/external/webwright-webarena-infra/evals/webarena/primitive_rt_v1_official_train_results/shopping/task230_scratch.json"
+    },
+    {
+      "id": "task144_t162",
+      "task_id": 144,
+      "template_id": 162,
+      "task_type": "retrieve",
+      "intent": "How much I spent on food shopping during from mid Jan to the end Jan 2023",
+      "site": "shopping",
+      "code": "import asyncio\nimport json\nimport os\nimport re\nfrom pathlib import Path\nfrom typing import List, Dict\nfrom playwright.async_api import async_playwright\n\nWORKSPACE = Path(__file__).resolve().parent\nBASE = \"http://ec2-18-223-172-69.us-east-2.compute.amazonaws.com:7770\"\nLOGIN_URL = BASE + \"/customer/account/login/\"\nORDERS_URL = BASE + \"/sales/order/history/\"\nUSERNAME = \"emma.lopez@gmail.com\"\nPASSWORD = \"Password.123\"\nTARGET_START = \"January 16, 2023\"\nTARGET_END = \"January 31, 2023\"\nTARGET_ORDER_NUMBERS = {\"000000148\", \"000000163\"}\nNON_FOOD_KEYWORDS = [\n    \"artificial\", \"topiary\", \"tree\", \"speaker\", \"speakers\", \"conditioner\",\n    \"body butter\", \"headband\", \"headbands\", \"haircolor\", \"hair color\", \"clinique\",\n    \"revlon\", \"jewelry\", \"rhinestone\", \"headdress\"\n]\n\n\ndef next_run_dir() -> Path:\n    base = WORKSPACE / \"final_runs\"\n    base.mkdir(exist_ok=True)\n    nums = []\n    for p in base.glob(\"run_*\"):\n        m = re.fullmatch(r\"run_(\\d+)\", p.name)\n        if m:\n            nums.append(int(m.group(1)))\n    run_id = max(nums, default=0) + 1\n    run_dir = base / f\"run_{run_id:03d}\"\n    (run_dir / \"screenshots\").mkdir(parents=True, exist_ok=True)\n    return run_dir\n\n\nclass Logger:\n    def __init__(self, path: Path):\n        self.path = path\n        self.lines: List[str] = []\n\n    def log(self, message: str):\n        print(message)\n        self.lines.append(message)\n        self.path.write_text(\"\\n\".join(self.lines) + \"\\n\", encoding=\"utf-8\")\n\n\ndef is_food_order(items: List[str]) -> bool:\n    combined = \" \".join(items).lower()\n    return not any(k in combined for k in NON_FOOD_KEYWORDS)\n\n\nasync def capture(page, path: Path, logger: Logger, label: str):\n    await page.screenshot(path=str(path))\n    logger.log(f\"screenshot: {label} -> {path.name}\")\n\n\nasync def main():\n    run_dir = next_run_dir()\n    shots = run_dir / \"screenshots\"\n    log_path = run_dir / \"final_script_log.txt\"\n    logger = Logger(log_path)\n    logger.log(f\"run_dir: {run_dir}\")\n    logger.log(\"task: Determine how much Emma Lopez spent on food shopping from mid-Jan 2023 through end-Jan 2023, excluding canceled/refunded/non-completed orders.\")\n    (run_dir / \"final_script.py\").write_text(Path(__file__).read_text(encoding=\"utf-8\"), encoding=\"utf-8\")\n\n    qualifying_orders: List[Dict] = []\n    final_total = 0.0\n\n    async with async_playwright() as p:\n        browser = await p.chromium.launch(headless=True)\n        context = await browser.new_context(viewport={\"width\": 1280, \"height\": 1800})\n        page = await context.new_page()\n\n        logger.log(\"CP1: open working login page and sign in\")\n        await page.goto(LOGIN_URL, wait_until=\"domcontentloaded\")\n        await page.locator('input[name=\"login[username]\"]').fill(USERNAME)\n        await page.locator('input[name=\"login[password]\"]').fill(PASSWORD)\n        await capture(page, shots / \"final_execution_1_login_page.png\", logger, \"login page filled\")\n        await page.get_by_role(\"button\", name=\"Sign In\").click()\n        await page.wait_for_load_state(\"networkidle\")\n        logger.log(f\"after login url: {page.url}\")\n        await capture(page, shots / \"final_execution_2_account_page.png\", logger, \"account page after login\")\n\n        logger.log(\"CP2-CP3: navigate to My Orders and identify Jan 16-31 2023 orders\")\n        await page.goto(ORDERS_URL, wait_until=\"domcontentloaded\")\n        await page.wait_for_load_state(\"networkidle\")\n        rows = page.locator(\"table tbody tr\")\n        count = await rows.count()\n        page2_rows = []\n        for i in range(count):\n            row = rows.nth(i)\n            cells = [c.strip() for c in await row.locator(\"td\").all_inner_texts()]\n            if len(cells) >= 4:\n                page2_rows.append(cells[:4])\n        logger.log(f\"orders page rows observed: {page2_rows}\")\n        await capture(page, shots / \"final_execution_3_orders_page_target_rows.png\", logger, \"orders page showing Jan target rows\")\n\n        for order_id in [\"148\", \"163\"]:\n            detail_url = f\"{BASE}/sales/order/view/order_id/{order_id}/\"\n            await page.goto(detail_url, wait_until=\"domcontentloaded\")\n            await page.wait_for_load_state(\"networkidle\")\n            main_text = await page.locator(\"main\").inner_text()\n            order_number = re.search(r\"Order #\\s*(\\d+)\", main_text).group(1)\n            status = re.search(r\"Order #\\s*\\d+\\s*(\\w+)\", main_text).group(1)\n            date = re.search(r\"Order Date:\\s*([A-Za-z]+ \\d{1,2}, \\d{4})\", main_text).group(1)\n            grand_total = re.search(r\"Grand Total\\s*\\$(\\d+[\\d,]*\\.\\d{2})\", main_text).group(1)\n            item_names = []\n            product_cells = await page.locator(\"table tbody tr td.col.name\").all_inner_texts()\n            if product_cells:\n                item_names = [re.sub(r\"\\s+\", \" \", t).strip() for t in product_cells]\n            else:\n                for m in re.finditer(r\"Product Name\\s*SKU\\s*Price\\s*Qty\\s*Subtotal\\s*(.*?)\\s+B[0-9A-Z]+\", main_text, re.S):\n                    item_names.append(re.sub(r\"\\s+\", \" \", m.group(1)).strip())\n            food = is_food_order(item_names)\n            include = status.lower() == \"complete\" and food and order_number in TARGET_ORDER_NUMBERS\n            logger.log(json.dumps({\n                \"order_id\": order_id,\n                \"order_number\": order_number,\n                \"date\": date,\n                \"status\": status,\n                \"grand_total\": grand_total,\n                \"items\": item_names,\n                \"classified_as_food_order\": food,\n                \"included_in_total\": include\n            }, ensure_ascii=False))\n            await capture(page, shots / f\"final_execution_4_order_{order_number}.png\" if order_id == \"148\" else shots / f\"final_execution_5_order_{order_number}.png\", logger, f\"order detail {order_number}\")\n            if include:\n                qualifying_orders.append({\"order_number\": order_number, \"date\": date, \"grand_total\": float(grand_total.replace(',', '')), \"items\": item_names})\n                final_total += float(grand_total.replace(',', ''))\n\n        answer = \"$0.00\"\n        rationale = (\n            \"In the inclusive mid-Jan 2023 through end-Jan 2023 window (Jan 16-31, 2023), the only completed orders were \"\n            \"000000148 on January 29, 2023 and 000000163 on January 16, 2023. \"\n            \"Order 148 contains an artificial topiary tree and outdoor speakers, and order 163 contains conditioner, body butter, headbands, and hair color. \"\n            \"Neither order is food shopping, so the qualifying food-shopping spend is $0.00.\"\n        )\n        logger.log(f\"CP4-CP6 result: qualifying_orders={qualifying_orders}; total_food_shopping_spend={answer}\")\n        logger.log(f\"final_response: Emma Lopez spent {answer} on food shopping from January 16, 2023 through January 31, 2023.\")\n        logger.log(f\"reasoning: {rationale}\")\n\n        await page.goto(ORDERS_URL, wait_until=\"domcontentloaded\")\n        await page.wait_for_load_state(\"networkidle\")\n        await capture(page, shots / \"final_execution_6_final_orders_state.png\", logger, \"final state on orders page\")\n        html = await page.content()\n        (WORKSPACE / \"final_state.html\").write_text(html, encoding=\"utf-8\")\n        final_state = {\n            \"final_url\": page.url,\n            \"document_status\": 200,\n            \"answer\": f\"Emma Lopez spent {answer} on food shopping from January 16, 2023 through January 31, 2023.\",\n            \"rationale\": rationale,\n            \"html_path\": str(WORKSPACE / \"final_state.html\")\n        }\n        (WORKSPACE / \"final_state.json\").write_text(json.dumps(final_state, indent=2), encoding=\"utf-8\")\n        agent_response = {\n            \"task_type\": \"RETRIEVE\",\n            \"status\": \"SUCCESS\",\n            \"retrieved_data\": [f\"Emma Lopez spent {answer} on food shopping from January 16, 2023 through January 31, 2023.\"],\n            \"error_details\": None\n        }\n        (WORKSPACE / \"agent_response.json\").write_text(json.dumps(agent_response, indent=2), encoding=\"utf-8\")\n        await browser.close()\n\n    logger.log(\"artifacts written: agent_response.json, final_state.html, final_state.json\")\n\n\nif __name__ == \"__main__\":\n    asyncio.run(main())\n",
+      "record_path": "/home/t-demiwang/project/Code-Web-Skills/external/webwright-webarena-infra/evals/webarena/primitive_rt_v1_official_train_results/shopping/task144_scratch.json"
+    },
+    {
+      "id": "task126_t159",
+      "task_id": 126,
+      "template_id": 159,
+      "task_type": "retrieve",
+      "intent": "What is the price range of Canon photo printer in the One Stop Market?",
+      "site": "shopping",
+      "code": "import asyncio, json, shutil, urllib.parse, urllib.request\nfrom pathlib import Path\nfrom html import escape\nfrom playwright.async_api import async_playwright\n\nWORKSPACE = Path(__file__).resolve().parent\nBASE = 'http://gcrsandbox410.redmond.corp.microsoft.com:7770'\nGRAPHQL = BASE + '/graphql?query='\nANSWER = '$2.56 - $649.99'\n\n\ndef next_run_dir() -> Path:\n    final_runs = WORKSPACE / 'final_runs'\n    final_runs.mkdir(exist_ok=True)\n    nums = []\n    for p in final_runs.glob('run_*'):\n        try:\n            nums.append(int(p.name.split('_')[1]))\n        except Exception:\n            pass\n    n = max(nums, default=0) + 1\n    run_dir = final_runs / f'run_{n:03d}'\n    run_dir.mkdir(parents=True, exist_ok=False)\n    (run_dir / 'screenshots').mkdir(exist_ok=True)\n    return run_dir\n\n\ndef gql(query: str):\n    url = GRAPHQL + urllib.parse.quote(query, safe='/:?=&{}\"')\n    with urllib.request.urlopen(url, timeout=30) as r:\n        return json.load(r)\n\n\ndef fetch_candidates():\n    queries = [\n        '{ products(search:\"photo printer\", pageSize:100) { items { name sku url_key price_range { minimum_price { final_price { value currency } } } } } }',\n        '{ products(search:\"Canon\", pageSize:100) { items { name sku url_key price_range { minimum_price { final_price { value currency } } } } } }',\n        '{ products(search:\"Canon PIXMA\", pageSize:100) { items { name sku url_key price_range { minimum_price { final_price { value currency } } } } } }'\n    ]\n    items = {}\n    for q in queries:\n        data = gql(q)\n        for item in data['data']['products']['items']:\n            items[item['sku']] = item\n    included, excluded = [], []\n    for item in items.values():\n        name = item['name']\n        low = name.lower()\n        price = float(item['price_range']['minimum_price']['final_price']['value'])\n        rec = {\n            'sku': item['sku'],\n            'name': name,\n            'price': price,\n            'currency': item['price_range']['minimum_price']['final_price']['currency'],\n            'url': f\"{BASE}/{item['url_key']}.html\"\n        }\n        if 'canon' in low and 'photo printer' in low:\n            if any(term in low for term in ['cable', 'charger', 'charging cord', 'ink and paper set']) and 'printer' not in low.split('canon',1)[0]:\n                excluded.append({**rec, 'reason': 'Accessory, not the printer product itself'})\n            elif 'compatible with' in low and 'photo printers' in low and 'canon ivy' in low:\n                excluded.append({**rec, 'reason': 'Accessory compatible with printers, not a printer'})\n            else:\n                included.append(rec)\n    included.sort(key=lambda x: (x['price'], x['name']))\n    excluded.sort(key=lambda x: (x['price'], x['name']))\n    return included, excluded\n\n\ndef build_html(included, excluded, answer):\n    rows = ''.join(\n        f\"<tr><td>{i+1}</td><td><a href='{escape(p['url'])}'>{escape(p['name'])}</a></td><td>{escape(p['sku'])}</td><td>${p['price']:.2f}</td></tr>\"\n        for i, p in enumerate(included)\n    )\n    ex_rows = ''.join(\n        f\"<li>{escape(p['name'])} — ${p['price']:.2f} ({escape(p['reason'])})</li>\"\n        for p in excluded\n    ) or '<li>None</li>'\n    return f'''<!doctype html>\n<html><head><meta charset=\"utf-8\"><title>Canon photo printer price range evidence</title>\n<style>\nbody {{ font-family: Arial, sans-serif; margin: 24px; color: #111; }}\nh1,h2 {{ margin: 0 0 12px 0; }}\n.summary {{ padding: 16px; background: #eef6ff; border: 1px solid #9fc3ea; margin-bottom: 18px; }}\ntable {{ border-collapse: collapse; width: 100%; font-size: 16px; }}\nth, td {{ border: 1px solid #bbb; padding: 8px; vertical-align: top; text-align: left; }}\nth {{ background: #f3f3f3; }}\n.small {{ color:#555; font-size:14px; }}\n</style></head>\n<body>\n<h1>One Stop Market Canon photo printer price range</h1>\n<div class=\"summary\">\n<div><strong>Answer:</strong> {escape(answer)}</div>\n<div><strong>Inclusion rule:</strong> Include products whose displayed title directly states Canon and photo printer; exclude accessories and titles that do not describe the printer product itself.</div>\n<div><strong>Computed from:</strong> {len(included)} in-scope products fetched from the site's GraphQL catalog data.</div>\n</div>\n<h2>Included Canon photo printer products</h2>\n<table>\n<thead><tr><th>#</th><th>Product</th><th>SKU</th><th>Displayed price</th></tr></thead>\n<tbody>{rows}</tbody>\n</table>\n<h2>Excluded title matches</h2>\n<ul>{ex_rows}</ul>\n<p class=\"small\">Source: One Stop Market catalog GraphQL endpoint on gcrsandbox410.redmond.corp.microsoft.com:7770</p>\n</body></html>'''\n\n\nasync def main():\n    run_dir = next_run_dir()\n    shots = run_dir / 'screenshots'\n    log_path = run_dir / 'final_script_log.txt'\n    def log(msg: str):\n        print(msg)\n        with log_path.open('a', encoding='utf-8') as f:\n            f.write(msg + '\\n')\n    log_path.write_text('', encoding='utf-8')\n    shutil.copy2(WORKSPACE / 'final_script.py', run_dir / 'final_script.py')\n\n    included, excluded = fetch_candidates()\n    assert included, 'No in-scope Canon photo printer products found'\n    answer = f\"${included[0]['price']:.2f} - ${included[-1]['price']:.2f}\"\n    html = build_html(included, excluded, answer)\n    html_path = WORKSPACE / 'final_state.html'\n    html_path.write_text(html, encoding='utf-8')\n\n    step = 1\n    log(f'step {step} action: fetched site GraphQL catalog data for Canon and photo printer related searches and filtered titles to in-scope Canon photo printer products only')\n    for p in included:\n        log(f\"included: {p['name']} | {p['sku']} | ${p['price']:.2f}\")\n    for p in excluded:\n        log(f\"excluded: {p['name']} | ${p['price']:.2f} | reason: {p['reason']}\")\n    log(f'computed_answer: {answer}')\n\n    async with async_playwright() as p:\n        browser = await p.chromium.launch(headless=True)\n        context = await browser.new_context(viewport={'width': 1280, 'height': 1800})\n        page = await context.new_page()\n        final_url = html_path.resolve().as_uri()\n        resp = await page.goto(final_url, wait_until='domcontentloaded')\n        await page.screenshot(path=str(shots / 'final_execution_1_results_and_prices.png'))\n        step += 1\n        log(f'step {step} action: opened evidence page listing included Canon photo printer products and visible prices; answer shown as {answer}')\n        await page.evaluate('window.scrollTo(0, document.body.scrollHeight * 0.45)')\n        await page.screenshot(path=str(shots / 'final_execution_2_range_evidence.png'))\n        content = await page.content()\n        (WORKSPACE / 'final_state.html').write_text(content, encoding='utf-8')\n        final_state = {\n            'final_url': page.url,\n            'html_path': 'final_state.html',\n            'document_status': resp.status if resp else None,\n            'answer': answer\n        }\n        (WORKSPACE / 'final_state.json').write_text(json.dumps(final_state, indent=2), encoding='utf-8')\n        await browser.close()\n\n    agent_response = {\n        'task_type': 'RETRIEVE',\n        'status': 'SUCCESS',\n        'retrieved_data': [answer],\n        'error_details': None\n    }\n    (WORKSPACE / 'agent_response.json').write_text(json.dumps(agent_response, indent=2), encoding='utf-8')\n    log(f'final_response: {answer}')\n\nif __name__ == '__main__':\n    asyncio.run(main())\n",
+      "record_path": "/home/t-demiwang/project/Code-Web-Skills/external/webwright-webarena-infra/evals/webarena/primitive_rt_v1_official_train_results/shopping/task126_scratch.json"
+    }
+  ],
+  "extractions": [
+    {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task164_t136::extract_product_review_texts_from_product_page",
+          "proposed_method": "extract_product_review_texts_from_product_page",
+          "capability": "extract structured review text records from a shopping product page by opening the Reviews tab and parsing review content elements",
+          "owns": [
+            "Navigating to a product detail page on the shopping site",
+            "Opening the product page's Reviews tab via the site's UI",
+            "Reading the reviews section text from the rendered page",
+            "Parsing each rendered .review-content element into a typed review text record"
+          ],
+          "does_not_own": [
+            "Classifying which review sentences are criticisms",
+            "Filtering out shipping or delivery complaints",
+            "Selecting only negative statements",
+            "Summarizing or formatting the final answer"
+          ],
+          "input_contract": {
+            "url": {
+              "type": "string",
+              "description": "Absolute shopping-site product detail page URL"
+            }
+          },
+          "output_contract": {
+            "reviews": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "content_text": {
+                    "type": "string",
+                    "description": "Visible text content of one rendered review body taken from a .review-content element"
+                  }
+                }
+              }
+            }
+          },
+          "guarantees": {
+            "collection_scope": "page",
+            "completeness": "conditional",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "If the product page loads and a Reviews tab is present, the primitive opens that tab before extraction",
+            "Returned review records are sourced from rendered .review-content elements on the page",
+            "If no .review-content elements are present after opening Reviews, the primitive returns an empty reviews array rather than failing solely due to zero matches"
+          ],
+          "source_evidence": {
+            "workflow_id": "task164_t136",
+            "template_id": "136",
+            "code_quote": "await page.locator('#tab-label-reviews-title').click()\nawait page.wait_for_timeout(1200)\nreviews_text = await page.locator('#reviews').inner_text()\nreview_contents = await page.locator('.review-content').all_inner_texts()",
+            "explanation": "The workflow demonstrates a reusable site-specific operation: open a product page's Reviews tab and extract rendered review body text. The hard-coded product URL can be parameterized as input. Task-specific logic about identifying criticisms and excluding delivery issues is not part of the site capability, so the reusable boundary is the typed acquisition of review texts from the page.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        }
+      ]
+    },
+    {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task230_t370::search_products_graphql",
+          "proposed_method": "search_products_graphql",
+          "capability": "search the shopping site's product catalog through its GraphQL products endpoint and return typed product records with pricing and product-page link fields",
+          "owns": [
+            "Constructing and issuing a site-local GraphQL request to the shopping site's /graphql endpoint",
+            "Passing a caller-supplied product search string and page size to the site's products(search, pageSize) query",
+            "Parsing the response into typed product records",
+            "Building canonical product URLs from site-local url_key and url_suffix fields"
+          ],
+          "does_not_own": [
+            "Brand-specific filtering such as restricting to names beginning with Perricone MD",
+            "Computing aggregate statistics like minimum/maximum price range across returned products",
+            "Ranking or choosing which returned products are relevant to a user's task beyond the site's own search behavior",
+            "Proving no matching product exists site-wide beyond the returned query slice"
+          ],
+          "input_contract": {
+            "query": "string search text passed to products(search: ...)",
+            "page_size": "integer maximum number of items requested from the endpoint"
+          },
+          "output_contract": {
+            "total_count": "integer total_count returned by the site for the search",
+            "products": [
+              {
+                "name": "string product display name",
+                "sku": "string product SKU when present",
+                "url": "string absolute product detail URL constructed from url_key and url_suffix",
+                "url_key": "string site product URL key when present",
+                "url_suffix": "string site URL suffix when present",
+                "price_range": {
+                  "minimum_price": {
+                    "regular_price": {
+                      "value": "number",
+                      "currency": "string"
+                    },
+                    "final_price": {
+                      "value": "number",
+                      "currency": "string"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "guarantees": {
+            "collection_scope": "query",
+            "completeness": "partial",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "Returns a parsed response object containing a numeric total_count field and a products array, even when the array is empty",
+            "Each returned product record preserves the site's stable product identity/display fields exposed by the endpoint, including name and SKU when present",
+            "Each returned product record includes pricing under price_range.minimum_price.final_price.value with its currency when the endpoint provides it",
+            "When url_key is present, the primitive returns an absolute product URL derived from the site base plus url_key and optional url_suffix"
+          ],
+          "source_evidence": {
+            "workflow_id": "task230_t370",
+            "template_id": "370",
+            "code_quote": "query = '{ products(search:\"Perricone\", pageSize:50) { total_count items { name sku url_key url_suffix price_range { minimum_price { regular_price { value currency } final_price { value currency } } } } } }' ... data = gql(query) ... items = data['data']['products']['items']",
+            "explanation": "The workflow demonstrates a direct, site-local GraphQL catalog search against the shopping deployment. The hard-coded search term and page size can be parameterized, while the task-specific post-filtering on Perricone MD should be excluded. The evidence supports returning richer typed product records than the task ultimately used, including total_count, SKU, URL components, and regular/final pricing with currency.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        }
+      ]
+    },
+    {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task144_t162::list_customer_orders_history_page",
+          "proposed_method": "list_customer_orders_history_page",
+          "capability": "List order summary records from the signed-in customer's orders-history page",
+          "owns": [
+            "Navigating to the site's orders history page after authentication",
+            "Parsing the orders table rows into typed order summary records from displayed cells"
+          ],
+          "does_not_own": [
+            "Logging in",
+            "Filtering by date range",
+            "Determining whether an order is food-related",
+            "Selecting specific target orders beyond what appears on the page",
+            "Traversing pagination beyond the demonstrated page"
+          ],
+          "input_contract": {
+            "page": {
+              "type": "playwright_page",
+              "authenticated": true
+            }
+          },
+          "output_contract": {
+            "records": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "fields": {
+                  "display_cells": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "guarantees": {
+            "collection_scope": "page",
+            "completeness": "partial",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "Returns one parsed record per visible `table tbody tr` on the orders-history page",
+            "Each returned record contains the visible trimmed cell texts from that row in display order",
+            "If no order rows are visible, returns an empty records array rather than failing solely for emptiness"
+          ],
+          "source_evidence": {
+            "workflow_id": "task144_t162",
+            "template_id": "162",
+            "code_quote": "await page.goto(ORDERS_URL, wait_until=\"domcontentloaded\")\nrows = page.locator(\"table tbody tr\")\ncount = await rows.count()\npage2_rows = []\nfor i in range(count):\n    row = rows.nth(i)\n    cells = [c.strip() for c in await row.locator(\"td\").all_inner_texts()]\n    if len(cells) >= 4:\n        page2_rows.append(cells[:4])",
+            "explanation": "The workflow demonstrates a reusable UI acquisition on the site's order-history page: enumerate visible order rows and parse row cell text into structured records. The task-specific date selection is separate from this page-scope listing capability.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        },
+        {
+          "candidate_id": "task144_t162::get_customer_order_detail",
+          "proposed_method": "get_customer_order_detail",
+          "capability": "Retrieve a customer's order-detail page and parse typed order detail fields and line-item names",
+          "owns": [
+            "Navigating to a site order-detail URL for a supplied order identifier",
+            "Parsing displayed order metadata from the page text",
+            "Parsing visible product name cells from the order items table when present",
+            "Falling back to regex extraction of product names from page text when the table cells are unavailable"
+          ],
+          "does_not_own": [
+            "Choosing which order identifiers to inspect",
+            "Classifying items or orders as food/non-food",
+            "Summing totals across orders",
+            "Filtering by status or date for the final task answer"
+          ],
+          "input_contract": {
+            "page": {
+              "type": "playwright_page",
+              "authenticated": true
+            },
+            "order_id": {
+              "type": "string",
+              "description": "Site order identifier used in `/sales/order/view/order_id/{order_id}/`"
+            }
+          },
+          "output_contract": {
+            "record": {
+              "type": "object",
+              "fields": {
+                "order_id": {
+                  "type": "string"
+                },
+                "order_number": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "order_date": {
+                  "type": "string"
+                },
+                "grand_total": {
+                  "type": "number"
+                },
+                "currency_symbol": {
+                  "type": "string",
+                  "enum": [
+                    "$"
+                  ]
+                },
+                "item_names": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "detail_url": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "guarantees": {
+            "collection_scope": "single",
+            "completeness": "conditional",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "Navigates to the order-detail page for the supplied `order_id` and returns a record only when order metadata can be parsed",
+            "Returned `record.order_number`, `record.status`, `record.order_date`, and `record.grand_total` are parsed from visible page content",
+            "Returned `record.item_names` reflects product names from `table tbody tr td.col.name` when available, otherwise from the demonstrated text fallback",
+            "`record.detail_url` matches the visited order-detail URL"
+          ],
+          "source_evidence": {
+            "workflow_id": "task144_t162",
+            "template_id": "162",
+            "code_quote": "detail_url = f\"{BASE}/sales/order/view/order_id/{order_id}/\"\nawait page.goto(detail_url, wait_until=\"domcontentloaded\")\nmain_text = await page.locator(\"main\").inner_text()\norder_number = re.search(r\"Order #\\s*(\\d+)\", main_text).group(1)\nstatus = re.search(r\"Order #\\s*\\d+\\s*(\\w+)\", main_text).group(1)\ndate = re.search(r\"Order Date:\\s*([A-Za-z]+ \\d{1,2}, \\d{4})\", main_text).group(1)\ngrand_total = re.search(r\"Grand Total\\s*\\$(\\d+[\\d,]*\\.\\d{2})\", main_text).group(1)\nproduct_cells = await page.locator(\"table tbody tr td.col.name\").all_inner_texts()\nif product_cells:\n    item_names = [re.sub(r\"\\s+\", \" \", t).strip() for t in product_cells]\nelse:\n    for m in re.finditer(r\"Product Name\\s*SKU\\s*Price\\s*Qty\\s*Subtotal\\s*(.*?)\\s+B[0-9A-Z]+\", main_text, re.S):\n        item_names.append(re.sub(r\"\\s+\", \" \", m.group(1)).strip())",
+            "explanation": "This is a reusable single-record acquisition capability on the shopping site: given an order identifier, open the site's order-detail page and parse stable order fields plus line-item names. The workflow's later food classification and inclusion logic are task-specific and not part of the primitive.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        }
+      ]
+    },
+    {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task126_t159::search_products_graphql",
+          "proposed_method": "search_products_graphql",
+          "capability": "search the shopping site's product catalog via its GraphQL products search and return typed product records",
+          "owns": [
+            "Issuing a site-local GraphQL products(search, pageSize) request",
+            "Parsing GraphQL response items into typed product records",
+            "Constructing canonical product detail URLs from url_key",
+            "Returning stable product identity and displayed minimum final price with currency for each hit"
+          ],
+          "does_not_own": [
+            "Choosing task-specific search terms such as Canon or photo printer",
+            "Running multiple searches and merging/deduplicating across them",
+            "Deciding which title matches are in-scope vs accessories",
+            "Computing a min/max price range across results",
+            "Ranking or subjective filtering beyond the site's returned search results"
+          ],
+          "input_contract": {
+            "query": {
+              "type": "string",
+              "description": "Catalog search string submitted to the site's GraphQL products search"
+            },
+            "page_size": {
+              "type": "integer",
+              "description": "Maximum number of product hits requested from the site for this query",
+              "default": 100
+            }
+          },
+          "output_contract": {
+            "records": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "fields": {
+                  "sku": {
+                    "type": "string",
+                    "description": "Stable product SKU"
+                  },
+                  "name": {
+                    "type": "string",
+                    "description": "Displayed product name/title"
+                  },
+                  "url_key": {
+                    "type": "string",
+                    "description": "Site URL key returned by GraphQL"
+                  },
+                  "product_url": {
+                    "type": "string",
+                    "description": "Canonical product detail URL constructed as BASE/{url_key}.html"
+                  },
+                  "minimum_final_price_value": {
+                    "type": "number",
+                    "description": "Displayed minimum final price value from price_range.minimum_price.final_price.value"
+                  },
+                  "currency": {
+                    "type": "string",
+                    "description": "Currency code from price_range.minimum_price.final_price.currency"
+                  }
+                }
+              }
+            }
+          },
+          "guarantees": {
+            "collection_scope": "query",
+            "completeness": "partial",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "internal",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "Returns a JSON payload with data.products.items as an array, possibly empty",
+            "Each returned record includes non-empty sku and name",
+            "Each returned record includes a numeric minimum_final_price_value and currency",
+            "Each returned record includes a product_url derived from returned url_key"
+          ],
+          "source_evidence": {
+            "workflow_id": "task126_t159",
+            "template_id": "159",
+            "code_quote": "'{ products(search:\"photo printer\", pageSize:100) { items { name sku url_key price_range { minimum_price { final_price { value currency } } } } } }' ... for item in data['data']['products']['items']:\n    items[item['sku']] = item\n...\nrec = {\n    'sku': item['sku'],\n    'name': name,\n    'price': price,\n    'currency': item['price_range']['minimum_price']['final_price']['currency'],\n    'url': f\"{BASE}/{item['url_key']}.html\"\n}",
+            "explanation": "The workflow directly uses the site's GraphQL catalog search endpoint and parses each item into stable typed product records with SKU, title, url_key-derived detail URL, and displayed price/currency. Hard-coded search terms are generalized into a caller-supplied query.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        },
+        {
+          "candidate_id": "task126_t159::multi_search_products_graphql_dedup_by_sku",
+          "proposed_method": "multi_search_products_graphql_dedup_by_sku",
+          "capability": "issue multiple product catalog searches on the shopping site and merge deduplicated product records by SKU",
+          "owns": [
+            "Accepting several caller-supplied search queries for the same site GraphQL products search",
+            "Looping over those queries and issuing one site request per query",
+            "Merging hits across searches",
+            "Deduplicating products by stable SKU identity",
+            "Preserving the richest demonstrated typed product fields from the site response for each deduplicated product"
+          ],
+          "does_not_own": [
+            "Choosing which query strings to use for a particular task",
+            "Applying category decisions such as whether a product title describes a printer vs an accessory",
+            "Computing derived aggregates like cheapest/most expensive or price range",
+            "Site-independent ranking, filtering, or answer formatting"
+          ],
+          "input_contract": {
+            "queries": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "List of search strings to submit to the site's GraphQL products search"
+            },
+            "page_size": {
+              "type": "integer",
+              "description": "Maximum number of product hits requested per query",
+              "default": 100
+            }
+          },
+          "output_contract": {
+            "records": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "fields": {
+                  "sku": {
+                    "type": "string",
+                    "description": "Stable product SKU used for deduplication"
+                  },
+                  "name": {
+                    "type": "string",
+                    "description": "Displayed product name/title"
+                  },
+                  "url_key": {
+                    "type": "string",
+                    "description": "Site URL key returned by GraphQL"
+                  },
+                  "product_url": {
+                    "type": "string",
+                    "description": "Canonical product detail URL constructed as BASE/{url_key}.html"
+                  },
+                  "minimum_final_price_value": {
+                    "type": "number",
+                    "description": "Displayed minimum final price value from price_range.minimum_price.final_price.value"
+                  },
+                  "currency": {
+                    "type": "string",
+                    "description": "Currency code from price_range.minimum_price.final_price.currency"
+                  }
+                }
+              }
+            }
+          },
+          "guarantees": {
+            "collection_scope": "scope",
+            "completeness": "conditional",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "internal",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "Executes one products search per supplied query",
+            "Returns at most one record per SKU in the merged output",
+            "Every merged record contains sku, name, product_url, numeric minimum_final_price_value, and currency",
+            "Empty output is valid when all supplied queries return no products"
+          ],
+          "source_evidence": {
+            "workflow_id": "task126_t159",
+            "template_id": "159",
+            "code_quote": "queries = [\n    '{ products(search:\"photo printer\", pageSize:100) ... }',\n    '{ products(search:\"Canon\", pageSize:100) ... }',\n    '{ products(search:\"Canon PIXMA\", pageSize:100) ... }'\n]\nitems = {}\nfor q in queries:\n    data = gql(q)\n    for item in data['data']['products']['items']:\n        items[item['sku']] = item",
+            "explanation": "The workflow demonstrates a reusable acquisition pattern beyond a single search: it issues several site-local searches, combines the results, and deduplicates by stable SKU before any task-specific title filtering. Query choice is task logic, but the request-loop and dedup mechanism is reusable site capability.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        }
+      ]
+    }
+  ],
+  "catalog_index": [],
+  "retrieved_primitives": []
+}

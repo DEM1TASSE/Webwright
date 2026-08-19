@@ -1,0 +1,154 @@
+{
+  "decision": "CANDIDATES",
+  "candidates": [
+    {
+      "candidate_id": "task85_t64::search_place_records",
+      "proposed_method": "search_place_records",
+      "capability": "search the map site's place index by a caller-supplied text query and return typed place result records from the results page",
+      "owns": [
+        "Submitting a place search through the site's visible search form",
+        "Waiting for the site search results to load",
+        "Parsing displayed result links into typed place records",
+        "Returning stable displayed place identity text suitable for later selection or routing input"
+      ],
+      "does_not_own": [
+        "Choosing which query terms to search for",
+        "Selecting the correct result for a task-specific intent",
+        "Computing distances or travel times",
+        "Formatting a final natural-language answer"
+      ],
+      "input_contract": {
+        "query": {
+          "type": "string",
+          "description": "Free-text place query to submit to the site's search box"
+        }
+      },
+      "output_contract": {
+        "results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "label": {
+                "type": "string",
+                "description": "Full displayed place/result text from the result link, including name and displayed address hierarchy"
+              },
+              "href": {
+                "type": "string",
+                "description": "Result link URL if available from the search result anchor"
+              }
+            }
+          }
+        }
+      },
+      "guarantees": {
+        "collection_scope": "query",
+        "completeness": "partial",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "none",
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "Returns a list of zero or more parsed result records for the submitted query without requiring task-specific hard-coded place names beyond the caller input",
+        "Each non-empty returned record contains the displayed result label parsed from a search result link",
+        "An empty result list is distinguishable from a page-load or parsing failure"
+      ],
+      "source_evidence": {
+        "workflow_id": "task85_t64",
+        "template_id": "64",
+        "code_quote": "await page.locator('input:visible').first.fill('La Quinta Inn Pittsburgh Airport')\nawait page.locator('input[type=submit]:visible').click()\n...\nhotel_link = page.get_by_role('link', name='La Quinta Inn by Wyndham Pittsburgh Airport, University Boulevard, Carnot, Moon Township, Allegheny County, 15108, United States')\nawait hotel_link.wait_for()\nlog('identified hotel result text: ' + await hotel_link.inner_text())",
+        "explanation": "The workflow demonstrates the site's search UI returning place-result links and reading the displayed result text as a typed record boundary. Generalized, the hard-coded hotel query becomes a caller-supplied query, and the primitive returns all parsed result records rather than embedding the workflow's choice of the one correct hotel.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    },
+    {
+      "candidate_id": "task85_t64::get_route_directions_summary",
+      "proposed_method": "get_route_directions_summary",
+      "capability": "submit origin, destination, and transport mode on the map site's directions page and parse the displayed route summary including travel time",
+      "owns": [
+        "Opening the site's directions page",
+        "Filling the site's origin and destination routing inputs",
+        "Using the site's transport mode control with site-coupled mode semantics hidden behind a semantic enum",
+        "Submitting the route request to the site",
+        "Parsing the rendered directions summary for route metadata such as origin, destination, mode, and time"
+      ],
+      "does_not_own": [
+        "Choosing task-specific origin or destination entities",
+        "Ranking alternative routes beyond what the page displays",
+        "Converting the parsed duration into a user-facing narrative answer",
+        "Verifying real-world correctness beyond the site's displayed route summary"
+      ],
+      "input_contract": {
+        "origin": {
+          "type": "string",
+          "description": "Origin place text to enter in the route_from field"
+        },
+        "destination": {
+          "type": "string",
+          "description": "Destination place text to enter in the route_to field"
+        },
+        "transport_mode": {
+          "type": "string",
+          "enum": [
+            "car"
+          ],
+          "description": "Routing mode supported by the demonstrated workflow; site-specific control details remain internal"
+        }
+      },
+      "output_contract": {
+        "route": {
+          "type": "object",
+          "properties": {
+            "origin_text": {
+              "type": "string",
+              "description": "Displayed origin text from the directions summary when available"
+            },
+            "destination_text": {
+              "type": "string",
+              "description": "Displayed destination text from the directions summary when available"
+            },
+            "transport_mode": {
+              "type": "string",
+              "description": "Displayed or submitted transport mode"
+            },
+            "duration_text": {
+              "type": "string",
+              "description": "Displayed route duration text, e.g. 0:30 or 30 minutes"
+            },
+            "summary_text": {
+              "type": "string",
+              "description": "Full parsed sidebar directions summary text"
+            }
+          }
+        }
+      },
+      "guarantees": {
+        "collection_scope": "single",
+        "completeness": "conditional",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "semantic_enum",
+          "supported_values": [
+            "car"
+          ],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "After submission, the returned route summary corresponds to the provided origin and destination inputs",
+        "Returned output includes the parsed summary text and a duration field when the site displays one",
+        "If the site produces no route, the primitive returns a valid no-route result distinguishable from transport or parsing failure"
+      ],
+      "source_evidence": {
+        "workflow_id": "task85_t64",
+        "template_id": "64",
+        "code_quote": "last_resp = await page.goto(f'{START_URL}/directions', wait_until='networkidle')\nawait page.locator('input[name=route_from]:visible').fill('La Quinta Inn by Wyndham Pittsburgh Airport')\nawait page.locator('input[name=route_to]:visible').fill('Carnegie Mellon University')\nmode_value = await page.locator('select:visible').input_value()\n...\nawait page.get_by_role('button', name='Go').click()\n...\nsummary_text = await page.locator('#sidebar_content').inner_text()\n...\ntime_match = re.search(r'Time:\\s*0:30', page_text)",
+        "explanation": "The workflow demonstrates an end-to-end site-local directions acquisition: navigate to the directions page, provide origin and destination, keep car routing selected, submit, and parse the resulting sidebar summary and time. The generalized primitive parameterizes origin/destination and exposes the demonstrated routing mode as a semantic enum rather than leaking page control details.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    }
+  ]
+}

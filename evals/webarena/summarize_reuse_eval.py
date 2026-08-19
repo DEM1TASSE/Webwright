@@ -10,6 +10,10 @@ from pathlib import Path
 
 
 ARMS = {"t1": ("scratch", "workflow"), "t2": ("scratch", "workflow", "primitive")}
+PROTOCOL_ARMS = {
+    "full_reuse": ARMS,
+    "cross_template_primitive_only": {"t2": ("scratch", "primitive")},
+}
 TERMINAL = {"scored_correct", "scored_incorrect", "agent_timeout_or_incomplete"}
 
 
@@ -23,7 +27,9 @@ def tasks(split, partition):
     key = "t1_heldout_task_ids" if partition == "t1" else "t2_task_ids"
     for site, groups in source.items():
         for group in groups:
-            rows.extend((site, group["intent_template_id"], task_id)
+            rows.extend((site, group["intent_template_id"], task_id,
+                         group.get("task_type", split.get("task_type", "retrieve")),
+                         bool(group.get("long_tail")))
                         for task_id in group.get(key, []))
     return rows
 
@@ -48,6 +54,15 @@ def arm_summary(records):
             "accuracy": round(sum(row.get("correct") is True for row in subset) / len(subset), 4),
             "mean_steps": mean([row["steps"] for row in subset if row.get("steps") is not None]),
         }
+    task_types = {}
+    for task_type in sorted({row.get("task_type") for row in terminal}):
+        subset = [row for row in terminal if row.get("task_type") == task_type]
+        task_types[task_type] = {
+            "n": len(subset), "correct": sum(row.get("correct") is True for row in subset),
+            "accuracy": round(sum(row.get("correct") is True for row in subset) / len(subset), 4),
+            "mean_steps": mean([row["steps"] for row in subset if row.get("steps") is not None]),
+        }
+    long_tail = [row for row in terminal if row.get("_long_tail")]
     return {
         "n": len(records), "terminal": len(terminal), "correct": len(correct),
         "accuracy": round(len(correct) / len(terminal), 4) if terminal else None,
@@ -70,6 +85,15 @@ def arm_summary(records):
         "primitive_execution_traced": sum(bool(row.get("primitive_execution_trace"))
                                           for row in terminal),
         "by_site": sites,
+        "by_task_type": task_types,
+        "long_tail": {
+            "n": len(long_tail),
+            "correct": sum(row.get("correct") is True for row in long_tail),
+            "accuracy": (round(sum(row.get("correct") is True for row in long_tail)
+                               / len(long_tail), 4) if long_tail else None),
+            "mean_steps": mean([row["steps"] for row in long_tail
+                                if row.get("steps") is not None]),
+        },
     }
 
 
@@ -91,16 +115,21 @@ def paired_stats(pairs):
             deltas.append(delta)
             if lc and rc:
                 both_correct_deltas.append(delta)
+    template_deltas = [
+        statistics.mean(int(rc) - int(lc) for lc, rc in group)
+        for group in templates.values()
+    ]
     return {
         "pairs": len(pairs), **{name: outcomes[name] for name in
                                 ("win", "loss", "both_correct", "both_wrong")},
         "net_wins": outcomes["win"] - outcomes["loss"],
         "mean_treatment_minus_scratch_steps": mean(deltas),
         "mean_step_delta_when_both_correct": mean(both_correct_deltas),
-        "mean_template_accuracy_delta": mean([
-            statistics.mean(int(rc) - int(lc) for lc, rc in group)
-            for group in templates.values()
-        ]),
+        "mean_template_accuracy_delta": mean(template_deltas),
+        "templates": len(template_deltas),
+        "templates_improved": sum(delta > 0 for delta in template_deltas),
+        "templates_regressed": sum(delta < 0 for delta in template_deltas),
+        "templates_tied": sum(delta == 0 for delta in template_deltas),
         "win_task_ids": task_ids["win"],
         "loss_task_ids": task_ids["loss"],
     }
@@ -120,6 +149,22 @@ def paired(base, treatment):
             pair for pair in pairs if (pair[1].get("route_decision") or "none") == decision
         ])
         for decision in sorted({pair[1].get("route_decision") or "none" for pair in pairs})
+    }
+    result["by_task_type"] = {
+        task_type: paired_stats([
+            pair for pair in pairs if pair[1].get("task_type") == task_type
+        ])
+        for task_type in sorted({pair[1].get("task_type") for pair in pairs})
+    }
+    result["long_tail"] = paired_stats([
+        pair for pair in pairs if pair[1].get("_long_tail")
+    ])
+    result["by_primitive_exposure"] = {
+        label: paired_stats([
+            pair for pair in pairs
+            if bool(pair[1].get("retrieved_primitives")) is exposed
+        ])
+        for label, exposed in (("not_exposed", False), ("exposed", True))
     }
     return result
 
@@ -192,26 +237,28 @@ def routing_comparison(indexed, audit_root):
     }
 
 
-def summarize(split, results_root, retrieval_audit=None):
+def summarize(split, results_root, retrieval_audit=None, *, arms_by_partition=None):
     root = Path(results_root)
     result = {"valid": True, "expected_records": 0, "found_records": 0,
               "missing": [], "identity_errors": [], "status_errors": [],
               "isolation_errors": [], "arms": {}, "paired": {}}
     indexed = {}
-    for partition, arms in ARMS.items():
+    for partition, arms in (arms_by_partition or ARMS).items():
         expected = tasks(split, partition)
         for arm in arms:
             records, by_id = [], {}
-            for site, template_id, task_id in expected:
+            for site, template_id, task_id, task_type, long_tail in expected:
                 path = root / partition / arm / site / f"task{task_id}_{arm}.json"
                 result["expected_records"] += 1
                 if not path.is_file():
                     result["missing"].append(str(path))
                     continue
                 row = load(path)
+                row["_long_tail"] = long_tail
                 result["found_records"] += 1
-                if (row.get("task_id"), row.get("site"), row.get("intent_template_id")) != (
-                        task_id, site, template_id):
+                if (row.get("task_id"), row.get("site"), row.get("intent_template_id"),
+                        str(row.get("task_type") or "").lower()) != (
+                        task_id, site, template_id, str(task_type).lower()):
                     result["identity_errors"].append(str(path))
                 if row.get("run_status") not in TERMINAL:
                     result["status_errors"].append(
@@ -240,8 +287,12 @@ def main():
     parser.add_argument("--results-root", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--retrieval-audit")
+    parser.add_argument("--protocol", choices=sorted(PROTOCOL_ARMS), default="full_reuse")
     args = parser.parse_args()
-    result = summarize(load(args.split), args.results_root, args.retrieval_audit)
+    result = summarize(
+        load(args.split), args.results_root, args.retrieval_audit,
+        arms_by_partition=PROTOCOL_ARMS[args.protocol],
+    )
     Path(args.output).write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n",
                                  encoding="utf-8")
     print(json.dumps(result, ensure_ascii=False, indent=2))

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import concurrent.futures
 import json
 import os
@@ -15,22 +16,38 @@ sys.path.insert(0, str(HERE))
 from run_reuse_split import resumable_result, site_lanes  # noqa: E402
 
 
+SITE_PLACEHOLDERS = {
+    "gitlab": "__GITLAB__",
+    "shopping": "__SHOPPING__",
+    "shopping_admin": "__SHOPPING_ADMIN__",
+    "reddit": "__REDDIT__",
+    "map": "__MAP__",
+}
+
+
 def load(path):
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
-def build_jobs(split, partition):
+def build_jobs(split, partition, sites=None):
+    selected = set(sites or [])
     jobs = []
     if partition == "t1":
         for site, rows in split["train"].items():
+            if selected and site not in selected:
+                continue
             for row in rows:
                 for task_id in row.get("t1_heldout_task_ids", []):
-                    jobs.append((site, row["intent_template_id"], task_id))
+                    jobs.append((site, row.get("task_type", split.get("task_type", "retrieve")),
+                                 row["intent_template_id"], task_id))
     else:
         for site, rows in split["test"].items():
+            if selected and site not in selected:
+                continue
             for row in rows:
                 for task_id in row.get("t2_task_ids", []):
-                    jobs.append((site, row["intent_template_id"], task_id))
+                    jobs.append((site, row.get("task_type", split.get("task_type", "retrieve")),
+                                 row["intent_template_id"], task_id))
     return jobs
 
 
@@ -42,6 +59,66 @@ def workflow_map(events_path):
         for row in load(events_path)
         if row.get("status") == "built" and row.get("skill_ids")
     }
+
+
+def write_site_compat_splits(runs_root, partition, arm, jobs):
+    """Write immutable-per-site membership files for concurrent subset runners."""
+    result = {}
+    for site in sorted({job[0] for job in jobs}):
+        compat = Path(runs_root) / partition / arm / site / "eval_split.json"
+        compat.parent.mkdir(parents=True, exist_ok=True)
+        compat.write_text(json.dumps({
+            "heldout": [
+                {"intent_template_id": template, "task_ids": [task_id]}
+                for job_site, _, template, task_id in jobs if job_site == site
+            ]
+        }) + "\n")
+        result[site] = compat
+    return result
+
+
+def write_task_compat_splits(runs_root, partition, arm, jobs):
+    """Write one membership/type manifest per job for mixed Retrieve+Navigate runs."""
+    result = {}
+    for site, task_type, template, task_id in jobs:
+        compat = (Path(runs_root) / partition / arm / "_task_splits" / site
+                  / f"task{task_id}.json")
+        compat.parent.mkdir(parents=True, exist_ok=True)
+        compat.write_text(json.dumps({
+            "task_type": task_type,
+            "heldout": [{"intent_template_id": template, "task_ids": [task_id]}],
+        }) + "\n", encoding="utf-8")
+        result[(site, task_id)] = compat
+    return result
+
+
+def select_deployment(config, site, task_id):
+    """Choose one replica deterministically while preserving the deployment config schema."""
+    placeholder = SITE_PLACEHOLDERS[site]
+    urls = list((config.get("environments", {}).get(placeholder, {}) or {}).get("urls") or [])
+    if not urls:
+        raise ValueError(f"deployment config has no URLs for {site} ({placeholder})")
+    index = int(task_id) % len(urls)
+    selected = copy.deepcopy(config)
+    selected["environments"][placeholder]["urls"] = [urls[index]]
+    selected["assignment"] = {
+        "strategy": "task_id_modulo",
+        "site": site,
+        "task_id": int(task_id),
+        "replica_index": index,
+        "replica_count": len(urls),
+        "url": urls[index],
+    }
+    return selected, urls[index]
+
+
+def write_job_deployment_config(runs_root, partition, arm, config, site, task_id):
+    selected, url = select_deployment(config, site, task_id)
+    path = (Path(runs_root) / partition / arm / "_deployment_configs" / site
+            / f"task{task_id}.json")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(selected, indent=2) + "\n", encoding="utf-8")
+    return path, url
 
 
 def main():
@@ -58,8 +135,16 @@ def main():
     ap.add_argument("--primitive-library", required=True)
     ap.add_argument("--model-config", required=True)
     ap.add_argument("--eval-python", required=True)
+    ap.add_argument("--webarena-tasks")
+    ap.add_argument("--webarena-root")
+    ap.add_argument("--vanilla-task-interface", action="store_true")
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--per-site-workers", type=int, default=1)
+    ap.add_argument("--round-robin-deployments", action="store_true",
+                    help="Distribute each site's tasks across every URL in its config.")
+    ap.add_argument("--sites", nargs="*", help="Optional site subset; keeps the frozen split intact")
+    ap.add_argument("--exclude-task-ids", nargs="*", type=int, default=[],
+                    help="Recovery-only exclusions; the frozen split itself is unchanged")
     ap.add_argument("--timeout", type=int, default=900)
     args = ap.parse_args()
     if args.partition == "t1" and args.arm == "primitive":
@@ -67,17 +152,22 @@ def main():
     if not os.environ.get("OPENAI_API_KEY"):
         raise SystemExit("OPENAI_API_KEY is missing")
 
-    jobs = build_jobs(load(args.split), args.partition)
+    jobs = [job for job in build_jobs(load(args.split), args.partition, args.sites)
+            if job[3] not in set(args.exclude_task_ids)]
+    deployment_config = load(args.config)
     skills = workflow_map(args.workflow_events)
-    compat = Path(args.runs_root) / args.partition / args.arm / "eval_split.json"
-    compat.parent.mkdir(parents=True, exist_ok=True)
-    compat.write_text(json.dumps({
-        "heldout": [{"intent_template_id": template, "task_ids": [task_id]}
-                    for _, template, task_id in jobs]
-    }) + "\n")
+    # A process may run only a site subset while another subset is running concurrently.  A
+    # shared compatibility split lets the later process overwrite the earlier process's task
+    # membership.  Keep the small cross_task_eval compatibility manifest site-local instead.
+    compat_by_site = write_site_compat_splits(
+        args.runs_root, args.partition, args.arm, jobs,
+    )
+    compat_by_task = write_task_compat_splits(
+        args.runs_root, args.partition, args.arm, jobs,
+    )
 
     def run(job):
-        site, template_id, task_id = job
+        site, task_type, template_id, task_id = job
         runs = Path(args.runs_root) / args.partition / args.arm / site
         results = Path(args.results_root) / args.partition / args.arm / site
         result = results / f"task{task_id}_{args.arm}.json"
@@ -89,15 +179,35 @@ def main():
                             "correct": record.get("correct"), "steps": record.get("steps")}
             except (OSError, ValueError):
                 pass
+        job_config = Path(args.config)
+        deployment_url = ((deployment_config.get("environments", {}).get(
+            SITE_PLACEHOLDERS[site], {}) or {}).get("urls") or [None])[0]
+        if args.round_robin_deployments:
+            job_config, deployment_url = write_job_deployment_config(
+                args.runs_root, args.partition, args.arm,
+                deployment_config, site, task_id,
+            )
         cmd = [
             sys.executable, str(HERE / "cross_task_eval.py"), "run", str(task_id), args.arm,
-            "--split", str(compat), "--dataset", args.dataset, "--config", args.config,
+            "--split", str(compat_by_task[(site, task_id)]), "--dataset", args.dataset,
+            "--config", str(job_config),
             "--runs", str(runs), "--results", str(results),
             "--workflow-library", args.workflow_library,
             "--candidate-library", args.primitive_library,
             "--model-config", args.model_config, "--eval-python", args.eval_python,
             "--timeout", str(args.timeout), "--strict-arm-isolation",
         ]
+        if args.webarena_tasks and args.webarena_root:
+            cmd += ["--webarena-tasks", args.webarena_tasks,
+                    "--webarena-root", args.webarena_root]
+        if task_type == "navigate":
+            if not args.webarena_tasks or not args.webarena_root:
+                return {"site": site, "task_id": task_id, "status": "process_error",
+                        "returncode": 2, "correct": None, "steps": None,
+                        "run_status": None,
+                        "stderr": "Navigate requires --webarena-tasks and --webarena-root"}
+            if args.vanilla_task_interface:
+                cmd.append("--vanilla-task-interface")
         if args.partition == "t1" and args.arm == "workflow":
             cmd += ["--workflow-skill-id",
                     skills.get((site, template_id), f"__missing_template_{template_id}")]
@@ -105,10 +215,16 @@ def main():
             cmd.append("--force")
         proc = subprocess.run(cmd, text=True, capture_output=True)
         record = load(result) if result.exists() else {}
+        if record:
+            record["deployment_url"] = deployment_url
+            record["deployment_config"] = str(job_config)
+            result.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n",
+                              encoding="utf-8")
         return {"site": site, "task_id": task_id,
                 "status": "ok" if proc.returncode == 0 else "process_error",
                 "returncode": proc.returncode, "correct": record.get("correct"),
                 "steps": record.get("steps"), "run_status": record.get("run_status"),
+                "deployment_url": deployment_url,
                 "stderr": proc.stderr[-500:]}
 
     def lane(items):

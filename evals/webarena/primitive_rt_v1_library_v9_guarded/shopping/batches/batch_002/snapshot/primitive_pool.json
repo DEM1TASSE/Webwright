@@ -1,0 +1,367 @@
+[
+  {
+    "primitive_id": "shopping/list_authenticated_customer_orders",
+    "method": "list_authenticated_customer_orders",
+    "capability": "List the authenticated customer's order history from the shopping site's customer GraphQL endpoint across all site-reported pages, returning customer identity, typed order records, and pagination metadata.",
+    "method_code": "def list_authenticated_customer_orders(self, base_url, email, password):\n    import requests\n\n    base = base_url.rstrip(\"/\")\n    token_response = requests.post(\n        f\"{base}/rest/V1/integration/customer/token\",\n        json={\"username\": email, \"password\": password},\n        timeout=30,\n    )\n    token_response.raise_for_status()\n    token = token_response.json()\n    if not isinstance(token, str) or not token:\n        raise ValueError(\"Customer token endpoint did not return a bearer token string\")\n\n    headers = {\n        \"Authorization\": f\"Bearer {token}\",\n        \"Content-Type\": \"application/json\",\n    }\n    query = (\n        \"query($page:Int!){ customer { firstname lastname email orders(pageSize: 20, currentPage: $page) \"\n        \"{ items { number order_date status total { grand_total { value currency } } } total_count \"\n        \"page_info { current_page total_pages } } } }\"\n    )\n\n    def _normalize_order(item):\n        if not isinstance(item, dict):\n            raise ValueError(\"Each order item must be an object\")\n        total_obj = item.get(\"total\")\n        if not isinstance(total_obj, dict):\n            raise ValueError(\"Order total payload must be an object\")\n        grand_total = total_obj.get(\"grand_total\")\n        if not isinstance(grand_total, dict):\n            raise ValueError(\"Order grand_total payload must be an object\")\n\n        value = grand_total.get(\"value\")\n        currency = grand_total.get(\"currency\")\n        if not isinstance(item.get(\"number\"), str) or not item.get(\"number\"):\n            raise ValueError(\"Order record missing required number\")\n        if not isinstance(item.get(\"order_date\"), str) or not item.get(\"order_date\"):\n            raise ValueError(\"Order record missing required order_date\")\n        if not isinstance(item.get(\"status\"), str) or not item.get(\"status\"):\n            raise ValueError(\"Order record missing required status\")\n        if not isinstance(value, (int, float)):\n            raise ValueError(\"Order record missing numeric grand_total value\")\n        if not isinstance(currency, str) or not currency:\n            raise ValueError(\"Order record missing grand_total currency\")\n\n        return {\n            \"number\": item[\"number\"],\n            \"order_date\": item[\"order_date\"],\n            \"status\": item[\"status\"],\n            \"total\": {\n                \"grand_total\": {\n                    \"value\": value,\n                    \"currency\": currency,\n                }\n            },\n        }\n\n    response = requests.post(\n        f\"{base}/graphql\",\n        headers=headers,\n        json={\"query\": query, \"variables\": {\"page\": 1}},\n        timeout=30,\n    )\n    response.raise_for_status()\n    payload = response.json()\n\n    customer = payload.get(\"data\", {}).get(\"customer\")\n    if not isinstance(customer, dict):\n        raise ValueError(\"Authenticated customer data was not present in GraphQL response\")\n\n    orders = customer.get(\"orders\")\n    if not isinstance(orders, dict):\n        raise ValueError(\"Customer orders payload was not present in GraphQL response\")\n\n    page_info = orders.get(\"page_info\")\n    if not isinstance(page_info, dict):\n        raise ValueError(\"Orders page_info payload was not present in GraphQL response\")\n\n    current_page_value = page_info.get(\"current_page\")\n    total_pages_value = page_info.get(\"total_pages\")\n    total_count_value = orders.get(\"total_count\")\n    first_items = orders.get(\"items\")\n\n    if not isinstance(current_page_value, int) or current_page_value < 1:\n        raise ValueError(\"Orders page_info.current_page must be a positive integer\")\n    if not isinstance(total_pages_value, int) or total_pages_value < 1:\n        raise ValueError(\"Orders page_info.total_pages must be a positive integer\")\n    if not isinstance(total_count_value, int) or total_count_value < 0:\n        raise ValueError(\"Orders total_count must be a non-negative integer\")\n    if not isinstance(first_items, list):\n        raise ValueError(\"Orders items must be a list\")\n\n    result = {\n        \"customer\": {\n            \"firstname\": customer.get(\"firstname\"),\n            \"lastname\": customer.get(\"lastname\"),\n            \"email\": customer.get(\"email\"),\n        },\n        \"orders\": [_normalize_order(item) for item in first_items],\n        \"page_info\": {\n            \"total_count\": total_count_value,\n            \"current_page\": current_page_value,\n            \"total_pages\": total_pages_value,\n            \"pages_fetched\": 1,\n        },\n    }\n\n    if not isinstance(result[\"customer\"][\"firstname\"], str) or not result[\"customer\"][\"firstname\"]:\n        raise ValueError(\"Customer firstname was missing\")\n    if not isinstance(result[\"customer\"][\"lastname\"], str) or not result[\"customer\"][\"lastname\"]:\n        raise ValueError(\"Customer lastname was missing\")\n    if not isinstance(result[\"customer\"][\"email\"], str) or not result[\"customer\"][\"email\"]:\n        raise ValueError(\"Customer email was missing\")\n\n    page_number = 2\n    while page_number <= total_pages_value:\n        page_response = requests.post(\n            f\"{base}/graphql\",\n            headers=headers,\n            json={\"query\": query, \"variables\": {\"page\": page_number}},\n            timeout=30,\n        )\n        page_response.raise_for_status()\n        page_payload = page_response.json()\n\n        page_customer = page_payload.get(\"data\", {}).get(\"customer\")\n        if not isinstance(page_customer, dict):\n            raise ValueError(\"Authenticated customer data was not present in paginated GraphQL response\")\n        page_orders = page_customer.get(\"orders\")\n        if not isinstance(page_orders, dict):\n            raise ValueError(\"Customer orders payload was not present in paginated GraphQL response\")\n        page_page_info = page_orders.get(\"page_info\")\n        if not isinstance(page_page_info, dict):\n            raise ValueError(\"Orders page_info payload was not present in paginated GraphQL response\")\n\n        fetched_current_page = page_page_info.get(\"current_page\")\n        fetched_total_pages = page_page_info.get(\"total_pages\")\n        items = page_orders.get(\"items\")\n        if fetched_current_page != page_number:\n            raise ValueError(\"Paginated GraphQL response current_page did not match requested page\")\n        if fetched_total_pages != total_pages_value:\n            raise ValueError(\"Paginated GraphQL response total_pages changed during traversal\")\n        if not isinstance(items, list):\n            raise ValueError(\"Orders items must be a list in paginated GraphQL response\")\n\n        result[\"orders\"].extend(_normalize_order(item) for item in items)\n        result[\"page_info\"][\"pages_fetched\"] += 1\n        page_number += 1\n\n    return result\n",
+    "owns": [
+      "Authenticate the customer against the site's customer token endpoint using email and password",
+      "Issue the site-local GraphQL customer.orders query with caller-independent pagination traversal",
+      "Follow site-reported page_info.total_pages until all available order pages have been fetched",
+      "Collect customer identity fields exposed by the same query: firstname, lastname, email",
+      "Collect typed order records returned by the site including order number, order_date, status, and grand_total value/currency",
+      "Return pagination metadata exposed by the site including total_count and page_info current_page/total_pages, plus the observed number of fetched pages"
+    ],
+    "does_not_own": [
+      "Filtering orders to a specific month or date range",
+      "Filtering orders by business logic such as only complete orders",
+      "Summing or aggregating totals into spend",
+      "Inferring or attributing a store/merchant from the returned orders when that field is not exposed here",
+      "Formatting a final user-facing answer"
+    ],
+    "input_contract": {
+      "type": "object",
+      "properties": {
+        "base_url": {
+          "type": "string",
+          "description": "Base URL of the shopping site deployment."
+        },
+        "email": {
+          "type": "string",
+          "description": "Customer login email."
+        },
+        "password": {
+          "type": "string",
+          "description": "Customer login password."
+        }
+      },
+      "required": [
+        "base_url",
+        "email",
+        "password"
+      ]
+    },
+    "output_contract": {
+      "type": "object",
+      "properties": {
+        "customer": {
+          "type": "object",
+          "properties": {
+            "firstname": {
+              "type": "string"
+            },
+            "lastname": {
+              "type": "string"
+            },
+            "email": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "firstname",
+            "lastname",
+            "email"
+          ]
+        },
+        "orders": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "number": {
+                "type": "string",
+                "description": "Order identifier returned by the site."
+              },
+              "order_date": {
+                "type": "string",
+                "description": "Order date string returned by the site."
+              },
+              "status": {
+                "type": "string",
+                "description": "Order status returned by the site."
+              },
+              "total": {
+                "type": "object",
+                "properties": {
+                  "grand_total": {
+                    "type": "object",
+                    "properties": {
+                      "value": {
+                        "type": "number"
+                      },
+                      "currency": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "value",
+                      "currency"
+                    ]
+                  }
+                },
+                "required": [
+                  "grand_total"
+                ]
+              }
+            },
+            "required": [
+              "number",
+              "order_date",
+              "status",
+              "total"
+            ]
+          },
+          "description": "All order items collected across all fetched pages."
+        },
+        "page_info": {
+          "type": "object",
+          "properties": {
+            "total_count": {
+              "type": "integer"
+            },
+            "current_page": {
+              "type": "integer"
+            },
+            "total_pages": {
+              "type": "integer"
+            },
+            "pages_fetched": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "total_count",
+            "current_page",
+            "total_pages",
+            "pages_fetched"
+          ]
+        }
+      },
+      "required": [
+        "customer",
+        "orders",
+        "page_info"
+      ]
+    },
+    "requires": [],
+    "provides": [
+      "authenticated_customer_order_history"
+    ],
+    "supported_patterns": [
+      "Acquire the authenticated customer's full order history across all GraphQL-reported pages",
+      "Return typed customer identity and order facts for downstream filtering or aggregation workflows"
+    ],
+    "guarantees": {
+      "collection_scope": "scope",
+      "completeness": "complete",
+      "supports_absence_proof": true,
+      "configuration": {
+        "kind": "none",
+        "supported_values": [],
+        "coupled_site_parameters_hidden": true
+      }
+    },
+    "acceptance_checks": [
+      "On success, returns customer.firstname, customer.lastname, and customer.email for the authenticated account.",
+      "Traversal continues until page_info.pages_fetched equals the returned page_info.total_pages.",
+      "Every returned order includes number, order_date, status, and total.grand_total with numeric value and currency.",
+      "If the authenticated customer has no orders, the site-reported empty orders collection is returned with pagination metadata rather than being treated as task-level filtering logic."
+    ],
+    "source_evidence": [
+      {
+        "workflow_id": "task331_t147",
+        "template_id": "147",
+        "code_quote": "token = client.post(f\"{BASE}/rest/V1/integration/customer/token\", json={\"username\": EMAIL, \"password\": PASSWORD}).json()\nheaders = {\"Authorization\": f\"Bearer {token}\", \"Content-Type\": \"application/json\"}\nquery = 'query($page:Int!){ customer { firstname lastname email orders(pageSize: 20, currentPage: $page) { items { number order_date status total { grand_total { value currency } } } total_count page_info { current_page total_pages } } } }'\nall_items = []\npage_num = 1\ntotal_pages = 1\nwhile page_num <= total_pages:\n    r = client.post(f\"{BASE}/graphql\", headers=headers, json={\"query\": query, \"variables\": {\"page\": page_num}})\n    payload = r.json()\n    orders = payload[\"data\"][\"customer\"][\"orders\"]\n    total_pages = orders[\"page_info\"][\"total_pages\"]\n    all_items.extend(orders[\"items\"])\n    page_num += 1",
+        "explanation": "Generalized the hard-coded base URL and customer credentials into inputs, preserved the site-local token-plus-GraphQL acquisition path, and kept the evidenced complete pagination traversal and typed customer/order fields.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    ]
+  },
+  {
+    "primitive_id": "shopping/authenticate_customer_session",
+    "method": "authenticate_customer_session",
+    "capability": "Log into the shopping site as a customer and establish an authenticated browser session.",
+    "method_code": "def authenticate_customer_session(self, base_url, email, password):\n    import re\n\n    login_url = f\"{base_url.rstrip('/')}/customer/account/login/\"\n    response = self.page.goto(login_url, wait_until=\"domcontentloaded\")\n    if response is None:\n        raise ValueError(\"Login navigation produced no response\")\n    if response.status >= 400:\n        raise ValueError(f\"Login page returned HTTP {response.status}\")\n\n    login_html = self.page.content()\n    form_key_match = re.search(r'name=\"form_key\" type=\"hidden\" value=\"([^\"]+)\"', login_html)\n    if not form_key_match:\n        raise ValueError(\"Login form_key was not found on the login page\")\n\n    form_key = form_key_match.group(1)\n    post_response = self.page.request.post(\n        f\"{base_url.rstrip('/')}/customer/account/loginPost/\",\n        form={\n            \"form_key\": form_key,\n            \"login[username]\": email,\n            \"login[password]\": password,\n        },\n        headers={\"Referer\": login_url},\n    )\n    if post_response.status >= 400:\n        raise ValueError(f\"Login POST returned HTTP {post_response.status}\")\n\n    account_response = self.page.goto(\n        f\"{base_url.rstrip('/')}/customer/account/\",\n        wait_until=\"domcontentloaded\",\n    )\n    if account_response is None:\n        raise ValueError(\"Authenticated account navigation produced no response\")\n    if account_response.status >= 400:\n        raise ValueError(f\"Account page returned HTTP {account_response.status}\")\n\n    account_html = self.page.content()\n    if \"Sign Out\" not in account_html:\n        raise ValueError(\"Authenticated account indicator 'Sign Out' was not found after login\")\n\n    return {\n        \"authenticated\": True,\n        \"cookie_session_established\": True,\n    }\n",
+    "owns": [
+      "Fetching the customer login page",
+      "Extracting the hidden Magento form_key from the login HTML",
+      "Submitting customer email and password to the site's login POST endpoint with the required form_key and referer",
+      "Persisting authenticated browser cookies for subsequent site requests",
+      "Verifying authenticated state by loading the customer account page and checking for a signed-in indicator"
+    ],
+    "does_not_own": [
+      "Choosing which user credentials to use",
+      "Interpreting account data after login",
+      "Fetching or parsing order history",
+      "Exposing raw form_key values, cookies, or other authentication secrets"
+    ],
+    "input_contract": {
+      "type": "object",
+      "properties": {
+        "base_url": {
+          "type": "string",
+          "description": "Base URL of the shopping site deployment."
+        },
+        "email": {
+          "type": "string",
+          "description": "Customer login email."
+        },
+        "password": {
+          "type": "string",
+          "description": "Customer login password."
+        }
+      },
+      "required": [
+        "base_url",
+        "email",
+        "password"
+      ]
+    },
+    "output_contract": {
+      "type": "object",
+      "properties": {
+        "authenticated": {
+          "type": "boolean"
+        },
+        "cookie_session_established": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "authenticated",
+        "cookie_session_established"
+      ]
+    },
+    "requires": [],
+    "provides": [
+      "authenticated_customer_browser_session"
+    ],
+    "supported_patterns": [
+      "Establish a logged-in customer browser session on the shopping site using the Magento login flow",
+      "Verify that the session is authenticated before downstream browser-based account or order-history navigation"
+    ],
+    "guarantees": {
+      "collection_scope": "not_applicable",
+      "completeness": "not_applicable",
+      "supports_absence_proof": false,
+      "configuration": {
+        "kind": "none",
+        "supported_values": [],
+        "coupled_site_parameters_hidden": true
+      }
+    },
+    "acceptance_checks": [
+      "The login page is fetched successfully and a hidden form_key is extracted from its HTML.",
+      "Submitting the login form with email, password, form_key, and referer yields a browser session that can load the customer account page.",
+      "The authenticated account page contains a signed-in indicator such as 'Sign Out'.",
+      "The method returns authenticated=true and cookie_session_established=true only after the signed-in indicator is observed."
+    ],
+    "source_evidence": [
+      {
+        "workflow_id": "task48_t197",
+        "template_id": "197",
+        "code_quote": "curl GET /customer/account/login/ -> extract name=\"form_key\" ... then POST to /customer/account/loginPost/ with form_key, login[username], login[password], and reuse cookies; later asserts 'Sign Out' in account_html",
+        "explanation": "Generalized the workflow's Magento customer login handshake into a browser-session primitive that owns login-page fetch, hidden form_key extraction, credential submission, cookie-backed session establishment, and authenticated-state verification, while keeping raw form keys and cookies private.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    ]
+  },
+  {
+    "primitive_id": "shopping/list_order_history_page",
+    "method": "list_order_history_page",
+    "capability": "Retrieve and parse one authenticated order-history page into structured order records.",
+    "method_code": "def list_order_history_page(self, base_url):\n    import re\n    import html as html_lib\n\n    response = self.page.goto(\n        f\"{base_url.rstrip('/')}/sales/order/history/\",\n        wait_until=\"domcontentloaded\",\n    )\n    if response is None:\n        raise ValueError(\"Order history navigation produced no response\")\n    if response.status >= 400:\n        raise ValueError(f\"Order history page returned HTTP {response.status}\")\n\n    content = self.page.content()\n    if \"My Orders\" not in content:\n        raise ValueError(\"Authenticated order-history page indicator 'My Orders' was not found\")\n\n    rows = re.findall(\n        r'<tr>\\s*<td[^>]*class=\"col id\"[^>]*>(.*?)</td>\\s*<td[^>]*class=\"col date\"[^>]*>(.*?)</td>.*?<td[^>]*class=\"col total\"[^>]*>.*?<span class=\"price\">(.*?)</span>.*?</td>\\s*<td[^>]*class=\"col status\"[^>]*>(.*?)</td>',\n        content,\n        re.I | re.S,\n    )\n\n    def _clean(text):\n        return \" \".join(html_lib.unescape(re.sub(r\"<[^>]+>\", \" \", text)).split())\n\n    orders = []\n    for order_id, date_text, total_text, status_text in rows:\n        record = {\n            \"order_id\": _clean(order_id),\n            \"date_text\": _clean(date_text),\n            \"total_text\": _clean(total_text),\n            \"status_text\": _clean(status_text),\n        }\n        if not record[\"order_id\"] or not record[\"date_text\"] or not record[\"total_text\"] or not record[\"status_text\"]:\n            raise ValueError(\"Parsed order-history row was missing one or more required displayed fields\")\n        orders.append(record)\n\n    return {\"orders\": orders}\n",
+    "owns": [
+      "Requesting the authenticated order history page using an existing signed-in session",
+      "Parsing visible order table rows from the HTML",
+      "Normalizing the displayed order fields into typed records"
+    ],
+    "does_not_own": [
+      "Logging in",
+      "Applying task-specific date windows",
+      "Filtering by business criteria such as fulfilled-only",
+      "Summing totals or formatting answers",
+      "Claiming records beyond the single fetched order-history page"
+    ],
+    "input_contract": {
+      "type": "object",
+      "properties": {
+        "base_url": {
+          "type": "string",
+          "description": "Base URL of the shopping site deployment."
+        }
+      },
+      "required": [
+        "base_url"
+      ]
+    },
+    "output_contract": {
+      "type": "object",
+      "properties": {
+        "orders": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "order_id": {
+                "type": "string"
+              },
+              "date_text": {
+                "type": "string"
+              },
+              "total_text": {
+                "type": "string"
+              },
+              "status_text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "order_id",
+              "date_text",
+              "total_text",
+              "status_text"
+            ]
+          }
+        }
+      },
+      "required": [
+        "orders"
+      ]
+    },
+    "requires": [
+      "authenticated customer browser session already established on self.page"
+    ],
+    "provides": [
+      "authenticated_order_history_page_records"
+    ],
+    "supported_patterns": [
+      "Fetch one authenticated HTML order-history page and parse visible rows into typed records",
+      "Provide page-scoped order facts for downstream date filtering, status filtering, or aggregation workflows"
+    ],
+    "guarantees": {
+      "collection_scope": "page",
+      "completeness": "partial",
+      "supports_absence_proof": false,
+      "configuration": {
+        "kind": "none",
+        "supported_values": [],
+        "coupled_site_parameters_hidden": true
+      }
+    },
+    "acceptance_checks": [
+      "The fetched page is authenticated and contains an orders-history indicator such as 'My Orders'.",
+      "Each returned record has non-empty order_id, date_text, total_text, and status_text parsed from a table row.",
+      "An empty orders array is valid only if the authenticated order-history page was reached and no order rows were present on that page."
+    ],
+    "source_evidence": [
+      {
+        "workflow_id": "task48_t197",
+        "template_id": "197",
+        "code_quote": "ORDERS_URL = BASE + '/sales/order/history/' ... assert 'Sign Out' in account_html and 'My Orders' in orders_html ... rows = re.findall(r'<tr>\\s*<td[^>]*class=\"col id\"[^>]*>(.*?)</td>\\s*<td[^>]*class=\"col date\"[^>]*>(.*?)</td>.*?<td[^>]*class=\"col total\"[^>]*>.*?<span class=\"price\">(.*?)</span>.*?</td>\\s*<td[^>]*class=\"col status\"[^>]*>(.*?)</td>', orders_html, re.I|re.S)",
+        "explanation": "Generalized the hard-coded orders URL to a base_url input and preserved the evidenced page-level HTML acquisition boundary and typed row parsing. Session establishment remains a prerequisite owned elsewhere rather than part of this primitive.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    ]
+  }
+]

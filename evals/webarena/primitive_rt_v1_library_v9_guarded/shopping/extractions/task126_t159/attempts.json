@@ -1,0 +1,186 @@
+[
+  {
+    "attempt": 1,
+    "proposal": {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task126_t159::search_products_graphql",
+          "proposed_method": "search_products_graphql",
+          "capability": "search the shopping site's product catalog via its GraphQL products search and return typed product records",
+          "owns": [
+            "Issuing a site-local GraphQL products(search, pageSize) request",
+            "Parsing GraphQL response items into typed product records",
+            "Constructing canonical product detail URLs from url_key",
+            "Returning stable product identity and displayed minimum final price with currency for each hit"
+          ],
+          "does_not_own": [
+            "Choosing task-specific search terms such as Canon or photo printer",
+            "Running multiple searches and merging/deduplicating across them",
+            "Deciding which title matches are in-scope vs accessories",
+            "Computing a min/max price range across results",
+            "Ranking or subjective filtering beyond the site's returned search results"
+          ],
+          "input_contract": {
+            "query": {
+              "type": "string",
+              "description": "Catalog search string submitted to the site's GraphQL products search"
+            },
+            "page_size": {
+              "type": "integer",
+              "description": "Maximum number of product hits requested from the site for this query",
+              "default": 100
+            }
+          },
+          "output_contract": {
+            "records": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "fields": {
+                  "sku": {
+                    "type": "string",
+                    "description": "Stable product SKU"
+                  },
+                  "name": {
+                    "type": "string",
+                    "description": "Displayed product name/title"
+                  },
+                  "url_key": {
+                    "type": "string",
+                    "description": "Site URL key returned by GraphQL"
+                  },
+                  "product_url": {
+                    "type": "string",
+                    "description": "Canonical product detail URL constructed as BASE/{url_key}.html"
+                  },
+                  "minimum_final_price_value": {
+                    "type": "number",
+                    "description": "Displayed minimum final price value from price_range.minimum_price.final_price.value"
+                  },
+                  "currency": {
+                    "type": "string",
+                    "description": "Currency code from price_range.minimum_price.final_price.currency"
+                  }
+                }
+              }
+            }
+          },
+          "guarantees": {
+            "collection_scope": "query",
+            "completeness": "partial",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "internal",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "Returns a JSON payload with data.products.items as an array, possibly empty",
+            "Each returned record includes non-empty sku and name",
+            "Each returned record includes a numeric minimum_final_price_value and currency",
+            "Each returned record includes a product_url derived from returned url_key"
+          ],
+          "source_evidence": {
+            "workflow_id": "task126_t159",
+            "template_id": "159",
+            "code_quote": "'{ products(search:\"photo printer\", pageSize:100) { items { name sku url_key price_range { minimum_price { final_price { value currency } } } } } }' ... for item in data['data']['products']['items']:\n    items[item['sku']] = item\n...\nrec = {\n    'sku': item['sku'],\n    'name': name,\n    'price': price,\n    'currency': item['price_range']['minimum_price']['final_price']['currency'],\n    'url': f\"{BASE}/{item['url_key']}.html\"\n}",
+            "explanation": "The workflow directly uses the site's GraphQL catalog search endpoint and parses each item into stable typed product records with SKU, title, url_key-derived detail URL, and displayed price/currency. Hard-coded search terms are generalized into a caller-supplied query.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        },
+        {
+          "candidate_id": "task126_t159::multi_search_products_graphql_dedup_by_sku",
+          "proposed_method": "multi_search_products_graphql_dedup_by_sku",
+          "capability": "issue multiple product catalog searches on the shopping site and merge deduplicated product records by SKU",
+          "owns": [
+            "Accepting several caller-supplied search queries for the same site GraphQL products search",
+            "Looping over those queries and issuing one site request per query",
+            "Merging hits across searches",
+            "Deduplicating products by stable SKU identity",
+            "Preserving the richest demonstrated typed product fields from the site response for each deduplicated product"
+          ],
+          "does_not_own": [
+            "Choosing which query strings to use for a particular task",
+            "Applying category decisions such as whether a product title describes a printer vs an accessory",
+            "Computing derived aggregates like cheapest/most expensive or price range",
+            "Site-independent ranking, filtering, or answer formatting"
+          ],
+          "input_contract": {
+            "queries": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "List of search strings to submit to the site's GraphQL products search"
+            },
+            "page_size": {
+              "type": "integer",
+              "description": "Maximum number of product hits requested per query",
+              "default": 100
+            }
+          },
+          "output_contract": {
+            "records": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "fields": {
+                  "sku": {
+                    "type": "string",
+                    "description": "Stable product SKU used for deduplication"
+                  },
+                  "name": {
+                    "type": "string",
+                    "description": "Displayed product name/title"
+                  },
+                  "url_key": {
+                    "type": "string",
+                    "description": "Site URL key returned by GraphQL"
+                  },
+                  "product_url": {
+                    "type": "string",
+                    "description": "Canonical product detail URL constructed as BASE/{url_key}.html"
+                  },
+                  "minimum_final_price_value": {
+                    "type": "number",
+                    "description": "Displayed minimum final price value from price_range.minimum_price.final_price.value"
+                  },
+                  "currency": {
+                    "type": "string",
+                    "description": "Currency code from price_range.minimum_price.final_price.currency"
+                  }
+                }
+              }
+            }
+          },
+          "guarantees": {
+            "collection_scope": "scope",
+            "completeness": "conditional",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "internal",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "Executes one products search per supplied query",
+            "Returns at most one record per SKU in the merged output",
+            "Every merged record contains sku, name, product_url, numeric minimum_final_price_value, and currency",
+            "Empty output is valid when all supplied queries return no products"
+          ],
+          "source_evidence": {
+            "workflow_id": "task126_t159",
+            "template_id": "159",
+            "code_quote": "queries = [\n    '{ products(search:\"photo printer\", pageSize:100) ... }',\n    '{ products(search:\"Canon\", pageSize:100) ... }',\n    '{ products(search:\"Canon PIXMA\", pageSize:100) ... }'\n]\nitems = {}\nfor q in queries:\n    data = gql(q)\n    for item in data['data']['products']['items']:\n        items[item['sku']] = item",
+            "explanation": "The workflow demonstrates a reusable acquisition pattern beyond a single search: it issues several site-local searches, combines the results, and deduplicates by stable SKU before any task-specific title filtering. Query choice is task logic, but the request-loop and dedup mechanism is reusable site capability.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        }
+      ]
+    },
+    "errors": []
+  }
+]

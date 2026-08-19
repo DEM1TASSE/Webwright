@@ -1,0 +1,1549 @@
+[
+  {
+    "attempt": 1,
+    "proposal": {
+      "operations": [
+        {
+          "op": "ADD",
+          "replacement": {
+            "primitive_id": "map/search_places",
+            "method": "search_places",
+            "capability": "search the site's place index by a caller-supplied text query and return typed place result records from the search results page",
+            "method_code": "def search_places(self, query):\n    \"\"\"Search the map site and return typed search result records.\"\"\"\n    import urllib.parse\n    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError\n\n    if not isinstance(query, str) or not query.strip():\n        raise ValueError(\"query must be a non-empty string\")\n\n    page = self.page\n    encoded = urllib.parse.quote(query.strip())\n    page.goto(f\"/search?query={encoded}\", wait_until=\"domcontentloaded\")\n    try:\n        page.wait_for_load_state(\"networkidle\", timeout=10000)\n    except PlaywrightTimeoutError:\n        pass\n\n    records = []\n    seen = set()\n\n    for link in page.get_by_role(\"link\").all():\n        try:\n            text = (link.inner_text(timeout=1000) or \"\").strip()\n        except Exception:\n            continue\n        if not text:\n            continue\n        href = None\n        try:\n            href = link.get_attribute(\"href\")\n        except Exception:\n            href = None\n        key = (text, href)\n        if key in seen:\n            continue\n        seen.add(key)\n        parts = [p.strip() for p in text.split(\",\")]\n        name = parts[0] if parts else text\n        address_or_location = \", \".join(parts[1:]).strip() if len(parts) > 1 else None\n        records.append({\n            \"name\": name,\n            \"display_name\": text,\n            \"address_or_location\": address_or_location or None,\n            \"href\": href,\n            \"raw_result_text\": text,\n            \"result_rank\": len(records) + 1,\n        })\n\n    return {\"results\": records}",
+            "owns": [
+              "Submitting a text query through the site's search UI or equivalent search URL",
+              "Loading the site's search results page",
+              "Reading typed place result records from displayed result links",
+              "Returning stable displayed identity and location fields carried in result text",
+              "Preserving site result order as result_rank"
+            ],
+            "does_not_own": [
+              "Choosing which query terms to issue for the task",
+              "Selecting the correct result for a user's intent beyond returning the site's results",
+              "Computing routes or travel times",
+              "Cross-query ranking, filtering, or merging beyond one search request"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "query": {
+                  "type": "string",
+                  "description": "Free-text place query to submit to the site's search experience"
+                }
+              },
+              "required": [
+                "query"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "results": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string",
+                        "description": "Primary place name parsed from the displayed result text"
+                      },
+                      "display_name": {
+                        "type": "string",
+                        "description": "Full place label as displayed in the result link"
+                      },
+                      "address_or_location": {
+                        "type": "string",
+                        "nullable": true,
+                        "description": "Remaining displayed location/address text parsed from the result label when present"
+                      },
+                      "href": {
+                        "type": "string",
+                        "nullable": true,
+                        "description": "Result link target URL if available from the DOM"
+                      },
+                      "raw_result_text": {
+                        "type": "string",
+                        "description": "Unmodified text of the result entry as displayed"
+                      },
+                      "result_rank": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "1-based order among returned results on the loaded page"
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "display_name",
+                      "raw_result_text",
+                      "result_rank"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "results"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "typed map search result records for one caller-supplied query"
+            ],
+            "supported_patterns": [
+              "single query place search",
+              "query-scoped acquisition of displayed place candidates"
+            ],
+            "guarantees": {
+              "collection_scope": "query",
+              "completeness": "partial",
+              "supports_absence_proof": false,
+              "configuration": {
+                "kind": "none",
+                "supported_values": [],
+                "coupled_site_parameters_hidden": true
+              }
+            },
+            "acceptance_checks": [
+              "Given a non-empty query, the method loads a search results view for that query and returns a results array.",
+              "Each returned record contains non-empty displayed result text and a 1-based result_rank.",
+              "If link hrefs are available, they are included without being required for success.",
+              "An empty results array is permitted when the loaded search view exposes no parseable result links for the query."
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task87_t64",
+                "template_id": "64",
+                "code_quote": "await page.get_by_role(\"textbox\", name=\"Search\").fill(query)\nawait page.get_by_role(\"button\", name=\"Go\").click()\nawait page.wait_for_load_state(\"networkidle\")\nresult = page.get_by_role(\"link\", name=result_name)\ntext = await result.inner_text()",
+                "explanation": "Generalized the demonstrated search-box submission and result-link reading into a reusable one-query search primitive that returns typed records rather than one expected hard-coded match."
+              },
+              {
+                "workflow_id": "task101_t66",
+                "template_id": "66",
+                "code_quote": "await page.goto(base + '/search?query=' + encodeURIComponent('University of Pittsburgh') ...);\nconst upittText = await sidebarText(page);",
+                "explanation": "Confirmed that the same site search operation is reachable by query URL as well; generalized acquisition to a caller-supplied query while keeping output limited to typed displayed result facts."
+              }
+            ]
+          }
+        },
+        {
+          "op": "ADD",
+          "replacement": {
+            "primitive_id": "map/get_route_summary",
+            "method": "get_route_summary",
+            "capability": "retrieve route summary details from the map site's directions page for two place inputs and a selected travel mode",
+            "method_code": "def get_route_summary(self, origin_query, destination_query, travel_mode):\n    \"\"\"Submit a directions request and parse typed route summary facts.\"\"\"\n    import re\n    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError\n\n    if not isinstance(origin_query, str) or not origin_query.strip():\n        raise ValueError(\"origin_query must be a non-empty string\")\n    if not isinstance(destination_query, str) or not destination_query.strip():\n        raise ValueError(\"destination_query must be a non-empty string\")\n    if travel_mode not in {\"car\", \"walking\"}:\n        raise ValueError(\"travel_mode must be one of: car, walking\")\n\n    page = self.page\n    page.goto(\"/directions\", wait_until=\"domcontentloaded\")\n\n    from_box = page.get_by_role(\"textbox\", name=\"From\")\n    to_box = page.get_by_role(\"textbox\", name=\"To\")\n    if from_box.count() == 0 or to_box.count() == 0:\n        raise RuntimeError(\"Directions input boxes were not found\")\n\n    from_box.first.fill(origin_query.strip())\n    to_box.first.fill(destination_query.strip())\n\n    mode_map = {\"car\": \"Car (OSRM)\", \"walking\": \"Foot (OSRM)\"}\n    desired_label = mode_map[travel_mode]\n\n    combobox = page.get_by_role(\"combobox\")\n    if combobox.count():\n        try:\n            combobox.first.select_option(label=desired_label)\n        except Exception:\n            pass\n    else:\n        selects = page.locator(\"select.routing_engines\")\n        if selects.count():\n            if travel_mode == \"walking\":\n                try:\n                    selects.nth(1 if selects.count() > 1 else 0).select_option(\"2\")\n                except Exception:\n                    selects.first.select_option(label=desired_label)\n            else:\n                try:\n                    selects.nth(1 if selects.count() > 1 else 0).select_option(label=desired_label)\n                except Exception:\n                    selects.first.select_option(label=desired_label)\n\n    go_button = page.get_by_role(\"button\", name=\"Go\")\n    if go_button.count():\n        go_button.first.click()\n    else:\n        routing_go = page.locator(\".routing_go\")\n        if routing_go.count() == 0:\n            raise RuntimeError(\"Directions submit control was not found\")\n        routing_go.nth(1 if routing_go.count() > 1 else 0).click()\n\n    try:\n        page.wait_for_load_state(\"networkidle\", timeout=15000)\n    except PlaywrightTimeoutError:\n        pass\n\n    sidebar_text = \"\"\n    try:\n        page.get_by_text(\"Time:\").first.wait_for(timeout=10000)\n    except Exception:\n        pass\n    try:\n        sidebar_text = page.locator(\"#sidebar_content\").inner_text(timeout=3000)\n    except Exception:\n        sidebar_text = page.locator(\"body\").inner_text(timeout=3000)\n\n    time_match = re.search(r\"Time:\\s*([^\\n]+)\", sidebar_text)\n    distance_match = re.search(r\"Distance:\\s*([^\\n]+)\", sidebar_text)\n    duration_text = time_match.group(1).strip() if time_match else None\n    distance_text = distance_match.group(1).strip() if distance_match else None\n    results_panel_present = bool(duration_text or distance_text or \"Directions\" in sidebar_text)\n\n    if not results_panel_present:\n        raise RuntimeError(\"Directions results were not found\")\n\n    origin_display = None\n    destination_display = None\n    try:\n        origin_display = from_box.first.input_value(timeout=1000)\n    except Exception:\n        origin_display = origin_query.strip()\n    try:\n        destination_display = to_box.first.input_value(timeout=1000)\n    except Exception:\n        destination_display = destination_query.strip()\n\n    return {\n        \"origin_query\": origin_query.strip(),\n        \"destination_query\": destination_query.strip(),\n        \"travel_mode\": travel_mode,\n        \"origin_display\": origin_display,\n        \"destination_display\": destination_display,\n        \"sidebar_text\": sidebar_text,\n        \"travel_time_text\": duration_text,\n        \"distance_text\": distance_text,\n        \"results_panel_present\": results_panel_present,\n        \"final_url\": page.url,\n    }",
+            "owns": [
+              "Navigating to the site's directions workflow",
+              "Filling origin and destination textboxes with caller-supplied place strings",
+              "Setting the travel mode using the site's semantic mode selector",
+              "Submitting the directions request through the site's controls",
+              "Waiting for the directions results panel to render",
+              "Parsing displayed route summary text into typed route facts including travel time when shown",
+              "Hiding site-coupled engine option details behind a semantic travel_mode input"
+            ],
+            "does_not_own": [
+              "Choosing which origin and destination to compare",
+              "Ranking among multiple routes or destinations",
+              "Computing travel time independently of the site",
+              "Interpreting the result as minimum beyond what the site displays in the returned summary",
+              "Formatting the final answer for the user"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "origin_query": {
+                  "type": "string",
+                  "description": "Place/address text to enter into the site's From field"
+                },
+                "destination_query": {
+                  "type": "string",
+                  "description": "Place/address text to enter into the site's To field"
+                },
+                "travel_mode": {
+                  "type": "string",
+                  "enum": [
+                    "car",
+                    "walking"
+                  ],
+                  "description": "Semantic routing mode to request; internally mapped to site-specific controls"
+                }
+              },
+              "required": [
+                "origin_query",
+                "destination_query",
+                "travel_mode"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "origin_query": {
+                  "type": "string"
+                },
+                "destination_query": {
+                  "type": "string"
+                },
+                "travel_mode": {
+                  "type": "string",
+                  "enum": [
+                    "car",
+                    "walking"
+                  ]
+                },
+                "origin_display": {
+                  "type": "string",
+                  "description": "Resolved origin text present in the From field after submission when observable"
+                },
+                "destination_display": {
+                  "type": "string",
+                  "description": "Resolved destination text present in the To field after submission when observable"
+                },
+                "sidebar_text": {
+                  "type": "string",
+                  "description": "Directions sidebar/body summary text used as the parse source"
+                },
+                "travel_time_text": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "Displayed route duration string parsed from the results when present"
+                },
+                "distance_text": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "Displayed route distance string parsed from the results when present"
+                },
+                "results_panel_present": {
+                  "type": "boolean",
+                  "description": "Whether a route results panel or equivalent summary was observed"
+                },
+                "final_url": {
+                  "type": "string",
+                  "description": "Page URL after route submission"
+                }
+              },
+              "required": [
+                "origin_query",
+                "destination_query",
+                "travel_mode",
+                "sidebar_text",
+                "results_panel_present",
+                "final_url"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "typed route summary facts for one origin/destination pair and one semantic travel mode"
+            ],
+            "supported_patterns": [
+              "single route lookup by UI directions form",
+              "car route summary retrieval",
+              "walking route summary retrieval"
+            ],
+            "guarantees": {
+              "collection_scope": "single",
+              "completeness": "conditional",
+              "supports_absence_proof": false,
+              "configuration": {
+                "kind": "semantic_enum",
+                "supported_values": [
+                  "car",
+                  "walking"
+                ],
+                "coupled_site_parameters_hidden": true
+              }
+            },
+            "acceptance_checks": [
+              "After submission, a directions results view is observed and results_panel_present is true.",
+              "When the site shows a Time field, travel_time_text matches the displayed route summary value.",
+              "When the site shows a Distance field, distance_text matches the displayed route summary value.",
+              "The returned final_url is non-empty and corresponds to the displayed route state.",
+              "If no directions results panel is found, the method fails instead of fabricating route data."
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task155_t36",
+                "template_id": "36",
+                "code_quote": "await page.goto(f\"{START_URL}/directions\" ...)\nawait page.get_by_role(\"textbox\", name=\"From\").fill(\"Animal Rescue League of Pittsburgh\")\nawait page.get_by_role(\"textbox\", name=\"To\").fill(\"Schenley park\")\n...\nawait mode.select_option(label=\"Car (OSRM)\")\n...\nawait page.get_by_role(\"button\", name=\"Go\").click()\n...\nawait page.get_by_text(\"Time:\").first.wait_for()",
+                "explanation": "Generalized the demonstrated car directions workflow into a parameterized route-summary primitive with semantic travel_mode input and typed route outputs."
+              },
+              {
+                "workflow_id": "task52_t68",
+                "template_id": "68",
+                "code_quote": "await page.get_by_role(\"textbox\", name=\"From\").fill(\"Carnegie Mellon University\")\nawait page.get_by_role(\"textbox\", name=\"To\").fill(\"Starbucks Craig Street Pittsburgh\")\nawait page.get_by_role(\"combobox\").select_option(label=\"Foot (OSRM)\")\n...\nsidebar_text = await page.locator(\"#sidebar_content\").inner_text()\nm = re.search(r\"Time:\\\\s*([0-9:]+)\", sidebar_text)",
+                "explanation": "Added supported walking behavior and sidebar parsing evidence while preserving the same core capability identity of directions summary retrieval."
+              },
+              {
+                "workflow_id": "task87_t64",
+                "template_id": "64",
+                "code_quote": "resp = await page.goto(f\"{START_URL}/directions\", wait_until=\"domcontentloaded\")\n...\nawait from_box.first.fill(FROM_FULL)\nawait to_box.first.fill(TO_FULL)\nawait page.get_by_role(\"button\", name=\"Go\").click()\n...\nsummary_text = await summary_locator.first.inner_text()\nevidence[\"final_url\"] = page.url",
+                "explanation": "Confirmed typed extraction of route summary text and final route URL from the same directions operation, while keeping fallback DOM mechanics internal and not public."
+              }
+            ]
+          }
+        }
+      ],
+      "workflow_attribution": [
+        {
+          "workflow_id": "task87_t64",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0,
+            1
+          ]
+        },
+        {
+          "workflow_id": "task101_t66",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0
+          ]
+        },
+        {
+          "workflow_id": "task155_t36",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            1
+          ]
+        },
+        {
+          "workflow_id": "task52_t68",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            1
+          ]
+        }
+      ],
+      "candidate_attribution": [
+        {
+          "candidate_id": "task87_t64::search_places_by_text_query",
+          "decision": "ADD",
+          "operation_index": 0
+        },
+        {
+          "candidate_id": "task87_t64::get_driving_directions_summary",
+          "decision": "ADD",
+          "operation_index": 1
+        },
+        {
+          "candidate_id": "task101_t66::search_places_by_query",
+          "decision": "ADD",
+          "operation_index": 0
+        },
+        {
+          "candidate_id": "task101_t66::search_places_across_queries_deduplicated",
+          "decision": "COVERED",
+          "target_id": "map/search_places",
+          "reason": "The workflow only demonstrates repeated independent query-scoped searches, not a reusable bounded multi-query acquisition primitive with explicit typed deduplication output. The evidenced reusable site operation is the one-query search primitive; cross-query orchestration and selection remain workflow logic in this batch."
+        },
+        {
+          "candidate_id": "task101_t66::get_walking_route_between_places",
+          "decision": "ADD",
+          "operation_index": 1
+        },
+        {
+          "candidate_id": "task155_t36::get_route_directions_summary",
+          "decision": "ADD",
+          "operation_index": 1
+        },
+        {
+          "candidate_id": "task52_t68::get_route_summary_from_directions_page",
+          "decision": "ADD",
+          "operation_index": 1
+        }
+      ],
+      "model_workflow_attribution": [
+        {
+          "workflow_id": "task87_t64",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0,
+            1
+          ]
+        },
+        {
+          "workflow_id": "task101_t66",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0,
+            1
+          ]
+        },
+        {
+          "workflow_id": "task155_t36",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            1
+          ]
+        },
+        {
+          "workflow_id": "task52_t68",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            1
+          ]
+        }
+      ]
+    },
+    "quality_verdicts": null,
+    "errors": [
+      "candidate_attribution[3] COVERED target drops extracted output fields ['detail_text', 'results']; use backward-compatible UPDATE or REJECT"
+    ]
+  },
+  {
+    "attempt": 2,
+    "proposal": {
+      "operations": [
+        {
+          "op": "ADD",
+          "replacement": {
+            "primitive_id": "map/search_places",
+            "method": "search_places",
+            "capability": "search the map site's place results for a caller-supplied free-text query and return typed displayed place result records from the loaded search results view",
+            "method_code": "def search_places(self, query):\n    import urllib.parse\n    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError\n\n    if not isinstance(query, str) or not query.strip():\n        raise ValueError(\"query must be a non-empty string\")\n\n    query = query.strip()\n    page = self.page\n    encoded = urllib.parse.quote(query)\n    page.goto(f\"/search?query={encoded}\", wait_until=\"domcontentloaded\")\n    try:\n        page.wait_for_load_state(\"networkidle\", timeout=10000)\n    except PlaywrightTimeoutError:\n        pass\n\n    sidebar_text = \"\"\n    try:\n        sidebar_text = page.locator(\"#sidebar_content\").inner_text(timeout=3000)\n    except Exception:\n        try:\n            sidebar_text = page.locator(\"body\").inner_text(timeout=3000)\n        except Exception:\n            sidebar_text = \"\"\n\n    results = []\n    seen = set()\n    links = page.get_by_role(\"link\")\n    count = links.count()\n    for i in range(count):\n        link = links.nth(i)\n        try:\n            text = (link.inner_text(timeout=1000) or \"\").strip()\n        except Exception:\n            continue\n        if not text:\n            continue\n        href = None\n        try:\n            href = link.get_attribute(\"href\")\n        except Exception:\n            href = None\n        key = (text, href)\n        if key in seen:\n            continue\n        seen.add(key)\n        parts = [p.strip() for p in text.split(\",\")]\n        name = parts[0] if parts else text\n        address_or_location = \", \".join(parts[1:]).strip() if len(parts) > 1 else None\n        results.append({\n            \"name\": name,\n            \"display_name\": text,\n            \"address_or_location\": address_or_location or None,\n            \"detail_text\": text,\n            \"href\": href,\n            \"raw_result_text\": text,\n            \"result_rank\": len(results) + 1,\n        })\n\n    return {\n        \"results\": results,\n        \"sidebar_text\": sidebar_text,\n    }",
+            "owns": [
+              "Constructing and loading the site's query-scoped search URL for a caller-supplied text query",
+              "Waiting for the search results view to load",
+              "Reading displayed place result entries from the loaded search results page",
+              "Returning typed displayed identity/location fields from each result entry",
+              "Preserving result order as result_rank",
+              "Returning the loaded sidebar text used as parse context when available"
+            ],
+            "does_not_own": [
+              "Choosing which query terms to issue for a task",
+              "Selecting which returned place best matches the user intent",
+              "Cross-query aggregation, ranking, or deduplication",
+              "Computing routes, travel times, or nearest-place decisions",
+              "Proving global absence of a place beyond this single query-scoped result view"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "query": {
+                  "type": "string",
+                  "description": "Free-text search query to submit to the site's place search"
+                }
+              },
+              "required": [
+                "query"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "results": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string",
+                        "description": "Primary place name parsed from the displayed result text"
+                      },
+                      "display_name": {
+                        "type": "string",
+                        "description": "Full place label as displayed in the result link or result entry"
+                      },
+                      "address_or_location": {
+                        "type": "string",
+                        "nullable": true,
+                        "description": "Remaining displayed location/address text parsed from the result label when present"
+                      },
+                      "detail_text": {
+                        "type": "string",
+                        "description": "Displayed detail text preserved from the parsed result entry"
+                      },
+                      "href": {
+                        "type": "string",
+                        "nullable": true,
+                        "description": "Result link target URL when available from the DOM"
+                      },
+                      "raw_result_text": {
+                        "type": "string",
+                        "description": "Unmodified text of the displayed result entry"
+                      },
+                      "result_rank": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "1-based display order among returned results on the loaded page"
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "display_name",
+                      "detail_text",
+                      "raw_result_text",
+                      "result_rank"
+                    ]
+                  }
+                },
+                "sidebar_text": {
+                  "type": "string",
+                  "description": "Sidebar text from the loaded search results view when available; parse context only"
+                }
+              },
+              "required": [
+                "results",
+                "sidebar_text"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "typed search result records for one caller-supplied query"
+            ],
+            "supported_patterns": [
+              "single-query place search",
+              "query-scoped acquisition of displayed place candidates"
+            ],
+            "guarantees": {
+              "collection_scope": "query",
+              "completeness": "partial",
+              "supports_absence_proof": false,
+              "configuration": {
+                "kind": "none",
+                "supported_values": [],
+                "coupled_site_parameters_hidden": true
+              }
+            },
+            "acceptance_checks": [
+              "Given a non-empty query, the method loads a search results view for that query and returns a results array and sidebar_text string.",
+              "Each returned record contains non-empty displayed result text and a 1-based result_rank.",
+              "Returned detail_text preserves displayed entry text rather than dropping it.",
+              "An empty results array is allowed when the loaded search view exposes no parseable result entries for the query."
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task87_t64",
+                "template_id": "64",
+                "code_quote": "await page.get_by_role(\"textbox\", name=\"Search\").fill(query)\nawait page.get_by_role(\"button\", name=\"Go\").click()\nawait page.wait_for_load_state(\"networkidle\")\nresult = page.get_by_role(\"link\", name=result_name)\ntext = await result.inner_text()",
+                "explanation": "Generalized the demonstrated search-box submission and result-link reading into a reusable one-query search primitive that returns typed displayed result records."
+              },
+              {
+                "workflow_id": "task101_t66",
+                "template_id": "66",
+                "code_quote": "await page.goto(base + '/search?query=' + encodeURIComponent('University of Pittsburgh'), { waitUntil: 'domcontentloaded', timeout: 60000 });\nconst upittText = await sidebarText(page);",
+                "explanation": "Confirmed the same search capability is reachable by query URL and that sidebar text is an observable acquisition artifact; preserved typed displayed result fields plus sidebar parse context."
+              }
+            ]
+          }
+        },
+        {
+          "op": "ADD",
+          "replacement": {
+            "primitive_id": "map/get_route_summary",
+            "method": "get_route_summary",
+            "capability": "retrieve route summary details from the map site's directions page for two place inputs and a selected travel mode",
+            "method_code": "def get_route_summary(self, origin_query, destination_query, travel_mode):\n    import re\n    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError\n\n    if not isinstance(origin_query, str) or not origin_query.strip():\n        raise ValueError(\"origin_query must be a non-empty string\")\n    if not isinstance(destination_query, str) or not destination_query.strip():\n        raise ValueError(\"destination_query must be a non-empty string\")\n    if travel_mode not in {\"car\", \"walking\"}:\n        raise ValueError(\"travel_mode must be one of: car, walking\")\n\n    origin_query = origin_query.strip()\n    destination_query = destination_query.strip()\n    page = self.page\n    page.goto(\"/directions\", wait_until=\"domcontentloaded\")\n\n    from_box = page.get_by_role(\"textbox\", name=\"From\")\n    to_box = page.get_by_role(\"textbox\", name=\"To\")\n    if from_box.count() == 0 or to_box.count() == 0:\n        raise RuntimeError(\"Directions input boxes were not found\")\n\n    from_box.first.fill(origin_query)\n    to_box.first.fill(destination_query)\n\n    mode_map = {\"car\": \"Car (OSRM)\", \"walking\": \"Foot (OSRM)\"}\n    desired_label = mode_map[travel_mode]\n\n    combobox = page.get_by_role(\"combobox\")\n    if combobox.count() > 0:\n        try:\n            current_value = combobox.first.input_value(timeout=1000)\n        except Exception:\n            current_value = \"\"\n        if desired_label.lower() not in current_value.lower():\n            try:\n                combobox.first.select_option(label=desired_label)\n            except Exception:\n                pass\n    else:\n        selects = page.locator(\"select.routing_engines\")\n        if selects.count() > 0:\n            target = selects.nth(1 if selects.count() > 1 else 0)\n            try:\n                if travel_mode == \"walking\":\n                    target.select_option(\"2\")\n                else:\n                    target.select_option(label=desired_label)\n            except Exception:\n                try:\n                    target.select_option(label=desired_label)\n                except Exception:\n                    pass\n\n    go_button = page.get_by_role(\"button\", name=\"Go\")\n    if go_button.count() > 0:\n        go_button.first.click()\n    else:\n        routing_go = page.locator(\".routing_go\")\n        if routing_go.count() == 0:\n            raise RuntimeError(\"Directions submit control was not found\")\n        routing_go.nth(1 if routing_go.count() > 1 else 0).click()\n\n    try:\n        page.wait_for_load_state(\"networkidle\", timeout=15000)\n    except PlaywrightTimeoutError:\n        pass\n\n    try:\n        page.get_by_role(\"heading\", name=\"Directions\").wait_for(timeout=5000)\n    except Exception:\n        pass\n    try:\n        page.get_by_text(\"Time:\").first.wait_for(timeout=5000)\n    except Exception:\n        pass\n\n    sidebar_text = \"\"\n    try:\n        sidebar_text = page.locator(\"#sidebar_content\").inner_text(timeout=3000)\n    except Exception:\n        try:\n            sidebar_text = page.locator(\"body\").inner_text(timeout=3000)\n        except Exception:\n            sidebar_text = \"\"\n\n    time_match = re.search(r\"Time:\\s*([^\\n]+)\", sidebar_text)\n    distance_match = re.search(r\"Distance:\\s*([^\\n]+)\", sidebar_text)\n    travel_time_text = time_match.group(1).strip() if time_match else None\n    distance_text = distance_match.group(1).strip() if distance_match else None\n    results_panel_present = bool(travel_time_text or distance_text or \"Directions\" in sidebar_text)\n    if not results_panel_present:\n        raise RuntimeError(\"Directions results were not found\")\n\n    try:\n        origin_display = from_box.first.input_value(timeout=1000)\n    except Exception:\n        origin_display = origin_query\n    try:\n        destination_display = to_box.first.input_value(timeout=1000)\n    except Exception:\n        destination_display = destination_query\n\n    return {\n        \"origin_query\": origin_query,\n        \"destination_query\": destination_query,\n        \"travel_mode\": travel_mode,\n        \"origin_display\": origin_display,\n        \"destination_display\": destination_display,\n        \"sidebar_text\": sidebar_text,\n        \"travel_time_text\": travel_time_text,\n        \"distance_text\": distance_text,\n        \"results_panel_present\": results_panel_present,\n        \"final_url\": page.url,\n    }",
+            "owns": [
+              "Navigating to the site's directions workflow",
+              "Filling origin and destination textboxes with caller-supplied place strings",
+              "Setting the travel mode using the site's semantic mode selector",
+              "Submitting the directions request through the site's controls",
+              "Waiting for the directions results panel to render",
+              "Parsing displayed route summary text into typed route facts including travel time when shown",
+              "Hiding site-coupled engine option details behind a semantic travel_mode input"
+            ],
+            "does_not_own": [
+              "Choosing which origin and destination to compare",
+              "Ranking among multiple routes or destinations",
+              "Computing travel time independently of the site",
+              "Interpreting the result as minimum beyond what the site displays in the returned summary",
+              "Formatting the final answer for the user"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "origin_query": {
+                  "type": "string",
+                  "description": "Place/address text to enter into the site's From field"
+                },
+                "destination_query": {
+                  "type": "string",
+                  "description": "Place/address text to enter into the site's To field"
+                },
+                "travel_mode": {
+                  "type": "string",
+                  "enum": [
+                    "car",
+                    "walking"
+                  ],
+                  "description": "Semantic routing mode to request; internally mapped to site-specific controls"
+                }
+              },
+              "required": [
+                "origin_query",
+                "destination_query",
+                "travel_mode"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "origin_query": {
+                  "type": "string"
+                },
+                "destination_query": {
+                  "type": "string"
+                },
+                "travel_mode": {
+                  "type": "string",
+                  "enum": [
+                    "car",
+                    "walking"
+                  ]
+                },
+                "origin_display": {
+                  "type": "string",
+                  "description": "Resolved origin text present in the From field after submission when observable"
+                },
+                "destination_display": {
+                  "type": "string",
+                  "description": "Resolved destination text present in the To field after submission when observable"
+                },
+                "sidebar_text": {
+                  "type": "string",
+                  "description": "Directions sidebar/body summary text used as the parse source"
+                },
+                "travel_time_text": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "Displayed route duration string parsed from the results when present"
+                },
+                "distance_text": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "Displayed route distance string parsed from the results when present"
+                },
+                "results_panel_present": {
+                  "type": "boolean",
+                  "description": "Whether a route results panel or equivalent summary was observed"
+                },
+                "final_url": {
+                  "type": "string",
+                  "description": "Page URL after route submission"
+                }
+              },
+              "required": [
+                "origin_query",
+                "destination_query",
+                "travel_mode",
+                "origin_display",
+                "destination_display",
+                "sidebar_text",
+                "results_panel_present",
+                "final_url"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "typed route summary facts for one origin/destination pair and one semantic travel mode"
+            ],
+            "supported_patterns": [
+              "single route lookup by UI directions form",
+              "car route summary retrieval",
+              "walking route summary retrieval"
+            ],
+            "guarantees": {
+              "collection_scope": "single",
+              "completeness": "conditional",
+              "supports_absence_proof": false,
+              "configuration": {
+                "kind": "semantic_enum",
+                "supported_values": [
+                  "car",
+                  "walking"
+                ],
+                "coupled_site_parameters_hidden": true
+              }
+            },
+            "acceptance_checks": [
+              "After submission, a directions results view is observed and results_panel_present is true.",
+              "When the site shows a Time field, travel_time_text matches the displayed route summary value.",
+              "When the site shows a Distance field, distance_text matches the displayed route summary value.",
+              "The returned final_url is non-empty and corresponds to the displayed route state.",
+              "If no directions results panel is found, the method fails instead of fabricating route data."
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task155_t36",
+                "template_id": "36",
+                "code_quote": "await page.goto(f\"{START_URL}/directions\" ...)\nawait page.get_by_role(\"textbox\", name=\"From\").fill(\"Animal Rescue League of Pittsburgh\")\nawait page.get_by_role(\"textbox\", name=\"To\").fill(\"Schenley park\")\n...\nawait mode.select_option(label=\"Car (OSRM)\")\n...\nawait page.get_by_role(\"button\", name=\"Go\").click()\n...\nawait page.get_by_role(\"heading\", name=\"Directions\").wait_for()\nawait page.get_by_text(\"Time:\").first.wait_for()",
+                "explanation": "Generalized the demonstrated car directions workflow into a parameterized route-summary primitive with semantic travel_mode input and typed route outputs."
+              },
+              {
+                "workflow_id": "task52_t68",
+                "template_id": "68",
+                "code_quote": "await page.get_by_role(\"textbox\", name=\"From\").fill(\"Carnegie Mellon University\")\nawait page.get_by_role(\"textbox\", name=\"To\").fill(\"Starbucks Craig Street Pittsburgh\")\nawait page.get_by_role(\"combobox\").select_option(label=\"Foot (OSRM)\")\n...\nsidebar_text = await page.locator(\"#sidebar_content\").inner_text()\nm = re.search(r\"Time:\\\\s*([0-9:]+)\", sidebar_text)",
+                "explanation": "Added supported walking behavior and sidebar parsing evidence while preserving the same core capability identity of directions summary retrieval."
+              },
+              {
+                "workflow_id": "task87_t64",
+                "template_id": "64",
+                "code_quote": "resp = await page.goto(f\"{START_URL}/directions\", wait_until=\"domcontentloaded\")\n...\nawait from_box.first.fill(FROM_FULL)\nawait to_box.first.fill(TO_FULL)\nawait page.get_by_role(\"button\", name=\"Go\").click()\n...\nsummary_text = await summary_locator.first.inner_text()\nevidence[\"final_url\"] = page.url",
+                "explanation": "Confirmed typed extraction of route summary text and final route URL from the same directions operation, while keeping fallback DOM mechanics internal and not public."
+              }
+            ]
+          }
+        }
+      ],
+      "workflow_attribution": [
+        {
+          "workflow_id": "task87_t64",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0,
+            1
+          ]
+        },
+        {
+          "workflow_id": "task101_t66",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0
+          ]
+        },
+        {
+          "workflow_id": "task155_t36",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            1
+          ]
+        },
+        {
+          "workflow_id": "task52_t68",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            1
+          ]
+        }
+      ],
+      "candidate_attribution": [
+        {
+          "candidate_id": "task87_t64::search_places_by_text_query",
+          "decision": "ADD",
+          "operation_index": 0
+        },
+        {
+          "candidate_id": "task87_t64::get_driving_directions_summary",
+          "decision": "ADD",
+          "operation_index": 1
+        },
+        {
+          "candidate_id": "task101_t66::search_places_by_query",
+          "decision": "ADD",
+          "operation_index": 0
+        },
+        {
+          "candidate_id": "task101_t66::search_places_across_queries_deduplicated",
+          "decision": "ADD",
+          "operation_index": 0
+        },
+        {
+          "candidate_id": "task101_t66::get_walking_route_between_places",
+          "decision": "ADD",
+          "operation_index": 1
+        },
+        {
+          "candidate_id": "task155_t36::get_route_directions_summary",
+          "decision": "ADD",
+          "operation_index": 1
+        },
+        {
+          "candidate_id": "task52_t68::get_route_summary_from_directions_page",
+          "decision": "ADD",
+          "operation_index": 1
+        }
+      ],
+      "model_workflow_attribution": [
+        {
+          "workflow_id": "task87_t64",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0,
+            1
+          ]
+        },
+        {
+          "workflow_id": "task101_t66",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0,
+            1
+          ]
+        },
+        {
+          "workflow_id": "task155_t36",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            1
+          ]
+        },
+        {
+          "workflow_id": "task52_t68",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            1
+          ]
+        }
+      ]
+    },
+    "quality_verdicts": {
+      "verdicts": [
+        {
+          "operation_index": 0,
+          "verdict": "FAIL",
+          "reason": "Unsupported and lossy/overbroad acquisition. Evidence supports query submission and reading a specific result link or sidebar text, but the method indiscriminately iterates all page links and treats them as place results without site-evidenced result-container scoping. That can pull unrelated navigation links, so code and capability/acceptance checks do not agree. It also claims to return typed displayed place result records from the loaded search results view, but fields like name/address_or_location are guessed by comma-splitting arbitrary link text rather than parsed from evidenced result structure. Additionally, this overlaps with the richer/evidenced sidebar-based search acquisition candidates; among overlapping views of one site acquisition, the lossy duplication should fail."
+        },
+        {
+          "operation_index": 1,
+          "verdict": "PASS",
+          "reason": "Source evidence directly supports a site-local directions primitive: navigate to /directions, fill From/To, select site mode controls for car and walking, click Go, wait for directions output, and parse Time/Distance from sidebar/body text. Output is typed, semantic travel_mode hides coupled site labels/options internally, owns/does_not_own are consistent, and acceptance checks match the implementation's fail-on-missing-results behavior. The primitive performs site acquisition/parsing without adding task-specific ranking or answer formatting."
+        }
+      ],
+      "rejection_verdicts": []
+    },
+    "errors": [
+      "quality gate rejected operation 0: Unsupported and lossy/overbroad acquisition. Evidence supports query submission and reading a specific result link or sidebar text, but the method indiscriminately iterates all page links and treats them as place results without site-evidenced result-container scoping. That can pull unrelated navigation links, so code and capability/acceptance checks do not agree. It also claims to return typed displayed place result records from the loaded search results view, but fields like name/address_or_location are guessed by comma-splitting arbitrary link text rather than parsed from evidenced result structure. Additionally, this overlaps with the richer/evidenced sidebar-based search acquisition candidates; among overlapping views of one site acquisition, the lossy duplication should fail."
+    ]
+  },
+  {
+    "attempt": 3,
+    "proposal": {
+      "operations": [
+        {
+          "op": "ADD",
+          "replacement": {
+            "primitive_id": "map/search_places_in_sidebar",
+            "method": "search_places_in_sidebar",
+            "capability": "search the map site's place index by a caller-supplied text query and return typed place result records parsed from the search results sidebar",
+            "method_code": "def search_places_in_sidebar(self, query):\n    import urllib.parse\n    import re\n    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError\n\n    if not isinstance(query, str) or not query.strip():\n        raise ValueError(\"query must be a non-empty string\")\n\n    query = query.strip()\n    encoded = urllib.parse.quote(query)\n    self.page.goto(f\"/search?query={encoded}\", wait_until=\"domcontentloaded\")\n    try:\n        self.page.wait_for_load_state(\"networkidle\", timeout=10000)\n    except PlaywrightTimeoutError:\n        pass\n\n    try:\n        sidebar = self.page.locator(\"#sidebar_content\")\n        sidebar_text = sidebar.inner_text(timeout=5000)\n    except Exception as e:\n        raise RuntimeError(\"search results sidebar was not available\") from e\n\n    lines = [line.strip() for line in sidebar_text.splitlines() if line.strip()]\n    records = []\n    current = None\n\n    def flush_current():\n        nonlocal current\n        if current and current.get(\"name\"):\n            current[\"result_rank\"] = len(records) + 1\n            records.append(current)\n        current = None\n\n    for line in lines:\n        if line.lower() in {\"search\", \"directions\", \"export\", \"share\", \"edit\"}:\n            continue\n        if line.startswith(\"http://\") or line.startswith(\"https://\"):\n            continue\n        if re.fullmatch(r\"\\d+(?:\\.\\d+)?\\s*(?:km|m|mi|ft)\", line, flags=re.IGNORECASE):\n            if current is not None and not current.get(\"detail_text\"):\n                current[\"detail_text\"] = line\n            continue\n        if current is None:\n            current = {\n                \"name\": line,\n                \"address_or_location\": None,\n                \"detail_text\": None,\n            }\n        elif current.get(\"address_or_location\") is None:\n            current[\"address_or_location\"] = line\n        else:\n            if current.get(\"detail_text\"):\n                current[\"detail_text\"] += \" | \" + line\n            else:\n                current[\"detail_text\"] = line\n\n    flush_current()\n\n    return {\n        \"query\": query,\n        \"records\": records,\n        \"sidebar_text\": sidebar_text,\n    }\n",
+            "owns": [
+              "Constructing the site search URL as /search?query=<encoded query>",
+              "Loading the search results page on this map deployment",
+              "Reading and parsing #sidebar_content search results text into typed place-result records",
+              "Returning site-exposed place identity fields and location/display fields actually visible in the parsed sidebar result slice",
+              "Preserving result order as result_rank"
+            ],
+            "does_not_own": [
+              "Choosing which queries to issue for a task",
+              "Deciding whether returned places satisfy a business/category constraint such as being a restaurant chain location",
+              "Ranking across multiple separate queries",
+              "Computing nearest distance client-side",
+              "Proving site-wide absence of matching places from one query result slice"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "query": {
+                  "type": "string",
+                  "description": "Free-text search query to submit to the site's /search page"
+                }
+              },
+              "required": [
+                "query"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "query": {
+                  "type": "string"
+                },
+                "records": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "address_or_location": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "detail_text": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "result_rank": {
+                        "type": "integer",
+                        "minimum": 1
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "result_rank"
+                    ]
+                  }
+                },
+                "sidebar_text": {
+                  "type": "string",
+                  "description": "Raw sidebar text from the loaded search results view used as parse source"
+                }
+              },
+              "required": [
+                "query",
+                "records",
+                "sidebar_text"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "typed place records from one query-scoped sidebar search result view"
+            ],
+            "supported_patterns": [
+              "single-query place search by /search URL",
+              "query-scoped acquisition of displayed sidebar place candidates"
+            ],
+            "guarantees": {
+              "collection_scope": "query",
+              "completeness": "partial",
+              "supports_absence_proof": false,
+              "configuration": {
+                "kind": "none",
+                "supported_values": [],
+                "coupled_site_parameters_hidden": true
+              }
+            },
+            "acceptance_checks": [
+              "Given a non-empty query, the method navigates to a /search?query= URL and returns the loaded sidebar_text.",
+              "Returned records are parsed only from #sidebar_content rather than arbitrary page links.",
+              "Each returned record preserves displayed order as result_rank and contains a non-empty name parsed from the sidebar.",
+              "An empty records array is allowed when the sidebar loads but yields no parseable place records for that query."
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task101_t66",
+                "template_id": "66",
+                "code_quote": "await page.goto(base + '/search?query=' + encodeURIComponent('University of Pittsburgh'), { waitUntil: 'domcontentloaded', timeout: 60000 });\nconst upittText = await sidebarText(page);",
+                "explanation": "This directly demonstrates query-scoped navigation to the site's search URL and acquisition from #sidebar_content, so the primitive is narrowed to sidebar-based parsing instead of arbitrary link scraping."
+              },
+              {
+                "workflow_id": "task101_t66",
+                "template_id": "66",
+                "code_quote": "await page.goto(base + '/search?query=' + encodeURIComponent('In-N-Out Burger'), { waitUntil: 'domcontentloaded', timeout: 60000 });\nconst innoutBurgerText = await sidebarText(page);",
+                "explanation": "Repeated searches with different caller-substitutable queries confirm the same reusable search acquisition boundary."
+              }
+            ]
+          }
+        },
+        {
+          "op": "ADD",
+          "replacement": {
+            "primitive_id": "map/get_route_summary",
+            "method": "get_route_summary",
+            "capability": "retrieve route summary details from the map site's directions page for two place inputs and a selected travel mode",
+            "method_code": "def get_route_summary(self, origin_query, destination_query, travel_mode):\n    import re\n    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError\n\n    if not isinstance(origin_query, str) or not origin_query.strip():\n        raise ValueError(\"origin_query must be a non-empty string\")\n    if not isinstance(destination_query, str) or not destination_query.strip():\n        raise ValueError(\"destination_query must be a non-empty string\")\n    if travel_mode not in {\"car\", \"walking\"}:\n        raise ValueError(\"travel_mode must be one of: car, walking\")\n\n    origin_query = origin_query.strip()\n    destination_query = destination_query.strip()\n\n    self.page.goto(\"/directions\", wait_until=\"domcontentloaded\")\n\n    from_box = self.page.get_by_role(\"textbox\", name=\"From\")\n    to_box = self.page.get_by_role(\"textbox\", name=\"To\")\n    if from_box.count() == 0 or to_box.count() == 0:\n        route_from = self.page.locator(\"#route_from\")\n        route_to = self.page.locator(\"#route_to\")\n        if route_from.count() == 0 or route_to.count() == 0:\n            raise RuntimeError(\"Directions input boxes were not found\")\n        from_target = route_from.nth(1 if route_from.count() > 1 else 0)\n        to_target = route_to.nth(1 if route_to.count() > 1 else 0)\n    else:\n        from_target = from_box.first\n        to_target = to_box.first\n\n    from_target.fill(origin_query)\n    to_target.fill(destination_query)\n\n    mode_map = {\"car\": \"Car (OSRM)\", \"walking\": \"Foot (OSRM)\"}\n    desired_label = mode_map[travel_mode]\n\n    selected = False\n    combobox = self.page.get_by_role(\"combobox\")\n    if combobox.count() > 0:\n        try:\n            combobox.first.select_option(label=desired_label)\n            selected = True\n        except Exception:\n            selected = False\n\n    if not selected:\n        selects = self.page.locator(\"select.routing_engines\")\n        if selects.count() > 0:\n            target = selects.nth(1 if selects.count() > 1 else 0)\n            try:\n                if travel_mode == \"walking\":\n                    target.select_option(\"2\")\n                else:\n                    target.select_option(label=desired_label)\n                selected = True\n            except Exception:\n                try:\n                    target.select_option(label=desired_label)\n                    selected = True\n                except Exception:\n                    selected = False\n\n    if not selected:\n        raise RuntimeError(\"Directions travel mode control could not be set\")\n\n    go_button = self.page.get_by_role(\"button\", name=\"Go\")\n    if go_button.count() > 0:\n        go_button.first.click()\n    else:\n        routing_go = self.page.locator(\".routing_go\")\n        if routing_go.count() == 0:\n            raise RuntimeError(\"Directions submit control was not found\")\n        routing_go.nth(1 if routing_go.count() > 1 else 0).click()\n\n    try:\n        self.page.wait_for_load_state(\"networkidle\", timeout=15000)\n    except PlaywrightTimeoutError:\n        pass\n\n    try:\n        self.page.get_by_role(\"heading\", name=\"Directions\").wait_for(timeout=5000)\n    except Exception:\n        pass\n\n    sidebar_text = None\n    try:\n        sidebar_text = self.page.locator(\"#sidebar_content\").inner_text(timeout=5000)\n    except Exception:\n        try:\n            sidebar_text = self.page.locator(\"body\").inner_text(timeout=5000)\n        except Exception as e:\n            raise RuntimeError(\"Directions results text was not available\") from e\n\n    time_match = re.search(r\"Time:\\s*([^\\n]+)\", sidebar_text)\n    distance_match = re.search(r\"Distance:\\s*([^\\n]+)\", sidebar_text)\n    travel_time_text = time_match.group(1).strip() if time_match else None\n    distance_text = distance_match.group(1).strip() if distance_match else None\n    results_panel_present = bool(travel_time_text or distance_text or \"Directions\" in sidebar_text)\n    if not results_panel_present:\n        raise RuntimeError(\"Directions results were not found\")\n\n    try:\n        origin_display = from_target.input_value(timeout=1000)\n    except Exception:\n        origin_display = origin_query\n    try:\n        destination_display = to_target.input_value(timeout=1000)\n    except Exception:\n        destination_display = destination_query\n\n    return {\n        \"origin_query\": origin_query,\n        \"destination_query\": destination_query,\n        \"travel_mode\": travel_mode,\n        \"origin_display\": origin_display,\n        \"destination_display\": destination_display,\n        \"sidebar_text\": sidebar_text,\n        \"travel_time_text\": travel_time_text,\n        \"distance_text\": distance_text,\n        \"results_panel_present\": results_panel_present,\n        \"final_url\": self.page.url,\n    }\n",
+            "owns": [
+              "Navigating to the site's /directions workflow",
+              "Filling origin and destination textboxes with caller-supplied place strings",
+              "Setting the travel mode using the site's semantic mode selector",
+              "Submitting the directions request through the site's Go control",
+              "Waiting for the directions results panel to render",
+              "Parsing displayed route summary text into a typed result including travel time and distance when shown",
+              "Hiding site-coupled engine option details behind a semantic travel_mode input"
+            ],
+            "does_not_own": [
+              "Choosing which origin and destination to compare",
+              "Ranking among multiple routes or destinations",
+              "Computing travel time independently of the site",
+              "Interpreting the result as minimum beyond what the site displays in the returned summary",
+              "Formatting the final answer for the user"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "origin_query": {
+                  "type": "string",
+                  "description": "Place/address text to enter into the site's From field"
+                },
+                "destination_query": {
+                  "type": "string",
+                  "description": "Place/address text to enter into the site's To field"
+                },
+                "travel_mode": {
+                  "type": "string",
+                  "enum": [
+                    "car",
+                    "walking"
+                  ],
+                  "description": "Semantic routing mode to request; internally mapped to site-specific controls"
+                }
+              },
+              "required": [
+                "origin_query",
+                "destination_query",
+                "travel_mode"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "origin_query": {
+                  "type": "string"
+                },
+                "destination_query": {
+                  "type": "string"
+                },
+                "travel_mode": {
+                  "type": "string",
+                  "enum": [
+                    "car",
+                    "walking"
+                  ]
+                },
+                "origin_display": {
+                  "type": "string",
+                  "description": "Resolved origin text present in the From field after submission when observable"
+                },
+                "destination_display": {
+                  "type": "string",
+                  "description": "Resolved destination text present in the To field after submission when observable"
+                },
+                "sidebar_text": {
+                  "type": "string",
+                  "description": "Directions sidebar/body summary text used as the parse source"
+                },
+                "travel_time_text": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "Displayed route duration string parsed from the results when present"
+                },
+                "distance_text": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "Displayed route distance string parsed from the results when present"
+                },
+                "results_panel_present": {
+                  "type": "boolean",
+                  "description": "Whether a route results panel or equivalent summary was observed"
+                },
+                "final_url": {
+                  "type": "string",
+                  "description": "Page URL after route submission"
+                }
+              },
+              "required": [
+                "origin_query",
+                "destination_query",
+                "travel_mode",
+                "origin_display",
+                "destination_display",
+                "sidebar_text",
+                "results_panel_present",
+                "final_url"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "typed route summary facts for one origin/destination pair and one semantic travel mode"
+            ],
+            "supported_patterns": [
+              "single route lookup by UI directions form",
+              "car route summary retrieval",
+              "walking route summary retrieval"
+            ],
+            "guarantees": {
+              "collection_scope": "single",
+              "completeness": "conditional",
+              "supports_absence_proof": false,
+              "configuration": {
+                "kind": "semantic_enum",
+                "supported_values": [
+                  "car",
+                  "walking"
+                ],
+                "coupled_site_parameters_hidden": true
+              }
+            },
+            "acceptance_checks": [
+              "After submission, a directions results view is observed and results_panel_present is true.",
+              "When the site shows a Time field, travel_time_text matches the displayed route summary value.",
+              "When the site shows a Distance field, distance_text matches the displayed route summary value.",
+              "The returned final_url is non-empty and corresponds to the displayed route state.",
+              "If no directions results panel is found, the method fails instead of fabricating route data."
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task155_t36",
+                "template_id": "36",
+                "code_quote": "await page.goto(f\"{START_URL}/directions\" ...)\nawait page.get_by_role(\"textbox\", name=\"From\").fill(\"Animal Rescue League of Pittsburgh\")\nawait page.get_by_role(\"textbox\", name=\"To\").fill(\"Schenley park\")\n...\nawait mode.select_option(label=\"Car (OSRM)\")\n...\nawait page.get_by_role(\"button\", name=\"Go\").click()\n...\nawait page.get_by_role(\"heading\", name=\"Directions\").wait_for()\nawait page.get_by_text(\"Time:\").first.wait_for()",
+                "explanation": "Demonstrates the core car directions workflow and parsing of displayed travel time from the directions results."
+              },
+              {
+                "workflow_id": "task52_t68",
+                "template_id": "68",
+                "code_quote": "await page.get_by_role(\"textbox\", name=\"From\").fill(\"Carnegie Mellon University\")\nawait page.get_by_role(\"textbox\", name=\"To\").fill(\"Starbucks Craig Street Pittsburgh\")\nawait page.get_by_role(\"combobox\").select_option(label=\"Foot (OSRM)\")\n...\nsidebar_text = await page.locator(\"#sidebar_content\").inner_text()\nm = re.search(r\"Time:\\\\s*([0-9:]+)\", sidebar_text)",
+                "explanation": "Adds walking-mode support and sidebar-based parsing while preserving the same core capability identity of route summary retrieval."
+              },
+              {
+                "workflow_id": "task87_t64",
+                "template_id": "64",
+                "code_quote": "resp = await page.goto(f\"{START_URL}/directions\", wait_until=\"domcontentloaded\")\n...\nawait from_box.first.fill(FROM_FULL)\nawait to_box.first.fill(TO_FULL)\nawait page.get_by_role(\"button\", name=\"Go\").click()\n...\nsummary_text = await summary_locator.first.inner_text()\nevidence[\"final_url\"] = page.url",
+                "explanation": "Confirms the same directions acquisition can expose summary text and final route URL, with fallback DOM mechanics kept internal."
+              },
+              {
+                "workflow_id": "task101_t66",
+                "template_id": "66",
+                "code_quote": "await page.goto(base + '/directions' ...);\nawait page.locator('#route_from').nth(1).fill('University of Pittsburgh, 4200 Fifth Avenue, Pittsburgh, PA');\nawait page.locator('#route_to').nth(1).fill('In-n-Out Trail, Guilford Township, PA');\nawait page.locator('select.routing_engines').nth(1).selectOption('2');\nawait page.locator('.routing_go').nth(1).click();\n...\nconst directionsText = await sidebarText(page);",
+                "explanation": "Confirms an alternate but site-local directions DOM path for the same walking route acquisition, so the primitive supports the evidenced control variants while keeping the public contract semantic."
+              }
+            ]
+          }
+        }
+      ],
+      "workflow_attribution": [
+        {
+          "workflow_id": "task87_t64",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            1
+          ]
+        },
+        {
+          "workflow_id": "task101_t66",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0,
+            1
+          ]
+        },
+        {
+          "workflow_id": "task155_t36",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            1
+          ]
+        },
+        {
+          "workflow_id": "task52_t68",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            1
+          ]
+        }
+      ],
+      "candidate_attribution": [
+        {
+          "candidate_id": "task87_t64::search_places_by_text_query",
+          "decision": "REJECT",
+          "target_id": null,
+          "reason": "Boundary/evidence defect: the extraction requires returning typed result records from result links, but this batch's validated evidence for reusable search acquisition is sidebar-based and the candidate's proposed typed link-record schema was already rejected as overbroad and lossy."
+        },
+        {
+          "candidate_id": "task87_t64::get_driving_directions_summary",
+          "decision": "ADD",
+          "operation_index": 1
+        },
+        {
+          "candidate_id": "task101_t66::search_places_by_query",
+          "decision": "ADD",
+          "operation_index": 0
+        },
+        {
+          "candidate_id": "task101_t66::search_places_across_queries_deduplicated",
+          "decision": "REJECT",
+          "target_id": null,
+          "reason": "Evidence defect: the workflow shows repeated independent queries but does not demonstrate combining parsed records with stable-ID deduplication; explicit deduplication/provenance fields would be invented beyond the supplied code."
+        },
+        {
+          "candidate_id": "task101_t66::get_walking_route_between_places",
+          "decision": "ADD",
+          "operation_index": 1
+        },
+        {
+          "candidate_id": "task155_t36::get_route_directions_summary",
+          "decision": "ADD",
+          "operation_index": 1
+        },
+        {
+          "candidate_id": "task52_t68::get_route_summary_from_directions_page",
+          "decision": "ADD",
+          "operation_index": 1
+        }
+      ]
+    },
+    "quality_verdicts": null,
+    "errors": [
+      "operations[0]: source_evidence may cite each workflow at most once"
+    ]
+  },
+  {
+    "attempt": 4,
+    "proposal": {
+      "operations": [
+        {
+          "op": "ADD",
+          "replacement": {
+            "primitive_id": "map/search_places_in_sidebar",
+            "method": "search_places_in_sidebar",
+            "capability": "search the map site's place index by a caller-supplied text query and return typed place result records parsed from the search results sidebar",
+            "method_code": "def search_places_in_sidebar(self, query):\n    import urllib.parse\n    import re\n    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError\n\n    if not isinstance(query, str) or not query.strip():\n        raise ValueError(\"query must be a non-empty string\")\n\n    query = query.strip()\n    encoded = urllib.parse.quote(query)\n    self.page.goto(f\"/search?query={encoded}\", wait_until=\"domcontentloaded\")\n    try:\n        self.page.wait_for_load_state(\"networkidle\", timeout=10000)\n    except PlaywrightTimeoutError:\n        pass\n\n    sidebar = self.page.locator(\"#sidebar_content\")\n    try:\n        sidebar_text = sidebar.inner_text(timeout=5000)\n    except Exception as e:\n        raise RuntimeError(\"search results sidebar was not available\") from e\n\n    lines = [line.strip() for line in sidebar_text.splitlines() if line.strip()]\n    records = []\n    current = None\n\n    def flush_current():\n        nonlocal current\n        if current and current.get(\"name\"):\n            current[\"result_rank\"] = len(records) + 1\n            records.append(current)\n        current = None\n\n    for line in lines:\n        if line.lower() in {\"search\", \"directions\", \"export\", \"share\", \"edit\"}:\n            continue\n        if line.startswith(\"http://\") or line.startswith(\"https://\"):\n            continue\n        if re.fullmatch(r\"\\d+(?:\\.\\d+)?\\s*(?:km|m|mi|ft)\", line, flags=re.IGNORECASE):\n            if current is not None and not current.get(\"detail_text\"):\n                current[\"detail_text\"] = line\n            continue\n        if current is None:\n            current = {\n                \"name\": line,\n                \"address_or_location\": None,\n                \"detail_text\": None,\n            }\n        elif current.get(\"address_or_location\") is None:\n            current[\"address_or_location\"] = line\n        else:\n            if current.get(\"detail_text\"):\n                current[\"detail_text\"] += \" | \" + line\n            else:\n                current[\"detail_text\"] = line\n\n    flush_current()\n\n    return {\n        \"query\": query,\n        \"records\": records,\n        \"sidebar_text\": sidebar_text,\n    }\n",
+            "owns": [
+              "Constructing the site search URL as /search?query=<encoded query>",
+              "Loading the search results page on this map deployment",
+              "Reading and parsing #sidebar_content search results text into typed place-result records",
+              "Returning site-exposed place identity fields and location/display fields actually visible in the parsed sidebar result slice",
+              "Preserving result order as result_rank"
+            ],
+            "does_not_own": [
+              "Choosing which queries to issue for a task",
+              "Deciding whether returned places satisfy a business/category constraint such as being a restaurant chain location",
+              "Ranking across multiple separate queries",
+              "Computing nearest distance client-side",
+              "Proving site-wide absence of matching places from one query result slice"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "query": {
+                  "type": "string",
+                  "description": "Free-text search query to submit to the site's /search page"
+                }
+              },
+              "required": [
+                "query"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "query": {
+                  "type": "string"
+                },
+                "records": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "address_or_location": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "detail_text": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "result_rank": {
+                        "type": "integer",
+                        "minimum": 1
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "result_rank"
+                    ]
+                  }
+                },
+                "sidebar_text": {
+                  "type": "string",
+                  "description": "Raw sidebar text from the loaded search results view used as parse source"
+                }
+              },
+              "required": [
+                "query",
+                "records",
+                "sidebar_text"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "typed place records from one query-scoped sidebar search result view"
+            ],
+            "supported_patterns": [
+              "single-query place search by /search URL",
+              "query-scoped acquisition of displayed sidebar place candidates"
+            ],
+            "guarantees": {
+              "collection_scope": "query",
+              "completeness": "partial",
+              "supports_absence_proof": false,
+              "configuration": {
+                "kind": "none",
+                "supported_values": [],
+                "coupled_site_parameters_hidden": true
+              }
+            },
+            "acceptance_checks": [
+              "Given a non-empty query, the method navigates to a /search?query= URL and returns the loaded sidebar_text.",
+              "Returned records are parsed only from #sidebar_content rather than arbitrary page links.",
+              "Each returned record preserves displayed order as result_rank and contains a non-empty name parsed from the sidebar.",
+              "An empty records array is allowed when the sidebar loads but yields no parseable place records for that query."
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task87_t64",
+                "template_id": "64",
+                "code_quote": "await page.get_by_role(\"textbox\", name=\"Search\").fill(query)\nawait page.get_by_role(\"button\", name=\"Go\").click()\nawait page.wait_for_load_state(\"networkidle\")",
+                "explanation": "Shows the reusable site search interaction through the Search textbox and Go button with a caller-supplied query; the primitive narrows output parsing to the evidenced search-results view rather than promising arbitrary link scraping."
+              },
+              {
+                "workflow_id": "task101_t66",
+                "template_id": "66",
+                "code_quote": "await page.goto(base + '/search?query=' + encodeURIComponent('University of Pittsburgh'), { waitUntil: 'domcontentloaded', timeout: 60000 });\nconst upittText = await sidebarText(page);",
+                "explanation": "Directly demonstrates query-scoped navigation to the site's /search endpoint and acquisition from #sidebar_content, which supports the sidebar-based typed parsing contract."
+              }
+            ]
+          }
+        },
+        {
+          "op": "ADD",
+          "replacement": {
+            "primitive_id": "map/get_route_summary",
+            "method": "get_route_summary",
+            "capability": "retrieve route summary details from the map site's directions page for two place inputs and a selected travel mode",
+            "method_code": "def get_route_summary(self, origin_query, destination_query, travel_mode):\n    import re\n    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError\n\n    if not isinstance(origin_query, str) or not origin_query.strip():\n        raise ValueError(\"origin_query must be a non-empty string\")\n    if not isinstance(destination_query, str) or not destination_query.strip():\n        raise ValueError(\"destination_query must be a non-empty string\")\n    if travel_mode not in {\"car\", \"walking\"}:\n        raise ValueError(\"travel_mode must be one of: car, walking\")\n\n    origin_query = origin_query.strip()\n    destination_query = destination_query.strip()\n\n    self.page.goto(\"/directions\", wait_until=\"domcontentloaded\")\n\n    from_box = self.page.get_by_role(\"textbox\", name=\"From\")\n    to_box = self.page.get_by_role(\"textbox\", name=\"To\")\n    if from_box.count() == 0 or to_box.count() == 0:\n        route_from = self.page.locator(\"#route_from\")\n        route_to = self.page.locator(\"#route_to\")\n        if route_from.count() == 0 or route_to.count() == 0:\n            raise RuntimeError(\"Directions input boxes were not found\")\n        from_target = route_from.nth(1 if route_from.count() > 1 else 0)\n        to_target = route_to.nth(1 if route_to.count() > 1 else 0)\n    else:\n        from_target = from_box.first\n        to_target = to_box.first\n\n    from_target.fill(origin_query)\n    to_target.fill(destination_query)\n\n    mode_map = {\"car\": \"Car (OSRM)\", \"walking\": \"Foot (OSRM)\"}\n    desired_label = mode_map[travel_mode]\n\n    selected = False\n    combobox = self.page.get_by_role(\"combobox\")\n    if combobox.count() > 0:\n        try:\n            combobox.first.select_option(label=desired_label)\n            selected = True\n        except Exception:\n            selected = False\n\n    if not selected:\n        selects = self.page.locator(\"select.routing_engines\")\n        if selects.count() > 0:\n            target = selects.nth(1 if selects.count() > 1 else 0)\n            try:\n                if travel_mode == \"walking\":\n                    target.select_option(\"2\")\n                else:\n                    target.select_option(label=desired_label)\n                selected = True\n            except Exception:\n                try:\n                    target.select_option(label=desired_label)\n                    selected = True\n                except Exception:\n                    selected = False\n\n    if not selected:\n        raise RuntimeError(\"Directions travel mode control could not be set\")\n\n    go_button = self.page.get_by_role(\"button\", name=\"Go\")\n    if go_button.count() > 0:\n        go_button.first.click()\n    else:\n        routing_go = self.page.locator(\".routing_go\")\n        if routing_go.count() == 0:\n            raise RuntimeError(\"Directions submit control was not found\")\n        routing_go.nth(1 if routing_go.count() > 1 else 0).click()\n\n    try:\n        self.page.wait_for_load_state(\"networkidle\", timeout=15000)\n    except PlaywrightTimeoutError:\n        pass\n\n    try:\n        self.page.get_by_role(\"heading\", name=\"Directions\").wait_for(timeout=5000)\n    except Exception:\n        pass\n\n    sidebar_text = None\n    try:\n        sidebar_text = self.page.locator(\"#sidebar_content\").inner_text(timeout=5000)\n    except Exception:\n        try:\n            sidebar_text = self.page.locator(\"body\").inner_text(timeout=5000)\n        except Exception as e:\n            raise RuntimeError(\"Directions results text was not available\") from e\n\n    time_match = re.search(r\"Time:\\s*([^\\n]+)\", sidebar_text)\n    distance_match = re.search(r\"Distance:\\s*([^\\n]+)\", sidebar_text)\n    travel_time_text = time_match.group(1).strip() if time_match else None\n    distance_text = distance_match.group(1).strip() if distance_match else None\n    results_panel_present = bool(travel_time_text or distance_text or \"Directions\" in sidebar_text)\n    if not results_panel_present:\n        raise RuntimeError(\"Directions results were not found\")\n\n    try:\n        origin_display = from_target.input_value(timeout=1000)\n    except Exception:\n        origin_display = origin_query\n    try:\n        destination_display = to_target.input_value(timeout=1000)\n    except Exception:\n        destination_display = destination_query\n\n    return {\n        \"origin_query\": origin_query,\n        \"destination_query\": destination_query,\n        \"travel_mode\": travel_mode,\n        \"origin_display\": origin_display,\n        \"destination_display\": destination_display,\n        \"sidebar_text\": sidebar_text,\n        \"travel_time_text\": travel_time_text,\n        \"distance_text\": distance_text,\n        \"results_panel_present\": results_panel_present,\n        \"final_url\": self.page.url,\n    }\n",
+            "owns": [
+              "Navigating to the site's /directions workflow",
+              "Filling origin and destination textboxes with caller-supplied place strings",
+              "Setting the travel mode using the site's semantic mode selector",
+              "Submitting the directions request through the site's Go control",
+              "Waiting for the directions results panel to render",
+              "Parsing displayed route summary text into a typed result including travel time and distance when shown",
+              "Hiding site-coupled engine option details behind a semantic travel_mode input"
+            ],
+            "does_not_own": [
+              "Choosing which origin and destination to compare",
+              "Ranking among multiple routes or destinations",
+              "Computing travel time independently of the site",
+              "Interpreting the result as minimum beyond what the site displays in the returned summary",
+              "Formatting the final answer for the user"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "origin_query": {
+                  "type": "string",
+                  "description": "Place/address text to enter into the site's From field"
+                },
+                "destination_query": {
+                  "type": "string",
+                  "description": "Place/address text to enter into the site's To field"
+                },
+                "travel_mode": {
+                  "type": "string",
+                  "enum": [
+                    "car",
+                    "walking"
+                  ],
+                  "description": "Semantic routing mode to request; internally mapped to site-specific controls"
+                }
+              },
+              "required": [
+                "origin_query",
+                "destination_query",
+                "travel_mode"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "origin_query": {
+                  "type": "string"
+                },
+                "destination_query": {
+                  "type": "string"
+                },
+                "travel_mode": {
+                  "type": "string",
+                  "enum": [
+                    "car",
+                    "walking"
+                  ]
+                },
+                "origin_display": {
+                  "type": "string",
+                  "description": "Resolved origin text present in the From field after submission when observable"
+                },
+                "destination_display": {
+                  "type": "string",
+                  "description": "Resolved destination text present in the To field after submission when observable"
+                },
+                "sidebar_text": {
+                  "type": "string",
+                  "description": "Directions sidebar/body summary text used as the parse source"
+                },
+                "travel_time_text": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "Displayed route duration string parsed from the results when present"
+                },
+                "distance_text": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "Displayed route distance string parsed from the results when present"
+                },
+                "results_panel_present": {
+                  "type": "boolean",
+                  "description": "Whether a route results panel or equivalent summary was observed"
+                },
+                "final_url": {
+                  "type": "string",
+                  "description": "Page URL after route submission"
+                }
+              },
+              "required": [
+                "origin_query",
+                "destination_query",
+                "travel_mode",
+                "origin_display",
+                "destination_display",
+                "sidebar_text",
+                "results_panel_present",
+                "final_url"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "typed route summary facts for one origin/destination pair and one semantic travel mode"
+            ],
+            "supported_patterns": [
+              "single route lookup by UI directions form",
+              "car route summary retrieval",
+              "walking route summary retrieval"
+            ],
+            "guarantees": {
+              "collection_scope": "single",
+              "completeness": "conditional",
+              "supports_absence_proof": false,
+              "configuration": {
+                "kind": "semantic_enum",
+                "supported_values": [
+                  "car",
+                  "walking"
+                ],
+                "coupled_site_parameters_hidden": true
+              }
+            },
+            "acceptance_checks": [
+              "After submission, a directions results view is observed and results_panel_present is true.",
+              "When the site shows a Time field, travel_time_text matches the displayed route summary value.",
+              "When the site shows a Distance field, distance_text matches the displayed route summary value.",
+              "The returned final_url is non-empty and corresponds to the displayed route state.",
+              "If no directions results panel is found, the method fails instead of fabricating route data."
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task87_t64",
+                "template_id": "64",
+                "code_quote": "resp = await page.goto(f\"{START_URL}/directions\", wait_until=\"domcontentloaded\")\nfrom_box = page.get_by_role(\"textbox\", name=\"From\")\nto_box = page.get_by_role(\"textbox\", name=\"To\")\nawait from_box.first.fill(FROM_FULL)\nawait to_box.first.fill(TO_FULL)\nawait page.get_by_role(\"button\", name=\"Go\").click()\nsummary_text = await summary_locator.first.inner_text()\nevidence[\"final_url\"] = page.url",
+                "explanation": "Demonstrates the core directions acquisition flow, extraction of displayed summary text, and capture of the final route URL for a driving route."
+              },
+              {
+                "workflow_id": "task101_t66",
+                "template_id": "66",
+                "code_quote": "await page.goto(base + '/directions' ...);\nawait page.locator('#route_from').nth(1).fill('University of Pittsburgh, 4200 Fifth Avenue, Pittsburgh, PA');\nawait page.locator('#route_to').nth(1).fill('In-n-Out Trail, Guilford Township, PA');\nawait page.locator('select.routing_engines').nth(1).selectOption('2');\nawait page.locator('.routing_go').nth(1).click();\nconst directionsText = await sidebarText(page);",
+                "explanation": "Confirms an alternate DOM path for the same site-local directions workflow and the walking-mode mapping hidden behind a semantic travel_mode input."
+              },
+              {
+                "workflow_id": "task155_t36",
+                "template_id": "36",
+                "code_quote": "await page.goto(f\"{START_URL}/directions\" ...)\nawait page.get_by_role(\"textbox\", name=\"From\").fill(\"Animal Rescue League of Pittsburgh\")\nawait page.get_by_role(\"textbox\", name=\"To\").fill(\"Schenley park\")\nawait mode.select_option(label=\"Car (OSRM)\")\nawait page.get_by_role(\"button\", name=\"Go\").click()\nawait page.get_by_role(\"heading\", name=\"Directions\").wait_for()\nawait page.get_by_text(\"Time:\").first.wait_for()\nm = re.search(r\"Time:\\s*([0-9:]+)\", body_text)",
+                "explanation": "Adds evidence for parsing displayed travel time from the directions results after selecting car mode through the site's semantic control."
+              },
+              {
+                "workflow_id": "task52_t68",
+                "template_id": "68",
+                "code_quote": "await page.get_by_role(\"textbox\", name=\"From\").fill(\"Carnegie Mellon University\")\nawait page.get_by_role(\"textbox\", name=\"To\").fill(\"Starbucks Craig Street Pittsburgh\")\nawait page.get_by_role(\"combobox\").select_option(label=\"Foot (OSRM)\")\nawait page.get_by_role(\"button\", name=\"Go\").click()\nsidebar_text = await page.locator(\"#sidebar_content\").inner_text()\nm = re.search(r\"Time:\\s*([0-9:]+)\", sidebar_text)",
+                "explanation": "Adds walking-mode support and sidebar-based parsing while preserving the same route-summary acquisition capability."
+              }
+            ]
+          }
+        }
+      ],
+      "workflow_attribution": [
+        {
+          "workflow_id": "task87_t64",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0,
+            1
+          ]
+        },
+        {
+          "workflow_id": "task101_t66",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0,
+            1
+          ]
+        },
+        {
+          "workflow_id": "task155_t36",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            1
+          ]
+        },
+        {
+          "workflow_id": "task52_t68",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            1
+          ]
+        }
+      ],
+      "candidate_attribution": [
+        {
+          "candidate_id": "task87_t64::search_places_by_text_query",
+          "decision": "ADD",
+          "operation_index": 0
+        },
+        {
+          "candidate_id": "task87_t64::get_driving_directions_summary",
+          "decision": "ADD",
+          "operation_index": 1
+        },
+        {
+          "candidate_id": "task101_t66::search_places_by_query",
+          "decision": "ADD",
+          "operation_index": 0
+        },
+        {
+          "candidate_id": "task101_t66::search_places_across_queries_deduplicated",
+          "decision": "REJECT",
+          "target_id": null,
+          "reason": "Evidence defect: the workflow shows repeated independent queries but does not demonstrate combining parsed records with stable-ID deduplication or query-provenance output; adding deduplicated multi-query aggregation would invent unsupported behavior beyond the supplied code."
+        },
+        {
+          "candidate_id": "task101_t66::get_walking_route_between_places",
+          "decision": "ADD",
+          "operation_index": 1
+        },
+        {
+          "candidate_id": "task155_t36::get_route_directions_summary",
+          "decision": "ADD",
+          "operation_index": 1
+        },
+        {
+          "candidate_id": "task52_t68::get_route_summary_from_directions_page",
+          "decision": "ADD",
+          "operation_index": 1
+        }
+      ]
+    },
+    "quality_verdicts": {
+      "verdicts": [
+        {
+          "operation_index": 0,
+          "verdict": "PASS",
+          "reason": "Source evidence directly supports a query-scoped site search on /search with caller-supplied text and acquisition from #sidebar_content. The method owns site-specific navigation and parsing into typed records, not task-specific filtering or ranking across queries. Output is typed and valid empty records are distinguishable from failure because missing sidebar raises while loaded-but-unparseable sidebar returns an empty array. owns/does_not_own and guarantees are consistent with partial query-slice acquisition."
+        },
+        {
+          "operation_index": 1,
+          "verdict": "PASS",
+          "reason": "Source evidence supports the /directions workflow, caller-supplied origin/destination inputs, semantic travel-mode mapping for car and walking, Go submission, route-summary extraction from sidebar/body text, and final URL capture. The method hides coupled site controls behind a semantic enum with internal mappings for each supported value, returns typed output, and fails when no results panel is found rather than fabricating data. Scope and does_not_own remain site acquisition/parsing rather than task decision-making."
+        }
+      ],
+      "rejection_verdicts": [
+        {
+          "candidate_id": "task101_t66::search_places_across_queries_deduplicated",
+          "verdict": "PASS",
+          "reason": "Rejecting this candidate is correct because the evidence shows repeated independent searches but does not directly support a reusable core that combines results with stable-ID deduplication and matched-query provenance. Removing the invented merge/dedup logic leaves the already-retained reusable site primitive: single-query search acquisition/parsing. The rejected candidate's added behavior is unsupported aggregation beyond the source workflow."
+        }
+      ]
+    },
+    "errors": []
+  }
+]

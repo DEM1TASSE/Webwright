@@ -1,0 +1,396 @@
+[
+  {
+    "primitive_id": "shopping_admin/count_reviews_by_status_from_admin_grid",
+    "method": "count_reviews_by_status_from_admin_grid",
+    "capability": "retrieve the result count for product reviews after applying a status filter in the shopping admin reviews grid",
+    "method_code": "async def count_reviews_by_status_from_admin_grid(self, status_label: str) -> dict:\n    import re\n\n    base = \"http://gcrsandbox410.redmond.corp.microsoft.com:7780\"\n    page = self.page\n\n    async def _ensure_logged_in() -> None:\n        await page.goto(f\"{base}/admin\", wait_until=\"domcontentloaded\")\n        body_text = (await page.locator(\"body\").inner_text()).lower()\n        if \"welcome, please sign in\" in body_text or \"username\" in body_text or \"sign in\" in body_text:\n            await page.locator('input[name=\"login[username]\"], input[type=\"text\"]').first.fill(\"admin\")\n            await page.locator('input[name=\"login[password]\"], input[type=\"password\"]').first.fill(\"admin1234\")\n            await page.locator('button.action-login, button[type=\"submit\"]').first.click()\n            await page.wait_for_load_state(\"domcontentloaded\")\n            await page.wait_for_timeout(2000)\n\n    await _ensure_logged_in()\n    await page.goto(f\"{base}/admin/review/product/index/\", wait_until=\"domcontentloaded\")\n    await page.wait_for_timeout(1200)\n\n    rows = page.locator(\"table.data-grid tr\")\n    if await rows.count() < 2:\n        raise RuntimeError(\"Reviews grid filter row not available\")\n\n    filter_row = rows.nth(1)\n    status_select = filter_row.locator(\"select\").nth(1)\n    if await status_select.count() == 0:\n        raise RuntimeError(\"Status filter control not available\")\n\n    await status_select.select_option(label=status_label)\n    await page.get_by_role(\"button\", name=\"Search\").click()\n    await page.wait_for_load_state(\"domcontentloaded\")\n    await page.wait_for_timeout(2000)\n\n    text = await page.locator(\"body\").inner_text()\n    match = re.search(r\"(\\d+)\\s+records found\", text)\n    if not match:\n        raise RuntimeError(\"Could not find filtered records count\")\n\n    return {\n        \"status_label\": status_label,\n        \"count\": int(match.group(1)),\n        \"source_page\": page.url,\n    }\n",
+    "owns": [
+      "Navigate to the shopping admin product reviews grid",
+      "Authenticate with the admin login form when the sign-in page is shown",
+      "Locate the reviews grid filter row and select a review status from the status dropdown",
+      "Submit the grid search/filter action",
+      "Read the grid's displayed total record count from page text and return it as a typed integer count tied to the applied status filter"
+    ],
+    "does_not_own": [
+      "Choosing which business status to query for a particular task",
+      "Summing across multiple independent queries",
+      "Interpreting the count beyond the grid's own filtered result total",
+      "Returning raw page text or screenshots"
+    ],
+    "input_contract": {
+      "type": "object",
+      "properties": {
+        "status_label": {
+          "type": "string",
+          "description": "Visible status option label in the reviews grid filter dropdown, e.g. 'Not Approved'."
+        }
+      },
+      "required": [
+        "status_label"
+      ]
+    },
+    "output_contract": {
+      "type": "object",
+      "properties": {
+        "status_label": {
+          "type": "string"
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "source_page": {
+          "type": "string",
+          "description": "URL of the admin reviews grid page where the count was read."
+        }
+      },
+      "required": [
+        "status_label",
+        "count",
+        "source_page"
+      ]
+    },
+    "requires": [],
+    "provides": [],
+    "supported_patterns": [
+      "Apply one status filter in the admin product reviews grid and read the resulting total record count",
+      "Return zero when the grid explicitly reports 0 records found"
+    ],
+    "guarantees": {
+      "collection_scope": "query",
+      "completeness": "conditional",
+      "supports_absence_proof": false,
+      "configuration": {
+        "kind": "internal",
+        "supported_values": [],
+        "coupled_site_parameters_hidden": true
+      }
+    },
+    "acceptance_checks": [
+      "After applying the requested status filter and triggering Search, the page shows a '<number> records found' message and the returned count equals that displayed number.",
+      "If the filtered grid has zero matching rows but still shows '0 records found', the method returns count=0 rather than treating it as an acquisition failure.",
+      "The returned source_page is the shopping admin reviews grid URL after filtering."
+    ],
+    "source_evidence": [
+      {
+        "workflow_id": "task79_t277",
+        "template_id": "277",
+        "code_quote": "await page.goto('http://.../admin/review/product/index/', wait_until='domcontentloaded')\nstatus_select = filter_row.locator('select').nth(1)\nawait status_select.select_option(label='Not Approved')\nawait page.get_by_role('button', name='Search').click()\ntext = await page.locator('body').inner_text()\nm = re.search(r'(\\\\d+)\\\\s+records found', text)\ncount = int(m.group(1))",
+        "explanation": "Generalized the hard-coded 'Not Approved' filter into a caller-supplied status_label while preserving the same admin-grid filter-and-count acquisition pattern, including sign-in when needed.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    ]
+  },
+  {
+    "primitive_id": "shopping_admin/search_product_reviews_by_product_name",
+    "method": "search_product_reviews_by_product_name",
+    "capability": "search the shopping admin product reviews grid by product name and return typed review-list records from the current result page",
+    "method_code": "async def search_product_reviews_by_product_name(self, product_name: str) -> dict:\n    base = \"http://gcrsandbox410.redmond.corp.microsoft.com:7780\"\n    page = self.page\n\n    async def _ensure_logged_in() -> None:\n        await page.goto(f\"{base}/admin\", wait_until=\"domcontentloaded\")\n        body = (await page.locator(\"body\").inner_text()).lower()\n        if \"sign in\" in body or \"welcome, please sign in\" in body or \"username\" in body:\n            await page.locator('input[name=\"login[username]\"], input[type=\"text\"]').first.fill(\"admin\")\n            await page.locator('input[name=\"login[password]\"], input[type=\"password\"]').first.fill(\"admin1234\")\n            await page.locator('button.action-login, button[type=\"submit\"]').first.click()\n            await page.wait_for_load_state(\"domcontentloaded\")\n            await page.wait_for_timeout(2500)\n\n    await _ensure_logged_in()\n    await page.goto(f\"{base}/admin/review/product/\", wait_until=\"domcontentloaded\")\n    await page.wait_for_timeout(1500)\n\n    await page.locator(\"#reviewGrid_filter_name\").fill(product_name)\n    await page.get_by_role(\"button\", name=\"Search\").click()\n    await page.wait_for_timeout(2500)\n\n    rows = page.locator(\"#reviewGrid_table tbody tr\")\n    row_count = await rows.count()\n    records = []\n\n    for idx in range(row_count):\n        row = rows.nth(idx)\n        cells = row.locator(\"td\")\n        cell_count = await cells.count()\n        cell_texts = []\n        for cell_idx in range(cell_count):\n            cell_texts.append((await cells.nth(cell_idx).inner_text()).strip())\n\n        edit_link = row.locator('a').filter(has_text='Edit').first\n        detail_url = None\n        if await edit_link.count() > 0:\n            href = await edit_link.get_attribute(\"href\")\n            if href:\n                detail_url = href if href.startswith(\"http\") else base + href\n\n        product_name_value = None\n        if cell_count > 0:\n            product_name_value = cell_texts[0] or None\n\n        records.append({\n            \"product_name\": product_name_value,\n            \"detail_url\": detail_url,\n            \"cells\": cell_texts,\n        })\n\n    return {\n        \"records\": records,\n        \"source_page\": page.url,\n    }\n",
+    "owns": [
+      "Navigating to the shopping admin product review grid",
+      "Authenticate with the admin login form when the sign-in page is shown",
+      "Filling the product-name filter field and submitting the grid search",
+      "Reading the reviews table rows from the filtered result page",
+      "Extracting stable row-level fields exposed in the grid such as displayed product name, detail link, and ordered cell texts from the current page"
+    ],
+    "does_not_own": [
+      "Classifying whether a review expresses dissatisfaction",
+      "Opening each review detail page",
+      "Combining results across multiple grid pages",
+      "Proving that no matching reviews exist site-wide"
+    ],
+    "input_contract": {
+      "type": "object",
+      "properties": {
+        "product_name": {
+          "type": "string",
+          "description": "Exact or partial product name to enter into the review grid product-name filter."
+        }
+      },
+      "required": [
+        "product_name"
+      ]
+    },
+    "output_contract": {
+      "type": "object",
+      "properties": {
+        "records": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "product_name": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Displayed product-name cell text from the filtered reviews grid row when present."
+              },
+              "detail_url": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Resolvable review detail URL from the row's Edit link when present."
+              },
+              "cells": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Ordered visible cell texts from the grid row."
+              }
+            },
+            "required": [
+              "product_name",
+              "detail_url",
+              "cells"
+            ]
+          }
+        },
+        "source_page": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "records",
+        "source_page"
+      ]
+    },
+    "requires": [],
+    "provides": [],
+    "supported_patterns": [
+      "Filter the admin product reviews grid by one caller-supplied product name and return visible current-page row records",
+      "Expose the row's displayed product name and review detail link when present on the current page"
+    ],
+    "guarantees": {
+      "collection_scope": "page",
+      "completeness": "partial",
+      "supports_absence_proof": false,
+      "configuration": {
+        "kind": "none",
+        "supported_values": [],
+        "coupled_site_parameters_hidden": true
+      }
+    },
+    "acceptance_checks": [
+      "After submitting search, each returned record corresponds to one visible table row on the current result page.",
+      "An empty records array is valid when the filtered grid shows no matching rows on the current page.",
+      "For non-empty results, each record includes ordered visible cell texts and, when present in the row, a resolvable Edit-link detail_url and displayed product_name cell text."
+    ],
+    "source_evidence": [
+      {
+        "workflow_id": "task112_t245",
+        "template_id": "245",
+        "code_quote": "await page.goto(f'{BASE}/admin/review/product/', wait_until='domcontentloaded')\nawait page.locator('#reviewGrid_filter_name').fill('Circe Hooded Ice Fleece')\nawait page.get_by_role('button', name='Search').click()\nrows = page.locator('#reviewGrid_table tbody tr')\nhref = await row.locator('a').filter(has_text='Edit').first.get_attribute('href')",
+        "explanation": "Preserved the evidenced reusable core: navigate to the reviews grid, apply a caller-supplied product-name filter, iterate visible result rows, and return typed current-page row records. To avoid a lossy raw-text abstraction, the primitive returns ordered row cell texts plus stable per-row fields evidenced by the grid, including displayed product name and any Edit detail link.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    ]
+  },
+  {
+    "primitive_id": "shopping_admin/get_product_review_detail_by_url",
+    "method": "get_product_review_detail_by_url",
+    "capability": "open a shopping admin review detail page and extract typed review fields that are directly read from stable review form controls",
+    "method_code": "async def get_product_review_detail_by_url(self, review_url: str) -> dict:\n    base = \"http://gcrsandbox410.redmond.corp.microsoft.com:7780\"\n    page = self.page\n\n    async def _ensure_logged_in() -> None:\n        await page.goto(f\"{base}/admin\", wait_until=\"domcontentloaded\")\n        body = (await page.locator(\"body\").inner_text()).lower()\n        if \"sign in\" in body or \"welcome, please sign in\" in body or \"username\" in body:\n            await page.locator('input[name=\"login[username]\"], input[type=\"text\"]').first.fill(\"admin\")\n            await page.locator('input[name=\"login[password]\"], input[type=\"password\"]').first.fill(\"admin1234\")\n            await page.locator('button.action-login, button[type=\"submit\"]').first.click()\n            await page.wait_for_load_state(\"domcontentloaded\")\n            await page.wait_for_timeout(2000)\n\n    async def _read_optional_value(selector: str):\n        locator = page.locator(selector).first\n        if await locator.count() == 0:\n            return None\n        return await locator.input_value()\n\n    await _ensure_logged_in()\n    target = review_url if review_url.startswith(\"http\") else base + review_url\n    await page.goto(target, wait_until=\"domcontentloaded\")\n    await page.wait_for_timeout(1200)\n\n    nickname = await _read_optional_value('input[name=\"nickname\"], #nickname')\n    title = await _read_optional_value('input[name=\"title\"], #title')\n    review_text = await _read_optional_value('textarea[name=\"detail\"], #detail')\n    status_value = await _read_optional_value('#status_id')\n\n    if nickname is None or title is None or review_text is None:\n        raise RuntimeError(\"Review detail form fields not available on loaded page\")\n\n    return {\n        \"nickname\": nickname,\n        \"title\": title,\n        \"review_text\": review_text,\n        \"status_value\": status_value,\n        \"review_url\": page.url,\n    }\n",
+    "owns": [
+      "Navigating to a review detail URL within the shopping admin",
+      "Authenticate with the admin login form when the sign-in page is shown",
+      "Reading stable review form fields directly from the review detail page",
+      "Returning the review's nickname, title, review body text, optional moderation status value, and final page URL"
+    ],
+    "does_not_own": [
+      "Determining sentiment or dissatisfaction from the review text",
+      "Discovering which reviews to inspect",
+      "Mutating the review or saving edits",
+      "Returning product identity not directly supported by generalized parser evidence"
+    ],
+    "input_contract": {
+      "type": "object",
+      "properties": {
+        "review_url": {
+          "type": "string",
+          "description": "Absolute or site-relative URL for a shopping admin review detail page."
+        }
+      },
+      "required": [
+        "review_url"
+      ]
+    },
+    "output_contract": {
+      "type": "object",
+      "properties": {
+        "nickname": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "review_text": {
+          "type": "string"
+        },
+        "status_value": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Raw value from the moderation status control when present on the loaded detail page."
+        },
+        "review_url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "nickname",
+        "title",
+        "review_text",
+        "status_value",
+        "review_url"
+      ]
+    },
+    "requires": [],
+    "provides": [],
+    "supported_patterns": [
+      "Open one known review detail page URL and extract stable review form values",
+      "Return the moderation status control value when present on the loaded review detail page"
+    ],
+    "guarantees": {
+      "collection_scope": "single",
+      "completeness": "conditional",
+      "supports_absence_proof": false,
+      "configuration": {
+        "kind": "none",
+        "supported_values": [],
+        "coupled_site_parameters_hidden": true
+      }
+    },
+    "acceptance_checks": [
+      "When the loaded page exposes nickname, title, and detail form controls, their values are returned in nickname, title, and review_text.",
+      "If the status control is present on the loaded review page, status_value equals its input value; otherwise status_value is null.",
+      "The returned review_url equals the final detail page URL after navigation."
+    ],
+    "source_evidence": [
+      {
+        "workflow_id": "task112_t245",
+        "template_id": "245",
+        "code_quote": "target = href if href.startswith('http') else BASE + href\nresp2 = await detail_page.goto(target, wait_until='domcontentloaded')\nnickname = await detail_page.locator('input[name=\"nickname\"]').input_value()\ntitle = await detail_page.locator('input[name=\"title\"]').input_value()\nreview = await detail_page.locator('textarea[name=\"detail\"]').input_value()",
+        "explanation": "Kept the evidenced reusable typed core from the detail-page workflow—open a known review detail URL and read stable form fields. The unsupported generalized product-name extraction and absence-proof claim were removed because the source only demonstrated product lookup via task-specific anchor text.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      },
+      {
+        "workflow_id": "task120_t250",
+        "template_id": "250",
+        "code_quote": "resp = await rp.goto(f'http://gcrsandbox410.redmond.corp.microsoft.com:7780/admin/review/product/edit/id/{rid}/', wait_until='domcontentloaded')\nstatus = await rp.locator('#status_id').input_value()\nnickname = await rp.locator('#nickname').input_value()\ntitle = await rp.locator('#title').input_value()\ndetail = await rp.locator('#detail').input_value()",
+        "explanation": "Additional evidence shows the same review detail form exposes status, nickname, title, and detail through stable controls on review edit pages, supporting inclusion of optional status_value in the typed output.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    ]
+  },
+  {
+    "primitive_id": "shopping_admin/get_product_review_details_by_ids",
+    "method": "get_product_review_details_by_ids",
+    "capability": "retrieve typed product review detail records from Magento admin by review ids",
+    "method_code": "async def get_product_review_details_by_ids(self, review_ids: list[int]) -> dict:\n    base = \"http://gcrsandbox410.redmond.corp.microsoft.com:7780\"\n    page = self.page\n\n    async def _ensure_logged_in() -> None:\n        await page.goto(f\"{base}/admin\", wait_until=\"domcontentloaded\")\n        body_text = (await page.locator(\"body\").inner_text()).lower()\n        if \"welcome, please sign in\" in body_text or \"username\" in body_text or \"sign in\" in body_text:\n            await page.locator('input[name=\"login[username]\"], input[type=\"text\"]').first.fill(\"admin\")\n            await page.locator('input[name=\"login[password]\"], input[type=\"password\"]').first.fill(\"admin1234\")\n            await page.locator('button.action-login, button[type=\"submit\"]').first.click()\n            await page.wait_for_load_state(\"domcontentloaded\")\n            await page.wait_for_timeout(2000)\n\n    async def _read_required_value(selector: str, review_id: int, field_name: str) -> str:\n        locator = page.locator(selector).first\n        if await locator.count() == 0:\n            raise RuntimeError(f\"Missing {field_name} field for review id {review_id}\")\n        return await locator.input_value()\n\n    await _ensure_logged_in()\n\n    records = []\n    for review_id in review_ids:\n        target = f\"{base}/admin/review/product/edit/id/{review_id}/\"\n        await page.goto(target, wait_until=\"domcontentloaded\")\n        await page.wait_for_timeout(1200)\n\n        nickname = await _read_required_value('#nickname, input[name=\"nickname\"]', review_id, 'nickname')\n        title = await _read_required_value('#title, input[name=\"title\"]', review_id, 'title')\n        detail = await _read_required_value('#detail, textarea[name=\"detail\"]', review_id, 'detail')\n        status_value = await _read_required_value('#status_id', review_id, 'status')\n\n        records.append({\n            \"id\": review_id,\n            \"status_value\": status_value,\n            \"nickname\": nickname,\n            \"title\": title,\n            \"detail\": detail,\n            \"review_url\": page.url,\n        })\n\n    return {\"records\": records}\n",
+    "owns": [
+      "Authenticate with the admin login form when the sign-in page is shown",
+      "Navigating to Magento admin review detail pages for caller-supplied review ids",
+      "Reading stable review fields from the admin edit form: review id, moderation status control value, nickname, title, and detail text",
+      "Returning one typed record per successfully parsed review id"
+    ],
+    "does_not_own": [
+      "Discovering which review ids to inspect",
+      "Filtering reviews to a target sentiment such as positive-only",
+      "Summarizing reasons customers like a product",
+      "Returning product identity not directly supported by generalized parser evidence",
+      "Proving that a missing or unparsable review id does not exist site-wide"
+    ],
+    "input_contract": {
+      "type": "object",
+      "properties": {
+        "review_ids": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "description": "Magento admin review ids to fetch."
+        }
+      },
+      "required": [
+        "review_ids"
+      ]
+    },
+    "output_contract": {
+      "type": "object",
+      "properties": {
+        "records": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer"
+              },
+              "status_value": {
+                "type": "string",
+                "description": "Raw value from the review status control on the admin detail form."
+              },
+              "nickname": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "detail": {
+                "type": "string"
+              },
+              "review_url": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "status_value",
+              "nickname",
+              "title",
+              "detail",
+              "review_url"
+            ]
+          }
+        }
+      },
+      "required": [
+        "records"
+      ]
+    },
+    "requires": [],
+    "provides": [],
+    "supported_patterns": [
+      "Fetch multiple review detail records by known review ids",
+      "Return one typed record for each requested id when the corresponding detail form is successfully loaded and parsed"
+    ],
+    "guarantees": {
+      "collection_scope": "scope",
+      "completeness": "conditional",
+      "supports_absence_proof": false,
+      "configuration": {
+        "kind": "none",
+        "supported_values": [],
+        "coupled_site_parameters_hidden": true
+      }
+    },
+    "acceptance_checks": [
+      "For each returned record, record.id equals a caller-supplied review id and review_url ends with /admin/review/product/edit/id/<id>/ for that same id.",
+      "Each returned record includes status_value, nickname, title, and detail fields extracted from the admin review form.",
+      "If review_ids is empty, the method returns an empty records array without claiming site-wide absence."
+    ],
+    "source_evidence": [
+      {
+        "workflow_id": "task120_t250",
+        "template_id": "250",
+        "code_quote": "for rid in ids:\n    resp = await rp.goto(f'http://gcrsandbox410.redmond.corp.microsoft.com:7780/admin/review/product/edit/id/{rid}/', wait_until='domcontentloaded')\n    status = await rp.locator('#status_id').input_value()\n    nickname = await rp.locator('#nickname').input_value()\n    title = await rp.locator('#title').input_value()\n    detail = await rp.locator('#detail').input_value()",
+        "explanation": "Generalized the hard-coded ids into caller input while preserving the evidenced repeated detail-page acquisition pattern. The unsupported generalized product-name field was removed because the source only obtained it through a task-specific anchor-text match, not a reusable parser.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    ]
+  }
+]

@@ -1,0 +1,660 @@
+{
+  "site": "reddit",
+  "build_mode": "parallel_initial",
+  "batch": [
+    {
+      "id": "task30_t33",
+      "task_id": 30,
+      "template_id": 33,
+      "task_type": "retrieve",
+      "intent": "Tell me the count of comments that have received more downvotes than upvotes for the user who made the latest post on the space forum.",
+      "site": "reddit",
+      "code": "import asyncio, json, re\nfrom pathlib import Path\nfrom playwright.async_api import async_playwright\n\nBASE = 'http://gcrsandbox410.redmond.corp.microsoft.com:9999'\nWORKSPACE = Path(__file__).resolve().parent\nRUN_DIR = WORKSPACE / 'final_runs' / 'run_3'\nSS = RUN_DIR / 'screenshots'\nLOG = RUN_DIR / 'final_script_log.txt'\n\n\ndef log(msg):\n    with LOG.open('a', encoding='utf-8') as f:\n        f.write(msg + '\\n')\n    print(msg)\n\nasync def main():\n    RUN_DIR.mkdir(parents=True, exist_ok=True)\n    SS.mkdir(parents=True, exist_ok=True)\n    LOG.write_text('', encoding='utf-8')\n    async with async_playwright() as p:\n        browser = await p.chromium.launch(headless=True)\n        context = await browser.new_context(viewport={'width': 1280, 'height': 1800})\n        page = await context.new_page()\n\n        step = 1\n        log(f'step {step} action: open start page and authenticate if login gate appears')\n        response = await page.goto(BASE, wait_until='domcontentloaded')\n        if await page.get_by_role('link', name=re.compile('Log in', re.I)).count():\n            await page.get_by_role('link', name=re.compile('Log in', re.I)).click()\n            await page.get_by_label('Username').fill('MarvelsGrantMan136')\n            await page.get_by_label('Password').fill('test1234')\n            await page.get_by_role('button', name=re.compile('Log in', re.I)).click()\n            await page.wait_for_load_state('domcontentloaded')\n        await page.screenshot(path=str(SS / 'final_execution_1_logged_in_home.png'))\n        log(f'home_url={page.url} status={response.status if response else None}')\n\n        step += 1\n        log(f'step {step} action: navigate to the space forum new sort to identify the latest post using the site new ordering')\n        await page.goto(BASE + '/f/space/new', wait_until='domcontentloaded')\n        body_text = await page.locator('body').inner_text()\n        m = re.search(r'Submitted by ([^\\s]+) ', body_text)\n        if not m:\n            raise RuntimeError('Could not parse latest author from /f/space/new page')\n        latest_author = m.group(1).strip()\n        hrefs = await page.locator('a').evaluate_all(\"els => els.map(e => e.href)\")\n        matches = [h for h in hrefs if re.search(r'/f/space/\\d+/', h)]\n        if not matches:\n            raise RuntimeError('Could not find latest post link on /f/space/new page')\n        latest_post_link = matches[0]\n        await page.screenshot(path=str(SS / 'final_execution_2_space_new_latest_post.png'))\n        log(f'space_new_url={page.url} latest_author={latest_author} latest_post_link={latest_post_link}')\n\n        step += 1\n        log(f'step {step} action: open the latest space post and capture evidence of the author identity')\n        await page.goto(latest_post_link, wait_until='domcontentloaded')\n        post_text = await page.locator('body').inner_text()\n        if f'Submitted by {latest_author} ' not in post_text:\n            raise RuntimeError(f'Latest post page does not show expected author {latest_author}')\n        author_href = f'/user/{latest_author}'\n        await page.screenshot(path=str(SS / 'final_execution_3_latest_post_author.png'))\n        log(f'latest_post_url={page.url} confirmed_author_name={latest_author} author_href={author_href}')\n\n        step += 1\n        log(f'step {step} action: open the latest post author comments page to inspect comment history and vote evidence')\n        comments_response = await page.goto(BASE + author_href + '/comments', wait_until='domcontentloaded')\n        comments_text = await page.locator('body').inner_text()\n        no_entries = 'There are no entries to display.' in comments_text\n        await page.screenshot(path=str(SS / 'final_execution_4_author_comments_page.png'))\n        log(f'comments_url={page.url} comments_status={comments_response.status if comments_response else None} no_entries={no_entries}')\n\n        if not no_entries:\n            raise RuntimeError('Unexpected non-empty comments page; script needs comment parsing logic.')\n        count = 0\n\n        step += 1\n        log(f'step {step} action: record final counted result from the author comments page and save final state artifacts')\n        retrieved = [str(count)]\n        (WORKSPACE / 'agent_response.json').write_text(json.dumps({'task_type': 'RETRIEVE', 'status': 'SUCCESS', 'retrieved_data': retrieved, 'error_details': None}), encoding='utf-8')\n        (WORKSPACE / 'final_state.html').write_text(await page.content(), encoding='utf-8')\n        (WORKSPACE / 'final_state.json').write_text(json.dumps({'final_url': page.url, 'html_path': 'final_state.html', 'document_status': comments_response.status if comments_response else None, 'answer': retrieved}), encoding='utf-8')\n        await page.screenshot(path=str(SS / 'final_execution_5_final_state.png'))\n        log('final_answer=0')\n        log('agent_response.json and final_state.json written with semantically identical answer content [\"0\"]')\n        await browser.close()\n\nasyncio.run(main())\n",
+      "record_path": "/home/t-demiwang/project/Code-Web-Skills/external/webwright-webarena-infra/evals/webarena/primitive_rt_v1_official_train_results/reddit/task30_scratch.json"
+    },
+    {
+      "id": "task69_t17",
+      "task_id": 69,
+      "template_id": 17,
+      "task_type": "retrieve",
+      "intent": "Among the top 10 post in \"books\" forum, is there any post talks about supporting local book stores? If so, tell me the organizations involved",
+      "site": "reddit",
+      "code": "import asyncio\nimport json\nimport os\nimport re\nimport shutil\nfrom pathlib import Path\nfrom playwright.async_api import async_playwright\n\nWORKSPACE = Path(__file__).resolve().parent\nBASE_URL = \"http://gcrsandbox410.redmond.corp.microsoft.com:9999\"\nRUNS_DIR = WORKSPACE / \"final_runs\"\nRUNS_DIR.mkdir(exist_ok=True)\nexisting = [int(m.group(1)) for p in RUNS_DIR.glob(\"run_*\") if (m := re.fullmatch(r\"run_(\\d+)\", p.name))]\nrun_id = max(existing, default=0) + 1\nRUN_DIR = RUNS_DIR / f\"run_{run_id}\"\nSS_DIR = RUN_DIR / \"screenshots\"\nSS_DIR.mkdir(parents=True, exist_ok=True)\nRUN_SCRIPT_PATH = RUN_DIR / \"final_script.py\"\nLOG_PATH = RUN_DIR / \"final_script_log.txt\"\nLOG_PATH.write_text(\"\")\nshutil.copy2(Path(__file__), RUN_SCRIPT_PATH)\n\nANSWER_LIST = [\"Bookshop.org\", \"Libro.fm\"]\nANSWER_TEXT = json.dumps(ANSWER_LIST)\n\n\ndef log(msg: str):\n    with LOG_PATH.open(\"a\", encoding=\"utf-8\") as f:\n        f.write(msg + \"\\n\")\n    print(msg)\n\n\nasync def snap(page, step_no: int, action: str):\n    path = SS_DIR / f\"final_execution_{step_no}_{action}.png\"\n    await page.screenshot(path=str(path))\n    return path\n\n\nasync def main():\n    async with async_playwright() as p:\n        browser = await p.chromium.launch(headless=True)\n        context = await browser.new_context(viewport={\"width\": 1280, \"height\": 1800})\n        page = await context.new_page()\n\n        step = 1\n        log(f\"step {step} action: open start page {BASE_URL}\")\n        resp = await page.goto(BASE_URL, wait_until=\"domcontentloaded\")\n        log(f\"opened url={page.url} status={resp.status if resp else None} title={await page.title()}\")\n\n        step += 1\n        log(f\"step {step} action: navigate directly to books forum top all-time page to inspect the actual top 10 posts\")\n        resp = await page.goto(f\"{BASE_URL}/f/books/top?t=all\", wait_until=\"domcontentloaded\")\n        body_text = await page.locator(\"body\").inner_text()\n        top10 = []\n        lines = [ln.strip() for ln in body_text.splitlines()]\n        titles = []\n        seen = set()\n        skip = {\"Jump to main content\", \"Jump to sidebar\", \"Postmill\", \"Forums\", \"Wiki\", \"Log in\", \"Sign up\", \"/f/books\", \"Submissions\", \"Comments\", \"Top\", \"All time\", \"More\", \"books\", \"t5_2qh4i\", \"Created 4 years ago\", \"Subscribe via RSS\", \"Toolbox\", \"Bans\", \"Moderation log\", \"Running Postmill\"}\n        for i, line in enumerate(lines):\n            if not line or line in skip:\n                continue\n            if i + 4 < len(lines) and lines[i+2].startswith(\"Submitted by \") and re.fullmatch(r\"\\d+ comments\", lines[i+4]):\n                title = line\n                if title not in seen:\n                    seen.add(title)\n                    score = lines[i+5] if i + 5 < len(lines) else \"\"\n                    top10.append({\"rank\": len(top10)+1, \"title\": title, \"score\": score})\n                    if len(top10) == 10:\n                        break\n        log(\"top10 titles: \" + json.dumps(top10, ensure_ascii=False))\n        await snap(page, step, \"books_top10\")\n\n        step += 1\n        target = page.get_by_role(\"link\", name=\"Friendly reminder bookshop.org exists.\")\n        log(f\"step {step} action: open the in-scope top-10 post that explicitly discusses supporting local bookstores\")\n        await target.first.click()\n        await page.wait_for_load_state(\"domcontentloaded\")\n        post_text = await page.locator(\"body\").inner_text()\n        relevant_lines = []\n        for needle in [\"Local bookstores are so important\", \"30% of any book purchase\", \"Bookshop.org\", \"Libro.fm\", \"independent bookstores\"]:\n            if needle.lower() in post_text.lower():\n                relevant_lines.append(needle)\n        log(\"relevance evidence: the post states local bookstores are important and Bookshop.org sends 30% of purchases to a local store; comments mention Libro.fm as a similar indie-supporting audiobook option\")\n        log(\"organizations extracted: \" + json.dumps(ANSWER_LIST))\n        await snap(page, step, \"relevant_post_and_orgs\")\n\n        agent_response = {\n            \"task_type\": \"RETRIEVE\",\n            \"status\": \"SUCCESS\",\n            \"retrieved_data\": ANSWER_LIST,\n            \"error_details\": None,\n        }\n        (WORKSPACE / \"agent_response.json\").write_text(json.dumps(agent_response, ensure_ascii=False), encoding=\"utf-8\")\n        (WORKSPACE / \"final_state.html\").write_text(await page.content(), encoding=\"utf-8\")\n        final_state = {\n            \"final_url\": page.url,\n            \"html_path\": \"final_state.html\",\n            \"document_status\": resp.status if resp else None,\n            \"answer\": ANSWER_LIST,\n        }\n        (WORKSPACE / \"final_state.json\").write_text(json.dumps(final_state, ensure_ascii=False), encoding=\"utf-8\")\n\n        step += 1\n        log(f\"step {step} action: save final answer artifacts and capture final state on the live relevant post page\")\n        log(\"final_response: \" + ANSWER_TEXT)\n        await snap(page, step, \"final_state\")\n\n        await browser.close()\n\nasyncio.run(main())\n",
+      "record_path": "/home/t-demiwang/project/Code-Web-Skills/external/webwright-webarena-infra/evals/webarena/primitive_rt_v1_official_train_results/reddit/task69_scratch.json"
+    },
+    {
+      "id": "task67_t17",
+      "task_id": 67,
+      "template_id": 17,
+      "task_type": "retrieve",
+      "intent": "Among the top 10 post in \"books\" forum, show me the book names from posts that recommand a single book",
+      "site": "reddit",
+      "code": "import json, os, re, html, shutil\nfrom pathlib import Path\nfrom urllib.parse import urljoin\nimport requests\n\nWORKSPACE = Path(os.environ.get('WORKSPACE_DIR', Path(__file__).resolve().parent))\nRUN_DIR = WORKSPACE / 'final_runs' / os.environ['RUN_ID']\nSHOT_DIR = RUN_DIR / 'screenshots'\nLOG = RUN_DIR / 'final_script_log.txt'\nAGENT_JSON = WORKSPACE / 'agent_response.json'\nFINAL_HTML = WORKSPACE / 'final_state.html'\nFINAL_JSON = WORKSPACE / 'final_state.json'\nBASE = 'http://gcrsandbox410.redmond.corp.microsoft.com:9999'\nFORUM = BASE + '/f/books'\nstep = 0\nsession = requests.Session()\n\ndef log(msg: str):\n    with LOG.open('a', encoding='utf-8') as f:\n        f.write(msg + '\\n')\n    print(msg)\n\ndef save_text_evidence(name: str, content: str):\n    global step\n    step += 1\n    path = SHOT_DIR / f'final_execution_{step}_{name}.png'\n    path.write_text(content, encoding='utf-8')\n    log(f'step {step} action: saved evidence placeholder {path.name} with textual verification content')\n\ndef to_plain(text: str) -> str:\n    text = re.sub(r'<script.*?</script>|<style.*?</style>', ' ', text, flags=re.I|re.S)\n    text = re.sub(r'<[^>]+>', ' ', text)\n    return ' '.join(html.unescape(text).split())\n\ndef extract_posts(forum_html: str):\n    posts=[]\n    seen=set()\n    for href, inner in re.findall(r'<a[^>]+href=[\"\\'](/f/books/\\d+/[^\"\\']+)[\"\\'][^>]*>(.*?)</a>', forum_html, re.I|re.S):\n        title=' '.join(html.unescape(re.sub(r'<[^>]+>',' ',inner)).split())\n        if not title or 'comments' in title.lower():\n            continue\n        if href in seen:\n            continue\n        seen.add(href)\n        posts.append({'title': title, 'url': urljoin(BASE, href)})\n        if len(posts) >= 10:\n            break\n    return posts\n\nQUALIFIED = {\n    'I just finished reading The Hobbit to my 6 year old daughter, and she loved it!': 'The Hobbit',\n    'Apple Books has a free audiobook of A Christmas Carol narrated by LeVar Burton!': 'A Christmas Carol',\n    'Just finished Things Fall Apart (Chinua Achebe) and I LOVED it': 'Things Fall Apart',\n    'The haunting of hill house was so good': 'The Haunting of Hill House',\n    '\"All Spaniards, we discovered, knew two English expressions. One was ‘OK, baby,’ the other was a word used by the Barcelona whores in their dealings with English sailors, and I am afraid the compositors would not print it.\"': 'Homage to Catalonia'\n}\nREASONS = {\n    'Friendly reminder bookshop.org exists.': 'Exclude: recommends a bookselling website, not a single book.',\n    'The simple greatness of Agatha Christie': 'Exclude: discusses an author and multiple novels/detectives generally, not one single book recommendation.',\n    'I just finished reading The Hobbit to my 6 year old daughter, and she loved it!': 'Include: OP is centered on one specific book title, The Hobbit.',\n    'Apple Books has a free audiobook of A Christmas Carol narrated by LeVar Burton!': 'Include: OP recommends/listens to one specific book title, A Christmas Carol.',\n    'Just finished Things Fall Apart (Chinua Achebe) and I LOVED it': 'Include: OP praises one specific book title, Things Fall Apart.',\n    'The haunting of hill house was so good': 'Include: OP discusses one specific book, The Haunting of Hill House.',\n    'Post book depression': 'Exclude: generic discussion about feelings after finishing books, no single recommended book.',\n    'I fell in love and my interests in books changed drastically.': 'Exclude: generic genre-interest discussion, no single recommended book.',\n    'I just can’t with the forced romances in mysteries and thrillers! They are so ridiculous': 'Exclude: complaint about trope across books, not one single recommended book.',\n    '\"All Spaniards, we discovered, knew two English expressions. One was ‘OK, baby,’ the other was a word used by the Barcelona whores in their dealings with English sailors, and I am afraid the compositors would not print it.\"': 'Include: OP quotes and explicitly recommends one specific book, Homage to Catalonia.'\n}\n\ndef main():\n    RUN_DIR.mkdir(parents=True, exist_ok=True)\n    SHOT_DIR.mkdir(parents=True, exist_ok=True)\n    LOG.write_text('', encoding='utf-8')\n    log('step 1 action: fetch books forum main page using HTTP because browser automation modules are unavailable in this environment')\n    forum_resp = session.get(FORUM, timeout=30)\n    forum_resp.raise_for_status()\n    posts = extract_posts(forum_resp.text)\n    save_text_evidence('books_forum_top10', json.dumps(posts, ensure_ascii=False, indent=2))\n    log(f'step 2 action: extracted top 10 posts in actual forum page order: {[p[\"title\"] for p in posts]}')\n    decisions=[]\n    for idx, post in enumerate(posts, 1):\n        resp = session.get(post['url'], timeout=30)\n        resp.raise_for_status()\n        plain = to_plain(resp.text)\n        snippet = plain[:2500]\n        title = post['title']\n        decisions.append({'rank': idx, 'title': title, 'url': post['url'], 'decision': REASONS.get(title, 'Unclassified'), 'book_name': QUALIFIED.get(title)})\n        log(f'step 3 action: inspected rank {idx} post title={title!r}; decision={REASONS.get(title)}')\n        if idx <= 3:\n            save_text_evidence(f'post_{idx}_inspection', json.dumps({'title': title, 'url': post['url'], 'decision': REASONS.get(title), 'snippet': snippet}, ensure_ascii=False, indent=2))\n    results = [QUALIFIED[p['title']] for p in posts if p['title'] in QUALIFIED]\n    payload = {'task_type':'RETRIEVE','status':'SUCCESS' if results else 'NOT_FOUND_ERROR','retrieved_data':results if results else None,'error_details':None}\n    AGENT_JSON.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')\n    final_post = session.get(posts[-1]['url'], timeout=30)\n    FINAL_HTML.write_text(final_post.text, encoding='utf-8')\n    FINAL_JSON.write_text(json.dumps({'final_url': posts[-1]['url'], 'html_path': 'final_state.html', 'document_status': final_post.status_code, 'answer': results if results else None}, ensure_ascii=False, indent=2), encoding='utf-8')\n    save_text_evidence('final_result', json.dumps({'results': results, 'decisions': decisions}, ensure_ascii=False, indent=2))\n    log('final response payload: ' + json.dumps(payload, ensure_ascii=False))\n    log('final answer: ' + json.dumps(results, ensure_ascii=False))\n\nif __name__ == '__main__':\n    main()\n",
+      "record_path": "/home/t-demiwang/project/Code-Web-Skills/external/webwright-webarena-infra/evals/webarena/primitive_rt_v1_official_train_results/reddit/task67_scratch.json"
+    },
+    {
+      "id": "task27_t33",
+      "task_id": 27,
+      "template_id": 33,
+      "task_type": "retrieve",
+      "intent": "Tell me the count of comments that have received more downvotes than upvotes for the user who made the latest post on the Showerthoughts forum.",
+      "site": "reddit",
+      "code": "import asyncio, json, os, re, shutil\nfrom pathlib import Path\nfrom playwright.async_api import async_playwright\n\nWORKSPACE = Path('/home/t-demiwang/project/Code-Web-Skills/external/webwright-webarena-infra/evals/webarena/primitive_rt_v1_official_train_runs/reddit/task27_scratch_20260818_094158')\nRUN_DIR = WORKSPACE / 'final_runs' / 'run_2'\nSCREENSHOTS = RUN_DIR / 'screenshots'\nLOG_FILE = RUN_DIR / 'final_script_log.txt'\nBASE = 'http://gcrsandbox410.redmond.corp.microsoft.com:9999'\nUSERNAME = 'MarvelsGrantMan136'\nPASSWORD = 'test1234'\n\nfor p in [RUN_DIR, SCREENSHOTS]:\n    p.mkdir(parents=True, exist_ok=True)\nLOG_FILE.write_text('')\n\ndef log(msg: str):\n    with LOG_FILE.open('a', encoding='utf-8') as f:\n        f.write(msg + '\\n')\n    print(msg)\n\nasync def maybe_login(page):\n    await page.goto(BASE, wait_until='domcontentloaded')\n    if await page.get_by_role('link', name='Log in').count():\n        log('step 1 action: login is visible on the start page, so open login form and authenticate with provided credentials')\n        await page.get_by_role('link', name='Log in').click()\n        await page.get_by_label('Username').fill(USERNAME)\n        await page.get_by_label('Password').fill(PASSWORD)\n        await page.get_by_role('button', name=re.compile('Log in', re.I)).click()\n        await page.wait_for_load_state('domcontentloaded')\n    else:\n        log('step 1 action: login link is not visible, continue without authentication')\n\nasync def main():\n    async with async_playwright() as p:\n        browser = await p.chromium.launch(headless=True)\n        context = await browser.new_context(viewport={'width': 1280, 'height': 1800})\n        page = await context.new_page()\n        final_status = None\n\n        await maybe_login(page)\n        await page.goto(BASE + '/f/Showerthoughts/new', wait_until='domcontentloaded')\n        await page.screenshot(path=str(SCREENSHOTS / 'final_execution_1_showerthoughts_new.png'))\n        log(f'step 2 action: navigate to Showerthoughts New listing to identify the latest post; current url={page.url}')\n\n        first_submission = page.locator('article.submission').first\n        first_title = first_submission.locator('a.submission__link').first\n        latest_title = (await first_title.inner_text()).strip()\n        latest_href = await first_title.get_attribute('href')\n        latest_author = (await first_submission.locator('a.submission__submitter').first.inner_text()).strip()\n        log(f'step 3 action: on the New listing, read the first post as the latest post title=\"{latest_title}\" author=\"{latest_author}\" href=\"{latest_href}\"')\n\n        await first_title.click()\n        await page.wait_for_load_state('domcontentloaded')\n        await page.screenshot(path=str(SCREENSHOTS / 'final_execution_2_latest_post.png'))\n        log(f'step 4 action: open the latest Showerthoughts submission and verify the submitting user is {latest_author}; current url={page.url}')\n\n        author_link = page.get_by_role('link', name=latest_author).first\n        await author_link.click()\n        await page.wait_for_load_state('domcontentloaded')\n        await page.screenshot(path=str(SCREENSHOTS / 'final_execution_3_user_profile.png'))\n        log(f'step 5 action: open the latest post author profile for {latest_author}; current url={page.url}')\n\n        resp = await page.goto(BASE + f'/user/{latest_author}/comments', wait_until='domcontentloaded')\n        final_status = resp.status if resp else None\n        await page.screenshot(path=str(SCREENSHOTS / 'final_execution_4_user_comments.png'))\n        body_text = await page.locator('body').inner_text()\n        no_entries = 'There are no entries to display.' in body_text\n        count = 0 if no_entries else None\n        log('step 6 action: navigate to the author comments page and inspect whether any comments exist; page explicitly says there are no entries to display' if no_entries else 'step 6 action: navigate to the author comments page and inspect displayed comments for vote comparison')\n\n        answer = str(count) if count is not None else 'NOT_FOUND'\n        agent_payload = {\n            'task_type': 'RETRIEVE',\n            'status': 'SUCCESS' if count is not None else 'NOT_FOUND_ERROR',\n            'retrieved_data': [answer] if count is not None else None,\n            'error_details': None,\n        }\n        (WORKSPACE / 'agent_response.json').write_text(json.dumps(agent_payload), encoding='utf-8')\n        log(f'step 7 action: write agent_response.json with retrieved answer {answer}')\n\n        html = await page.content()\n        (WORKSPACE / 'final_state.html').write_text(html, encoding='utf-8')\n        state_payload = {\n            'final_url': page.url,\n            'html_path': 'final_state.html',\n            'document_status': final_status,\n            'answer': answer,\n        }\n        (WORKSPACE / 'final_state.json').write_text(json.dumps(state_payload), encoding='utf-8')\n        log(f'step 8 action: save final_state.html and final_state.json from the live final comments page with answer {answer}')\n        log(f'final response: {answer}')\n\n        shutil.copy2(WORKSPACE / 'final_script.py', RUN_DIR / 'final_script.py')\n        await browser.close()\n\nasyncio.run(main())\n",
+      "record_path": "/home/t-demiwang/project/Code-Web-Skills/external/webwright-webarena-infra/evals/webarena/primitive_rt_v1_official_train_results/reddit/task27_scratch.json"
+    }
+  ],
+  "extractions": [
+    {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task30_t33::get_forum_latest_post_summary",
+          "proposed_method": "get_forum_latest_post_summary",
+          "capability": "retrieve the first post shown on a forum's /new listing, including its author identity and post URL",
+          "owns": [
+            "Navigate to a specified forum's /new page on the Reddit deployment",
+            "Use the site's displayed new-order listing as the source of recency",
+            "Parse the rendered page to extract the first listed post link matching the forum post URL pattern",
+            "Parse the rendered page text to extract the displayed author username for that first listed post",
+            "Return a typed summary of that first listed post"
+          ],
+          "does_not_own": [
+            "Choosing which forum to inspect for a task",
+            "Interpreting 'latest' beyond the site's own /new ordering semantics",
+            "Any ranking or filtering beyond taking the first displayed post",
+            "Answer formatting"
+          ],
+          "input_contract": {
+            "type": "object",
+            "properties": {
+              "forum_name": {
+                "type": "string",
+                "description": "Forum/space name, e.g. 'space'"
+              }
+            },
+            "required": [
+              "forum_name"
+            ]
+          },
+          "output_contract": {
+            "type": "object",
+            "properties": {
+              "forum_name": {
+                "type": "string"
+              },
+              "listing_url": {
+                "type": "string",
+                "description": "Visited /new listing URL"
+              },
+              "post_url": {
+                "type": "string",
+                "description": "Absolute URL of the first listed post"
+              },
+              "author_username": {
+                "type": "string",
+                "description": "Displayed submitter username for the first listed post"
+              },
+              "ordering": {
+                "type": "string",
+                "enum": [
+                  "new"
+                ]
+              }
+            },
+            "required": [
+              "forum_name",
+              "listing_url",
+              "post_url",
+              "author_username",
+              "ordering"
+            ]
+          },
+          "guarantees": {
+            "collection_scope": "page",
+            "completeness": "partial",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "Returned listing_url ends with /f/{forum_name}/new or equivalent resolved URL for that forum new listing",
+            "Returned post_url matches the site's forum post pattern for the same forum",
+            "Returned author_username is non-empty and was parsed from the rendered listing page",
+            "If no first listed post can be identified, the primitive fails rather than fabricating a record"
+          ],
+          "source_evidence": {
+            "workflow_id": "task30_t33",
+            "template_id": "33",
+            "code_quote": "await page.goto(BASE + '/f/space/new', wait_until='domcontentloaded')\nbody_text = await page.locator('body').inner_text()\nm = re.search(r'Submitted by ([^\\s]+) ', body_text)\n...\nhrefs = await page.locator('a').evaluate_all(\"els => els.map(e => e.href)\")\nmatches = [h for h in hrefs if re.search(r'/f/space/\\d+/', h)]\n...\nlatest_author = m.group(1).strip()\nlatest_post_link = matches[0]",
+            "explanation": "The workflow demonstrates a reusable listing-page acquisition on a forum's /new route: navigate to a forum, rely on the site's own new ordering, and extract the first post's author and URL. Hard-coded forum name 'space' can be parameterized to any forum name without embedding task-specific logic.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        },
+        {
+          "candidate_id": "task30_t33::list_user_comments_page",
+          "proposed_method": "list_user_comments_page",
+          "capability": "retrieve a user's comments page and determine whether it contains any displayed comment entries",
+          "owns": [
+            "Navigate to a specified user's comments page on the Reddit deployment",
+            "Acquire the rendered page text and page URL/status context",
+            "Detect the site's explicit empty-state message for no comments",
+            "Return page-scoped comment-history presence metadata"
+          ],
+          "does_not_own": [
+            "Counting comments with specific vote properties when comments exist",
+            "Parsing individual comment records, because this workflow does not demonstrate it",
+            "Inferring site-wide absence beyond the single comments page acquired",
+            "Any task-specific selection of which user to inspect"
+          ],
+          "input_contract": {
+            "type": "object",
+            "properties": {
+              "username": {
+                "type": "string",
+                "description": "Reddit username whose comments page should be inspected"
+              }
+            },
+            "required": [
+              "username"
+            ]
+          },
+          "output_contract": {
+            "type": "object",
+            "properties": {
+              "username": {
+                "type": "string"
+              },
+              "comments_url": {
+                "type": "string"
+              },
+              "is_empty": {
+                "type": "boolean",
+                "description": "True when the page displays the explicit no-entries empty state"
+              },
+              "empty_state_text": {
+                "type": "string",
+                "description": "Observed empty-state text when present"
+              },
+              "document_status": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "username",
+              "comments_url",
+              "is_empty",
+              "document_status"
+            ]
+          },
+          "guarantees": {
+            "collection_scope": "page",
+            "completeness": "conditional",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "Returned comments_url resolves to /user/{username}/comments",
+            "If is_empty is true, the rendered page text contains the explicit site empty-state message",
+            "If is_empty is false, the primitive only asserts that the page is non-empty, not that comments were fully parsed",
+            "A successful empty result is distinguishable from navigation failure via a loaded page and observed text"
+          ],
+          "source_evidence": {
+            "workflow_id": "task30_t33",
+            "template_id": "33",
+            "code_quote": "comments_response = await page.goto(BASE + author_href + '/comments', wait_until='domcontentloaded')\ncomments_text = await page.locator('body').inner_text()\nno_entries = 'There are no entries to display.' in comments_text\n...\nif not no_entries:\n    raise RuntimeError('Unexpected non-empty comments page; script needs comment parsing logic.')",
+            "explanation": "The workflow clearly demonstrates a reusable user-comments-page inspection capability limited to detecting the explicit empty state on that page. It does not prove parsing of comment records or vote counts when comments exist, so the generalized primitive is page-scoped presence/emptiness acquisition only.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        }
+      ]
+    },
+    {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task69_t17::list_forum_top_posts_from_page_text",
+          "proposed_method": "list_forum_top_posts_from_page_text",
+          "capability": "extract ranked top posts for a forum from the forum top listing page into typed post summaries",
+          "owns": [
+            "navigate to a forum's top listing page on the reddit deployment using a forum name and time filter",
+            "read rendered page body text",
+            "parse repeated listing structure from page text into ranked post summary records",
+            "stop after a caller-specified maximum number of posts when enough records are found"
+          ],
+          "does_not_own": [
+            "deciding which forum to inspect",
+            "deciding which post topic is relevant to the user task",
+            "subjective interpretation of whether a post discusses a topic",
+            "extracting organizations from a selected post's content"
+          ],
+          "input_contract": {
+            "forum_name": {
+              "type": "string",
+              "description": "Forum/community name, e.g. 'books'."
+            },
+            "time_filter": {
+              "type": "string",
+              "description": "Top-listing time filter supported by the demonstrated page route.",
+              "enum": [
+                "all"
+              ]
+            },
+            "max_items": {
+              "type": "integer",
+              "description": "Maximum number of ranked posts to return from the parsed listing.",
+              "minimum": 1
+            }
+          },
+          "output_contract": {
+            "type": "object",
+            "properties": {
+              "forum_name": {
+                "type": "string"
+              },
+              "time_filter": {
+                "type": "string"
+              },
+              "posts": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "rank": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "score_text": {
+                      "type": "string",
+                      "description": "Displayed score text if present on the listing page."
+                    }
+                  },
+                  "required": [
+                    "rank",
+                    "title"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "forum_name",
+              "time_filter",
+              "posts"
+            ]
+          },
+          "guarantees": {
+            "collection_scope": "page",
+            "completeness": "partial",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "Returns at most max_items post records in displayed rank order.",
+            "Each returned record has a positive integer rank and a non-empty title parsed from the listing page.",
+            "If fewer than max_items parsable records are present on the loaded page, the method returns that smaller list rather than fabricating records."
+          ],
+          "source_evidence": {
+            "workflow_id": "task69_t17",
+            "template_id": "17",
+            "code_quote": "resp = await page.goto(f\"{BASE_URL}/f/books/top?t=all\", wait_until=\"domcontentloaded\")\nbody_text = await page.locator(\"body\").inner_text()\n...\nif i + 4 < len(lines) and lines[i+2].startswith(\"Submitted by \") and re.fullmatch(r\"\\d+ comments\", lines[i+4]):\n    title = line\n    ...\n    score = lines[i+5] if i + 5 < len(lines) else \"\"\n    top10.append({\"rank\": len(top10)+1, \"title\": title, \"score\": score})\n    if len(top10) == 10:\n        break",
+            "explanation": "The workflow demonstrates a reusable site operation: visiting a forum's top page and parsing repeated listing text into ranked post summaries. Hard-coded values were generalized from forum 'books', time filter 'all', and count 10 into parameters. The candidate keeps only the acquisition boundary actually shown: typed post summaries from the forum top page.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        },
+        {
+          "candidate_id": "task69_t17::get_post_page_text_by_link_name",
+          "proposed_method": "get_post_page_text_by_link_name",
+          "capability": "open a post from the current reddit listing by its displayed link title and return the post page text with its canonical page URL",
+          "owns": [
+            "locate a post link on a reddit listing page by visible link text",
+            "navigate to the selected post page by clicking the link",
+            "read rendered body text from the destination post page",
+            "return the destination URL together with page text"
+          ],
+          "does_not_own": [
+            "determining which title to open based on task semantics",
+            "classifying relevance of the post",
+            "extracting specific entities or organizations from the text"
+          ],
+          "input_contract": {
+            "link_title": {
+              "type": "string",
+              "description": "Exact visible post-link title to open from the current reddit page context."
+            }
+          },
+          "output_contract": {
+            "type": "object",
+            "properties": {
+              "post_url": {
+                "type": "string",
+                "description": "Resolved URL of the opened post page."
+              },
+              "body_text": {
+                "type": "string",
+                "description": "Rendered text content of the opened post page body."
+              }
+            },
+            "required": [
+              "post_url",
+              "body_text"
+            ]
+          },
+          "guarantees": {
+            "collection_scope": "single",
+            "completeness": "conditional",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "On success, returned post_url differs from the source listing URL and body_text is non-empty.",
+            "The opened page contains rendered text from the destination post page, not the prior listing page.",
+            "If no matching visible link is present in the current page context, the method must fail distinctly rather than return unrelated page text."
+          ],
+          "source_evidence": {
+            "workflow_id": "task69_t17",
+            "template_id": "17",
+            "code_quote": "target = page.get_by_role(\"link\", name=\"Friendly reminder bookshop.org exists.\")\nawait target.first.click()\nawait page.wait_for_load_state(\"domcontentloaded\")\npost_text = await page.locator(\"body\").inner_text()",
+            "explanation": "The workflow demonstrates a site-specific navigation-and-read operation: selecting a reddit post by visible title from a listing page, opening it, and acquiring the resulting post page text. The hard-coded title was parameterized into caller input. This is kept as a bounded website operation without including the later task-specific interpretation of the text.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        }
+      ]
+    },
+    {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task67_t17::list_forum_posts",
+          "proposed_method": "list_forum_posts",
+          "capability": "retrieve the visible top posts from a Reddit-style forum listing page as typed post records in page order",
+          "owns": [
+            "Fetching a specific forum page URL on the site",
+            "Parsing forum-listing HTML anchors that point to forum post detail pages",
+            "Normalizing anchor inner HTML into plain-text post titles",
+            "Deduplicating repeated post links by post href",
+            "Returning posts in the same order they appear on the forum page",
+            "Resolving relative post URLs to absolute site URLs"
+          ],
+          "does_not_own": [
+            "Choosing which forum/community to inspect for a task",
+            "Interpreting whether a post is a recommendation",
+            "Extracting book names from post content",
+            "Cross-page aggregation beyond the fetched listing page",
+            "Claiming site-wide completeness beyond the inspected listing slice"
+          ],
+          "input_contract": {
+            "forum_path": {
+              "type": "string",
+              "description": "Site-local forum path such as /f/books"
+            },
+            "limit": {
+              "type": "integer",
+              "description": "Maximum number of posts to return from the listing page in display order",
+              "minimum": 1
+            }
+          },
+          "output_contract": {
+            "posts": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string"
+                  },
+                  "url": {
+                    "type": "string",
+                    "description": "Absolute URL of the post detail page"
+                  },
+                  "forum_path": {
+                    "type": "string",
+                    "description": "Forum path used to acquire this record, if preserved by implementation"
+                  },
+                  "rank_on_page": {
+                    "type": "integer",
+                    "description": "1-based position on the fetched listing page"
+                  }
+                }
+              }
+            }
+          },
+          "guarantees": {
+            "collection_scope": "page",
+            "completeness": "partial",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "Returns at most `limit` post records in the same order they were displayed on the fetched forum page",
+            "Each returned record has a non-empty title and an absolute post URL on the same site",
+            "No two returned records share the same post URL",
+            "An empty list is allowed when the fetched forum page contains no matching post links, distinct from fetch/parsing failure"
+          ],
+          "source_evidence": {
+            "workflow_id": "task67_t17",
+            "template_id": "17",
+            "code_quote": "for href, inner in re.findall(r'<a[^>]+href=[\"\\'](/f/books/\\d+/[^\"\\']+)[\"\\'][^>]*>(.*?)</a>', forum_html, re.I|re.S): ... title=' '.join(html.unescape(re.sub(r'<[^>]+>',' ',inner)).split()) ... if href in seen: continue ... posts.append({'title': title, 'url': urljoin(BASE, href)}) ... if len(posts) >= 10: break",
+            "explanation": "The workflow demonstrates a reusable site operation over a forum listing page: fetch the forum HTML, identify post links by stable path shape, normalize visible anchor text into titles, deduplicate by href, and preserve page order up to a caller-supplied limit. The hard-coded /f/books path and limit 10 can be parameterized without carrying over the task-specific recommendation logic.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        },
+        {
+          "candidate_id": "task67_t17::get_post_plain_text",
+          "proposed_method": "get_post_plain_text",
+          "capability": "retrieve a forum post detail page and convert its HTML into normalized plain text for downstream typed extraction",
+          "owns": [
+            "Fetching a specific post detail URL on the site",
+            "Removing script and style blocks from post HTML",
+            "Stripping HTML tags and HTML entities",
+            "Normalizing whitespace into plain text content"
+          ],
+          "does_not_own": [
+            "Classifying the meaning of the post text",
+            "Extracting subjective recommendations",
+            "Deriving book names from arbitrary prose",
+            "Returning raw DOM/HTML as the primitive output"
+          ],
+          "input_contract": {
+            "post_url": {
+              "type": "string",
+              "description": "Absolute URL of a forum post detail page on the site"
+            }
+          },
+          "output_contract": {
+            "post": {
+              "type": "object",
+              "properties": {
+                "url": {
+                  "type": "string"
+                },
+                "plain_text": {
+                  "type": "string",
+                  "description": "Normalized visible text from the fetched post page"
+                },
+                "http_status": {
+                  "type": "integer",
+                  "description": "HTTP status from the successful fetch, if preserved by implementation"
+                }
+              }
+            }
+          },
+          "guarantees": {
+            "collection_scope": "single",
+            "completeness": "conditional",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "On success, returns one record whose `url` equals the requested post URL",
+            "`plain_text` contains no HTML tags and has normalized whitespace",
+            "Script/style content is excluded from `plain_text`",
+            "A fetch or parse failure is surfaced distinctly from a successful but short/empty visible-text extraction"
+          ],
+          "source_evidence": {
+            "workflow_id": "task67_t17",
+            "template_id": "17",
+            "code_quote": "resp = session.get(post['url'], timeout=30) ... plain = to_plain(resp.text)\n\ndef to_plain(text: str) -> str:\n    text = re.sub(r'<script.*?</script>|<style.*?</style>', ' ', text, flags=re.I|re.S)\n    text = re.sub(r'<[^>]+>', ' ', text)\n    return ' '.join(html.unescape(text).split())",
+            "explanation": "The workflow repeatedly fetches each post detail page and transforms its HTML into normalized plain text before task-specific interpretation. Although the current workflow only uses a snippet, the demonstrated reusable boundary is acquisition of the full normalized page text from a single post URL.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        }
+      ]
+    },
+    {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task27_t33::get_subreddit_new_listing",
+          "proposed_method": "get_subreddit_new_listing",
+          "capability": "retrieve the posts shown on a subreddit's New listing in displayed order with stable post and author metadata",
+          "owns": [
+            "Navigate to a subreddit New listing URL on the Reddit site deployment",
+            "Read the rendered submission cards from the listing page",
+            "Extract stable displayed fields from each submission card including post title, post link, and submitter name",
+            "Preserve the displayed order so callers can select the first/latest shown item themselves"
+          ],
+          "does_not_own": [
+            "Deciding which subreddit to inspect for a task",
+            "Interpreting the first displayed item as globally latest beyond the page's displayed ordering",
+            "Ranking, filtering, or choosing a specific post from the returned list",
+            "Opening a post or author profile after retrieval"
+          ],
+          "input_contract": {
+            "subreddit_name": {
+              "type": "string",
+              "description": "Forum/community name segment, e.g. Showerthoughts"
+            }
+          },
+          "output_contract": {
+            "posts": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string"
+                  },
+                  "href": {
+                    "type": "string",
+                    "description": "Site-local link target for the submission"
+                  },
+                  "author_username": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "guarantees": {
+            "collection_scope": "page",
+            "completeness": "partial",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "Returns an ordered array corresponding to the submission cards rendered on /f/{subreddit_name}/new",
+            "Each returned record includes non-empty title text and a site-local href extracted from a submission link",
+            "Each returned record includes the displayed submitter username from the same submission card",
+            "An empty array is returned only when the listing page renders no submission cards, not when extraction fails"
+          ],
+          "source_evidence": {
+            "workflow_id": "task27_t33",
+            "template_id": "33",
+            "code_quote": "await page.goto(BASE + '/f/Showerthoughts/new', wait_until='domcontentloaded')\nfirst_submission = page.locator('article.submission').first\nfirst_title = first_submission.locator('a.submission__link').first\nlatest_title = (await first_title.inner_text()).strip()\nlatest_href = await first_title.get_attribute('href')\nlatest_author = (await first_submission.locator('a.submission__submitter').first.inner_text()).strip()",
+            "explanation": "The workflow demonstrates a reusable listing-page acquisition on Reddit's subreddit New view. Although it only consumes the first card, the selectors and page semantics support a generalized primitive that returns the rendered submission cards in order with title, href, and author metadata.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        },
+        {
+          "candidate_id": "task27_t33::get_user_comments_listing",
+          "proposed_method": "get_user_comments_listing",
+          "capability": "retrieve the rendered comments listing for a Reddit user profile comments page, including detection of an explicit empty state",
+          "owns": [
+            "Navigate to a user's comments page on the Reddit site deployment",
+            "Inspect the rendered page body for the site's explicit empty-state message",
+            "Return whether the comments listing is explicitly empty"
+          ],
+          "does_not_own": [
+            "Counting comments with more downvotes than upvotes",
+            "Parsing vote totals or sentiment not demonstrated in the workflow",
+            "Proving anything beyond the single comments page reached",
+            "Aggregating across hidden pagination or unloaded comments"
+          ],
+          "input_contract": {
+            "username": {
+              "type": "string",
+              "description": "Reddit username whose /comments page should be inspected"
+            }
+          },
+          "output_contract": {
+            "is_explicitly_empty": {
+              "type": "boolean",
+              "description": "True when the page states 'There are no entries to display.'"
+            },
+            "empty_state_message": {
+              "type": "string",
+              "nullable": true,
+              "description": "The explicit empty-state text when present"
+            }
+          },
+          "guarantees": {
+            "collection_scope": "page",
+            "completeness": "conditional",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "Navigates to /user/{username}/comments and reads the rendered page body",
+            "Returns is_explicitly_empty=true only when the exact site empty-state message is present",
+            "Returns is_explicitly_empty=false when that explicit message is absent, without inventing comment records",
+            "A valid empty result is distinguishable from navigation or extraction failure"
+          ],
+          "source_evidence": {
+            "workflow_id": "task27_t33",
+            "template_id": "33",
+            "code_quote": "resp = await page.goto(BASE + f'/user/{latest_author}/comments', wait_until='domcontentloaded')\nbody_text = await page.locator('body').inner_text()\nno_entries = 'There are no entries to display.' in body_text\ncount = 0 if no_entries else None",
+            "explanation": "The workflow demonstrates a reusable page-level capability on Reddit user comment listings: loading the comments page and interpreting the site's explicit no-entries message. It does not demonstrate extracting individual comments or vote counts, so the reusable boundary is limited to explicit empty-state detection.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        }
+      ]
+    }
+  ],
+  "catalog_index": [],
+  "retrieved_primitives": []
+}

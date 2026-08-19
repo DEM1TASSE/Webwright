@@ -1,0 +1,1178 @@
+[
+  {
+    "primitive_id": "shopping/reviews/extract_product_review_texts_from_product_page",
+    "method": "extract_product_review_texts_from_product_page",
+    "capability": "extract structured review text records from a shopping product page by opening the Reviews tab and parsing review content elements",
+    "method_code": "async def extract_product_review_texts_from_product_page(self, url: str) -> dict:\n    import re\n\n    response = await self.page.goto(url, wait_until=\"domcontentloaded\")\n    await self.page.wait_for_load_state(\"networkidle\")\n\n    reviews_tab = self.page.locator(\"#tab-label-reviews-title\")\n    if await reviews_tab.count() > 0:\n        await reviews_tab.first.click()\n        await self.page.wait_for_timeout(1200)\n\n    review_nodes = self.page.locator(\".review-content\")\n    reviews = []\n    count = await review_nodes.count()\n    for i in range(count):\n        text = await review_nodes.nth(i).inner_text()\n        reviews.append({\"content_text\": re.sub(r\"\\s+\", \" \", text).strip()})\n\n    return {\n        \"product_url\": self.page.url,\n        \"document_status\": response.status if response else None,\n        \"reviews\": reviews,\n    }\n",
+    "owns": [
+      "Navigating to a product detail page on the shopping site",
+      "Opening the product page's Reviews tab via the site's UI",
+      "Reading the reviews section text from the rendered page",
+      "Parsing each rendered .review-content element into a typed review text record"
+    ],
+    "does_not_own": [
+      "Classifying which review sentences are criticisms",
+      "Filtering out shipping or delivery complaints",
+      "Selecting only negative statements",
+      "Summarizing or formatting the final answer"
+    ],
+    "input_contract": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "Absolute shopping-site product detail page URL"
+        }
+      },
+      "required": [
+        "url"
+      ]
+    },
+    "output_contract": {
+      "type": "object",
+      "properties": {
+        "product_url": {
+          "type": "string",
+          "description": "Final visited product detail URL"
+        },
+        "document_status": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "HTTP status observed for the initial navigation when available"
+        },
+        "reviews": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "content_text": {
+                "type": "string",
+                "description": "Visible text content of one rendered review body taken from a .review-content element"
+              }
+            },
+            "required": [
+              "content_text"
+            ]
+          }
+        }
+      },
+      "required": [
+        "product_url",
+        "document_status",
+        "reviews"
+      ]
+    },
+    "requires": [],
+    "provides": [
+      "shopping.product_page.reviews_opened_and_parsed"
+    ],
+    "supported_patterns": [
+      "Open a product detail page and extract all rendered review body texts from the Reviews tab",
+      "Return an empty reviews array when no .review-content elements are present after opening the Reviews tab"
+    ],
+    "guarantees": {
+      "collection_scope": "page",
+      "completeness": "conditional",
+      "supports_absence_proof": false,
+      "configuration": {
+        "kind": "none",
+        "supported_values": [],
+        "coupled_site_parameters_hidden": true
+      }
+    },
+    "acceptance_checks": [
+      "If the product page loads and a Reviews tab is present, the primitive opens that tab before extraction",
+      "Returned review records are sourced from rendered .review-content elements on the page",
+      "If no .review-content elements are present after opening Reviews, the primitive returns an empty reviews array rather than failing solely due to zero matches"
+    ],
+    "source_evidence": [
+      {
+        "workflow_id": "task164_t136",
+        "template_id": "136",
+        "code_quote": "await page.locator('#tab-label-reviews-title').click()\nawait page.wait_for_timeout(1200)\nreview_contents = await page.locator('.review-content').all_inner_texts()",
+        "explanation": "Generalized the hard-coded product URL into a caller input while preserving the site-specific UI action of opening the Reviews tab and extracting rendered review-body text records.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    ],
+    "feature": "reviews"
+  },
+  {
+    "primitive_id": "shopping/catalog/multi_search_products_graphql_dedup_by_sku",
+    "method": "multi_search_products_graphql_dedup_by_sku",
+    "capability": "issue multiple product catalog searches on the shopping site and merge deduplicated product records by SKU",
+    "method_code": "async def multi_search_products_graphql_dedup_by_sku(self, queries: list[str], page_size: int = 100) -> dict:\n    import json\n    from urllib.parse import quote, urlparse\n\n    if not isinstance(queries, list) or not queries:\n        raise ValueError(\"queries must be a non-empty list of strings\")\n    if not isinstance(page_size, int) or page_size <= 0:\n        raise ValueError(\"page_size must be a positive integer\")\n    for query in queries:\n        if not isinstance(query, str) or not query.strip():\n            raise ValueError(\"each query must be a non-empty string\")\n\n    parsed = urlparse(self.page.url)\n    if not parsed.scheme or not parsed.netloc:\n        raise ValueError(\"self.page.url must contain the shopping site origin before calling this method\")\n    base_url = f\"{parsed.scheme}://{parsed.netloc}\"\n\n    merged = {}\n    executed_queries = []\n\n    for query in queries:\n        graphql_query = (\n            '{ products(search:\"%s\", pageSize:%d) { total_count items { '\n            'name sku url_key url_suffix price_range { minimum_price { regular_price { value currency } final_price { value currency } } } } } }'\n            % (query.replace('\"', '\\\\\"'), page_size)\n        )\n        graphql_url = base_url + \"/graphql?query=\" + quote(graphql_query, safe='/:?=&{}\"')\n        response = await self.page.goto(graphql_url, wait_until=\"domcontentloaded\")\n        await self.page.wait_for_load_state(\"networkidle\")\n        payload = json.loads(await self.page.locator(\"body\").inner_text())\n        products_root = (payload.get(\"data\", {}) or {}).get(\"products\", {}) or {}\n        items = products_root.get(\"items\", []) or []\n\n        executed_queries.append({\n            \"query\": query,\n            \"graphql_url\": graphql_url,\n            \"document_status\": response.status if response else None,\n            \"total_count\": products_root.get(\"total_count\"),\n            \"returned_items_count\": len(items),\n        })\n\n        for item in items:\n            sku = item.get(\"sku\")\n            if not sku:\n                continue\n            minimum_price = (item.get(\"price_range\") or {}).get(\"minimum_price\") or {}\n            regular_price = minimum_price.get(\"regular_price\") or {}\n            final_price = minimum_price.get(\"final_price\") or {}\n            url_key = item.get(\"url_key\")\n            url_suffix = item.get(\"url_suffix\")\n            merged[sku] = {\n                \"sku\": sku,\n                \"name\": item.get(\"name\"),\n                \"url_key\": url_key,\n                \"url_suffix\": url_suffix,\n                \"product_url\": (base_url + \"/\" + url_key + (url_suffix or \"\")) if url_key else None,\n                \"price_range\": {\n                    \"minimum_price\": {\n                        \"regular_price\": {\n                            \"value\": regular_price.get(\"value\"),\n                            \"currency\": regular_price.get(\"currency\"),\n                        },\n                        \"final_price\": {\n                            \"value\": final_price.get(\"value\"),\n                            \"currency\": final_price.get(\"currency\"),\n                        },\n                    }\n                },\n            }\n\n    records = sorted(merged.values(), key=lambda r: r[\"sku\"])\n    return {\n        \"records\": records,\n        \"executed_queries\": executed_queries,\n    }\n",
+    "owns": [
+      "Accepting several caller-supplied search queries for the same site GraphQL products search",
+      "Looping over those queries and issuing one site request per query",
+      "Merging hits across searches",
+      "Deduplicating products by stable SKU identity",
+      "Preserving the richest demonstrated typed product fields from the site response for each deduplicated product",
+      "Building canonical product URLs from site-local url_key and url_suffix fields"
+    ],
+    "does_not_own": [
+      "Choosing which query strings to use for a particular task",
+      "Applying brand or category decisions such as whether a title is in-scope or an accessory",
+      "Computing derived aggregates like minimum/maximum price range",
+      "Ranking, filtering, or final answer formatting beyond the site's own search behavior",
+      "Proving no matching product exists site-wide beyond the supplied query set and per-query slice"
+    ],
+    "input_contract": {
+      "type": "object",
+      "properties": {
+        "queries": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "List of search strings to submit to the site's GraphQL products search"
+        },
+        "page_size": {
+          "type": "integer",
+          "description": "Maximum number of product hits requested per query",
+          "default": 100
+        }
+      },
+      "required": [
+        "queries"
+      ]
+    },
+    "output_contract": {
+      "type": "object",
+      "properties": {
+        "records": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "sku": {
+                "type": "string",
+                "description": "Stable product SKU used for deduplication"
+              },
+              "name": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Displayed product name/title"
+              },
+              "url_key": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Site URL key returned by GraphQL"
+              },
+              "url_suffix": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Site URL suffix returned by GraphQL when present"
+              },
+              "product_url": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Canonical product detail URL constructed from site base, url_key, and optional url_suffix"
+              },
+              "price_range": {
+                "type": "object",
+                "properties": {
+                  "minimum_price": {
+                    "type": "object",
+                    "properties": {
+                      "regular_price": {
+                        "type": "object",
+                        "properties": {
+                          "value": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          },
+                          "currency": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "value",
+                          "currency"
+                        ]
+                      },
+                      "final_price": {
+                        "type": "object",
+                        "properties": {
+                          "value": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          },
+                          "currency": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "value",
+                          "currency"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "regular_price",
+                      "final_price"
+                    ]
+                  }
+                },
+                "required": [
+                  "minimum_price"
+                ]
+              }
+            },
+            "required": [
+              "sku",
+              "name",
+              "url_key",
+              "url_suffix",
+              "product_url",
+              "price_range"
+            ]
+          }
+        },
+        "executed_queries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "query": {
+                "type": "string"
+              },
+              "graphql_url": {
+                "type": "string"
+              },
+              "document_status": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "total_count": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "returned_items_count": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "query",
+              "graphql_url",
+              "document_status",
+              "total_count",
+              "returned_items_count"
+            ]
+          }
+        }
+      },
+      "required": [
+        "records",
+        "executed_queries"
+      ]
+    },
+    "requires": [],
+    "provides": [
+      "shopping.graphql.multi_search_merged_products"
+    ],
+    "supported_patterns": [
+      "Multi-query catalog acquisition with one GraphQL request per query",
+      "Deduplicating merged product hits by stable SKU before workflow-level filtering",
+      "Returning stable product identity, URL components, and minimum regular/final pricing fields from the endpoint"
+    ],
+    "guarantees": {
+      "collection_scope": "scope",
+      "completeness": "conditional",
+      "supports_absence_proof": false,
+      "configuration": {
+        "kind": "none",
+        "supported_values": [],
+        "coupled_site_parameters_hidden": true
+      }
+    },
+    "acceptance_checks": [
+      "Executes one products search request per supplied query",
+      "Returns at most one record per SKU in the merged output",
+      "Every merged record preserves the site's typed product fields demonstrated in source workflows, including sku, name, url_key, optional url_suffix, product_url, and minimum regular/final pricing when present",
+      "Empty output is valid when all supplied queries return no products"
+    ],
+    "source_evidence": [
+      {
+        "workflow_id": "task126_t159",
+        "template_id": "159",
+        "code_quote": "queries = [\n    '{ products(search:\"photo printer\", pageSize:100) { items { name sku url_key price_range { minimum_price { final_price { value currency } } } } } }',\n    '{ products(search:\"Canon\", pageSize:100) { items { name sku url_key price_range { minimum_price { final_price { value currency } } } } } }',\n    '{ products(search:\"Canon PIXMA\", pageSize:100) { items { name sku url_key price_range { minimum_price { final_price { value currency } } } } } }'\n]\nitems = {}\nfor q in queries:\n    data = gql(q)\n    for item in data['data']['products']['items']:\n        items[item['sku']] = item",
+        "explanation": "This workflow demonstrates a reusable repeated-search acquisition pattern: execute multiple site-local GraphQL product searches, merge results, and deduplicate by stable SKU before task-specific title filtering.",
+        "evidence_match_mode": "exact"
+      },
+      {
+        "workflow_id": "task230_t370",
+        "template_id": "370",
+        "code_quote": "query = '{ products(search:\"Perricone\", pageSize:50) { total_count items { name sku url_key url_suffix price_range { minimum_price { regular_price { value currency } final_price { value currency } } } } } }' ... items = data['data']['products']['items']",
+        "explanation": "This workflow evidences the richer typed GraphQL item schema for the same site operation, including total_count, url_suffix, and both regular and final minimum-price fields, which are preserved in the merged record schema.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    ],
+    "feature": "catalog"
+  },
+  {
+    "primitive_id": "shopping/orders/list_customer_orders_history_page",
+    "method": "list_customer_orders_history_page",
+    "capability": "List typed order summary records from the signed-in customer's orders-history page",
+    "method_code": "async def list_customer_orders_history_page(self, page_number: int = 1) -> dict:\n    from urllib.parse import urlparse\n\n    if not isinstance(page_number, int) or page_number < 1:\n        raise ValueError(\"page_number must be a positive integer\")\n    if page_number != 1:\n        raise ValueError(\"Only the demonstrated first orders-history page is supported\")\n\n    parsed = urlparse(self.page.url)\n    if not parsed.scheme or not parsed.netloc:\n        raise ValueError(\"self.page.url must contain the shopping site origin before calling this method\")\n    orders_history_url = f\"{parsed.scheme}://{parsed.netloc}/sales/order/history/\"\n\n    response = await self.page.goto(orders_history_url, wait_until=\"domcontentloaded\")\n    await self.page.wait_for_load_state(\"networkidle\")\n\n    rows = self.page.locator(\"table tbody tr\")\n    records = []\n    count = await rows.count()\n    for i in range(count):\n        cells = [c.strip() for c in await rows.nth(i).locator(\"td\").all_inner_texts()]\n        if len(cells) >= 4:\n            records.append({\n                \"order_number\": cells[0],\n                \"order_date\": cells[1],\n                \"ship_to\": cells[2],\n                \"order_total_text\": cells[3],\n                \"display_cells\": cells,\n            })\n        elif cells:\n            records.append({\n                \"order_number\": cells[0] if len(cells) > 0 else None,\n                \"order_date\": cells[1] if len(cells) > 1 else None,\n                \"ship_to\": cells[2] if len(cells) > 2 else None,\n                \"order_total_text\": cells[3] if len(cells) > 3 else None,\n                \"display_cells\": cells,\n            })\n\n    return {\n        \"orders_history_url\": self.page.url,\n        \"document_status\": response.status if response else None,\n        \"page_number\": page_number,\n        \"records\": records,\n    }\n",
+    "owns": [
+      "Navigating to the site's orders history page after authentication",
+      "Parsing the orders table rows into typed order summary records from displayed cells",
+      "Preserving the demonstrated stable displayed row fields for order identity, date, addressee, and total text"
+    ],
+    "does_not_own": [
+      "Logging in",
+      "Filtering by date range",
+      "Determining whether an order is food-related",
+      "Selecting specific target orders beyond what appears on the page",
+      "Traversing pagination beyond the demonstrated page"
+    ],
+    "input_contract": {
+      "type": "object",
+      "properties": {
+        "page_number": {
+          "type": "integer",
+          "description": "Orders-history page number to retrieve; only the demonstrated first page is supported",
+          "default": 1
+        }
+      },
+      "required": []
+    },
+    "output_contract": {
+      "type": "object",
+      "properties": {
+        "orders_history_url": {
+          "type": "string",
+          "description": "Visited orders-history page URL"
+        },
+        "document_status": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "HTTP status observed for the navigation when available"
+        },
+        "page_number": {
+          "type": "integer",
+          "description": "Orders-history page number retrieved"
+        },
+        "records": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "order_number": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Displayed order number text from the first visible row cell"
+              },
+              "order_date": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Displayed order date text from the second visible row cell"
+              },
+              "ship_to": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Displayed ship-to text from the third visible row cell"
+              },
+              "order_total_text": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Displayed order total text from the fourth visible row cell"
+              },
+              "display_cells": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "All visible trimmed cell texts from the row in display order"
+              }
+            },
+            "required": [
+              "order_number",
+              "order_date",
+              "ship_to",
+              "order_total_text",
+              "display_cells"
+            ]
+          }
+        }
+      },
+      "required": [
+        "orders_history_url",
+        "document_status",
+        "page_number",
+        "records"
+      ]
+    },
+    "requires": [
+      "shopping.customer.authenticated"
+    ],
+    "provides": [
+      "shopping.customer.orders_history_page_loaded"
+    ],
+    "supported_patterns": [
+      "Enumerate visible order-summary rows from the signed-in customer's orders-history page",
+      "Return typed displayed row fields for order number, order date, ship-to, and total text while preserving all row cells"
+    ],
+    "guarantees": {
+      "collection_scope": "page",
+      "completeness": "partial",
+      "supports_absence_proof": false,
+      "configuration": {
+        "kind": "none",
+        "supported_values": [],
+        "coupled_site_parameters_hidden": true
+      }
+    },
+    "acceptance_checks": [
+      "Returns one parsed record per visible `table tbody tr` on the orders-history page",
+      "Each returned record preserves the demonstrated first four visible row cells as typed fields `order_number`, `order_date`, `ship_to`, and `order_total_text`",
+      "Each returned record also preserves all visible trimmed cell texts from that row in display order under `display_cells`",
+      "If no order rows are visible, returns an empty records array rather than failing solely for emptiness"
+    ],
+    "source_evidence": [
+      {
+        "workflow_id": "task144_t162",
+        "template_id": "162",
+        "code_quote": "rows = page.locator(\"table tbody tr\")\ncount = await rows.count()\npage2_rows = []\nfor i in range(count):\n    row = rows.nth(i)\n    cells = [c.strip() for c in await row.locator(\"td\").all_inner_texts()]\n    if len(cells) >= 4:\n        page2_rows.append(cells[:4])",
+        "explanation": "The workflow demonstrates that each visible orders-history row exposes at least four meaningful displayed columns, and the code explicitly slices those first four cells. The primitive preserves them as typed row-summary fields rather than collapsing them into an opaque array alone.",
+        "evidence_match_mode": "exact"
+      }
+    ],
+    "feature": "orders"
+  },
+  {
+    "primitive_id": "shopping/orders/get_customer_order_detail",
+    "method": "get_customer_order_detail",
+    "capability": "Retrieve a customer's order-detail page and parse typed order detail fields and line-item names",
+    "method_code": "async def get_customer_order_detail(self, order_id: str) -> dict:\n    import re\n    from urllib.parse import urlparse\n\n    if not isinstance(order_id, str) or not order_id.strip():\n        raise ValueError(\"order_id must be a non-empty string\")\n\n    parsed = urlparse(self.page.url)\n    if not parsed.scheme or not parsed.netloc:\n        raise ValueError(\"self.page.url must contain the shopping site origin before calling this method\")\n    base_url = f\"{parsed.scheme}://{parsed.netloc}\"\n    detail_url = f\"{base_url}/sales/order/view/order_id/{order_id}/\"\n\n    response = await self.page.goto(detail_url, wait_until=\"domcontentloaded\")\n    await self.page.wait_for_load_state(\"networkidle\")\n    main_text = await self.page.locator(\"main\").inner_text()\n\n    order_number_match = re.search(r\"Order #\\s*(\\d+)\", main_text)\n    status_match = re.search(r\"Order #\\s*\\d+\\s*(\\w+)\", main_text)\n    date_match = re.search(r\"Order Date:\\s*([A-Za-z]+ \\d{1,2}, \\d{4})\", main_text)\n    total_match = re.search(r\"Grand Total\\s*\\$(\\d+[\\d,]*\\.\\d{2})\", main_text)\n\n    item_names = []\n    product_cells = await self.page.locator(\"table tbody tr td.col.name\").all_inner_texts()\n    if product_cells:\n        item_names = [re.sub(r\"\\s+\", \" \", t).strip() for t in product_cells]\n    else:\n        for m in re.finditer(r\"Product Name\\s*SKU\\s*Price\\s*Qty\\s*Subtotal\\s*(.*?)\\s+B[0-9A-Z]+\", main_text, re.S):\n            item_names.append(re.sub(r\"\\s+\", \" \", m.group(1)).strip())\n\n    if not (order_number_match and status_match and date_match and total_match):\n        return {\n            \"detail_url\": detail_url,\n            \"document_status\": response.status if response else None,\n            \"record\": None,\n        }\n\n    return {\n        \"detail_url\": detail_url,\n        \"document_status\": response.status if response else None,\n        \"record\": {\n            \"order_id\": str(order_id),\n            \"order_number\": order_number_match.group(1),\n            \"status\": status_match.group(1),\n            \"order_date\": date_match.group(1),\n            \"grand_total\": float(total_match.group(1).replace(\",\", \"\")),\n            \"currency_symbol\": \"$\",\n            \"item_names\": item_names,\n        },\n    }\n",
+    "owns": [
+      "Navigating to a site order-detail URL for a supplied order identifier",
+      "Parsing displayed order metadata from the page text",
+      "Parsing visible product name cells from the order items table when present",
+      "Falling back to regex extraction of product names from page text when the table cells are unavailable"
+    ],
+    "does_not_own": [
+      "Choosing which order identifiers to inspect",
+      "Classifying items or orders as food/non-food",
+      "Summing totals across orders",
+      "Filtering by status or date for the final task answer"
+    ],
+    "input_contract": {
+      "type": "object",
+      "properties": {
+        "order_id": {
+          "type": "string",
+          "description": "Site order identifier used in `/sales/order/view/order_id/{order_id}/`"
+        }
+      },
+      "required": [
+        "order_id"
+      ]
+    },
+    "output_contract": {
+      "type": "object",
+      "properties": {
+        "detail_url": {
+          "type": "string",
+          "description": "Visited order-detail URL"
+        },
+        "document_status": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "HTTP status observed for the navigation when available"
+        },
+        "record": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "order_id": {
+              "type": "string"
+            },
+            "order_number": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            },
+            "order_date": {
+              "type": "string"
+            },
+            "grand_total": {
+              "type": "number"
+            },
+            "currency_symbol": {
+              "type": "string",
+              "enum": [
+                "$"
+              ]
+            },
+            "item_names": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "order_id",
+            "order_number",
+            "status",
+            "order_date",
+            "grand_total",
+            "currency_symbol",
+            "item_names"
+          ]
+        }
+      },
+      "required": [
+        "detail_url",
+        "document_status",
+        "record"
+      ]
+    },
+    "requires": [
+      "shopping.customer.authenticated"
+    ],
+    "provides": [
+      "shopping.customer.order_detail_loaded"
+    ],
+    "supported_patterns": [
+      "Open an order-detail page by site order identifier and parse objective order metadata",
+      "Extract product line-item names from the order items table with demonstrated text fallback"
+    ],
+    "guarantees": {
+      "collection_scope": "single",
+      "completeness": "conditional",
+      "supports_absence_proof": false,
+      "configuration": {
+        "kind": "none",
+        "supported_values": [],
+        "coupled_site_parameters_hidden": true
+      }
+    },
+    "acceptance_checks": [
+      "Navigates to the order-detail page for the supplied `order_id`",
+      "When order metadata is successfully parsed from visible page content, returns `record.order_number`, `record.status`, `record.order_date`, numeric `record.grand_total`, and `currency_symbol`",
+      "Returned `record.item_names` reflects product names from `table tbody tr td.col.name` when available, otherwise from the demonstrated text fallback",
+      "If required order metadata cannot be parsed, returns `record` as null rather than a partially populated typed record"
+    ],
+    "source_evidence": [
+      {
+        "workflow_id": "task144_t162",
+        "template_id": "162",
+        "code_quote": "detail_url = f\"{BASE}/sales/order/view/order_id/{order_id}/\"\nawait page.goto(detail_url, wait_until=\"domcontentloaded\")\nmain_text = await page.locator(\"main\").inner_text()\norder_number = re.search(r\"Order #\\s*(\\d+)\", main_text).group(1)\nstatus = re.search(r\"Order #\\s*\\d+\\s*(\\w+)\", main_text).group(1)\ndate = re.search(r\"Order Date:\\s*([A-Za-z]+ \\d{1,2}, \\d{4})\", main_text).group(1)\ngrand_total = re.search(r\"Grand Total\\s*\\$(\\d+[\\d,]*\\.\\d{2})\", main_text).group(1)\nproduct_cells = await page.locator(\"table tbody tr td.col.name\").all_inner_texts()\nif product_cells:\n    item_names = [re.sub(r\"\\s+\", \" \", t).strip() for t in product_cells]\nelse:\n    for m in re.finditer(r\"Product Name\\s*SKU\\s*Price\\s*Qty\\s*Subtotal\\s*(.*?)\\s+B[0-9A-Z]+\", main_text, re.S):\n        item_names.append(re.sub(r\"\\s+\", \" \", m.group(1)).strip())",
+        "explanation": "Generalized the hard-coded inspected orders into a single-order acquisition primitive that preserves the demonstrated order metadata and line-item parsing behavior, including the fallback extraction path, while making parser failure explicit by returning a null record.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    ],
+    "feature": "orders"
+  },
+  {
+    "primitive_id": "shopping/auth/authenticate_customer_session_via_form_key",
+    "method": "authenticate_customer_session_via_form_key",
+    "capability": "authenticate to the shopping site as a customer via the site login form flow and establish a reusable authenticated browser session for downstream customer-account requests",
+    "method_code": "def authenticate_customer_session_via_form_key(self, base_url, email, password):\n    import re\n\n    if not isinstance(base_url, str) or not base_url.strip():\n        raise ValueError(\"base_url must be a non-empty string\")\n    if not isinstance(email, str) or not email.strip():\n        raise ValueError(\"email must be a non-empty string\")\n    if not isinstance(password, str) or not password:\n        raise ValueError(\"password must be a non-empty string\")\n\n    root = base_url.rstrip('/')\n    login_url = root + '/customer/account/login/'\n\n    response = self.page.goto(login_url, wait_until=\"domcontentloaded\")\n    if response is None:\n        raise ValueError(\"Login navigation produced no response\")\n    if response.status >= 400:\n        raise ValueError(f\"Login page returned HTTP {response.status}\")\n\n    login_html = self.page.content()\n    form_key_match = re.search(r'name=\"form_key\" type=\"hidden\" value=\"([^\"]+)\"', login_html)\n    if not form_key_match:\n        raise ValueError(\"Login form_key was not found on the login page\")\n    form_key = form_key_match.group(1)\n\n    post_response = self.page.request.post(\n        root + '/customer/account/loginPost/',\n        form={\n            'form_key': form_key,\n            'login[username]': email,\n            'login[password]': password,\n        },\n        headers={\n            'Referer': login_url,\n            'User-Agent': 'Mozilla/5.0',\n        },\n        fail_on_status_code=False,\n    )\n    if post_response.status >= 400:\n        raise ValueError(f\"Login POST returned HTTP {post_response.status}\")\n\n    account_url = root + '/customer/account/'\n    account_response = self.page.goto(account_url, wait_until=\"domcontentloaded\")\n    if account_response is None:\n        raise ValueError(\"Authenticated account navigation produced no response\")\n    if account_response.status >= 400:\n        raise ValueError(f\"Account page returned HTTP {account_response.status}\")\n\n    account_html = self.page.content()\n    if 'Sign Out' not in account_html:\n        raise ValueError(\"Authenticated account indicator 'Sign Out' was not found after login\")\n\n    return {\n        'authenticated': True,\n        'cookie_session_established': True,\n        'account_url': self.page.url,\n        'document_status': account_response.status,\n    }\n",
+    "owns": [
+      "Fetching the customer login page",
+      "Extracting the hidden Magento form_key from the login HTML",
+      "Submitting customer credentials to the site's login POST endpoint with required form_key and referer",
+      "Persisting authenticated cookies for subsequent browser or request-based site access on the same page context",
+      "Verifying authenticated state by loading the customer account page and checking for a signed-in indicator"
+    ],
+    "does_not_own": [
+      "Fetching or parsing order history records",
+      "Selecting credentials",
+      "Exposing raw form_key values, cookies, or other authentication secrets",
+      "Task-specific reporting or answer formatting"
+    ],
+    "input_contract": {
+      "type": "object",
+      "properties": {
+        "base_url": {
+          "type": "string",
+          "description": "Base URL of the shopping site deployment"
+        },
+        "email": {
+          "type": "string",
+          "description": "Customer login email/username"
+        },
+        "password": {
+          "type": "string",
+          "description": "Customer login password"
+        }
+      },
+      "required": [
+        "base_url",
+        "email",
+        "password"
+      ]
+    },
+    "output_contract": {
+      "type": "object",
+      "properties": {
+        "authenticated": {
+          "type": "boolean",
+          "enum": [
+            true
+          ]
+        },
+        "cookie_session_established": {
+          "type": "boolean",
+          "enum": [
+            true
+          ]
+        },
+        "account_url": {
+          "type": "string",
+          "description": "Final authenticated customer account URL reached during verification"
+        },
+        "document_status": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "HTTP status observed for the authenticated account-page verification navigation when available"
+        }
+      },
+      "required": [
+        "authenticated",
+        "cookie_session_established",
+        "account_url",
+        "document_status"
+      ]
+    },
+    "requires": [],
+    "provides": [
+      "shopping.customer.authenticated"
+    ],
+    "supported_patterns": [
+      "Establish a logged-in customer browser/session context on the shopping site using the Magento login form flow",
+      "Verify authenticated state before downstream account or order-history navigation"
+    ],
+    "guarantees": {
+      "collection_scope": "single",
+      "completeness": "conditional",
+      "supports_absence_proof": false,
+      "configuration": {
+        "kind": "none",
+        "supported_values": [],
+        "coupled_site_parameters_hidden": true
+      }
+    },
+    "acceptance_checks": [
+      "The login page is fetched successfully and a hidden form_key is extracted from its HTML.",
+      "Submitting the login form with email, password, form_key, and referer yields a session that can load the customer account page.",
+      "The authenticated account page contains a signed-in indicator such as 'Sign Out'.",
+      "The method returns authenticated=true and cookie_session_established=true only after the signed-in indicator is observed."
+    ],
+    "source_evidence": [
+      {
+        "workflow_id": "task47_t197",
+        "template_id": "197",
+        "code_quote": "fetch(normal_opener, BASE + '/customer/account/login/') ... re.search(r'name=\"form_key\" type=\"hidden\" value=\"([^\"]+)\"', login_html) ... fetch(no_redirect_opener, BASE + '/customer/account/loginPost/', data={'form_key': form_key, 'login[username]': USERNAME, 'login[password]': PASSWORD} ... )",
+        "explanation": "Preserves the evidenced site-local form-key login handshake while stopping at authenticated session establishment rather than bundling order-history retrieval.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      },
+      {
+        "workflow_id": "task48_t197",
+        "template_id": "197",
+        "code_quote": "curl GET /customer/account/login/ -> extract name=\"form_key\" ... then POST to /customer/account/loginPost/ with form_key, login[username], login[password], and reuse cookies; later asserts 'Sign Out' in account_html",
+        "explanation": "Confirms browser-session verification via account-page signed-in marker after the same Magento login flow.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    ],
+    "feature": "auth"
+  },
+  {
+    "primitive_id": "shopping/orders/list_order_history_page_html",
+    "method": "list_order_history_page_html",
+    "capability": "retrieve one authenticated customer order-history page and parse visible order-summary rows from its HTML into typed records",
+    "method_code": "def list_order_history_page_html(self, base_url):\n    import re\n    import html as html_lib\n    from datetime import datetime\n\n    if not isinstance(base_url, str) or not base_url.strip():\n        raise ValueError(\"base_url must be a non-empty string\")\n\n    response = self.page.goto(\n        f\"{base_url.rstrip('/')}/sales/order/history/\",\n        wait_until=\"domcontentloaded\",\n    )\n    if response is None:\n        raise ValueError(\"Order history navigation produced no response\")\n    if response.status >= 400:\n        raise ValueError(f\"Order history page returned HTTP {response.status}\")\n\n    content = self.page.content()\n    if \"My Orders\" not in content:\n        raise ValueError(\"Authenticated order-history page indicator 'My Orders' was not found\")\n\n    row_pattern = re.compile(\n        r'<tr>\\s*<td[^>]*class=\"col id\"[^>]*>(.*?)</td>\\s*<td[^>]*class=\"col date\"[^>]*>(.*?)</td>.*?<td[^>]*class=\"col total\"[^>]*>.*?<span class=\"price\">(.*?)</span>.*?</td>\\s*<td[^>]*class=\"col status\"[^>]*>(.*?)</td>',\n        re.I | re.S,\n    )\n\n    def _clean(text):\n        return \" \".join(html_lib.unescape(re.sub(r\"<[^>]+>\", \" \", text or \"\")).split())\n\n    orders = []\n    for order_id, date_text, total_text, status_text in row_pattern.findall(content):\n        oid = _clean(order_id)\n        dtx = _clean(date_text)\n        ttx = _clean(total_text)\n        stx = _clean(status_text)\n        if not oid or not dtx or not ttx or not stx:\n            raise ValueError(\"Parsed order-history row was missing one or more required displayed fields\")\n\n        parsed_date = None\n        try:\n            parsed_date = datetime.strptime(dtx, '%m/%d/%y').date().isoformat()\n        except Exception:\n            parsed_date = None\n\n        amount = None\n        try:\n            amount = float(ttx.replace('$', '').replace(',', ''))\n        except Exception:\n            amount = None\n\n        orders.append({\n            'order_id': oid,\n            'date_text': dtx,\n            'date': parsed_date,\n            'total_text': ttx,\n            'amount': amount,\n            'status': stx,\n        })\n\n    return {\n        'orders_history_url': self.page.url,\n        'document_status': response.status,\n        'orders': orders,\n    }\n",
+    "owns": [
+      "Requesting the authenticated order history page using an existing signed-in session",
+      "Parsing visible order table rows from the page HTML",
+      "Normalizing stable displayed order fields into typed records",
+      "Including machine-readable date and numeric amount parses when supported by the displayed values"
+    ],
+    "does_not_own": [
+      "Logging in",
+      "Applying task-specific date windows or status filters",
+      "Summing totals or formatting answers",
+      "Claiming records beyond the single fetched order-history page"
+    ],
+    "input_contract": {
+      "type": "object",
+      "properties": {
+        "base_url": {
+          "type": "string",
+          "description": "Base URL of the shopping site deployment"
+        }
+      },
+      "required": [
+        "base_url"
+      ]
+    },
+    "output_contract": {
+      "type": "object",
+      "properties": {
+        "orders_history_url": {
+          "type": "string",
+          "description": "Visited authenticated order-history page URL"
+        },
+        "document_status": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "HTTP status observed for the order-history navigation when available"
+        },
+        "orders": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "order_id": {
+                "type": "string",
+                "description": "Displayed order identifier from the row"
+              },
+              "date_text": {
+                "type": "string",
+                "description": "Displayed order date text from the row"
+              },
+              "date": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "ISO date parsed from date_text when the displayed format matches the evidenced page format"
+              },
+              "total_text": {
+                "type": "string",
+                "description": "Displayed total including currency symbol"
+              },
+              "amount": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "description": "Numeric parse of total_text when the displayed format supports parsing"
+              },
+              "status": {
+                "type": "string",
+                "description": "Displayed order status text from the row"
+              }
+            },
+            "required": [
+              "order_id",
+              "date_text",
+              "date",
+              "total_text",
+              "amount",
+              "status"
+            ]
+          }
+        }
+      },
+      "required": [
+        "orders_history_url",
+        "document_status",
+        "orders"
+      ]
+    },
+    "requires": [
+      "shopping.customer.authenticated"
+    ],
+    "provides": [
+      "shopping.customer.orders_history_page_loaded"
+    ],
+    "supported_patterns": [
+      "Fetch one authenticated HTML order-history page and parse visible rows into typed records",
+      "Provide page-scoped order facts for downstream date filtering, status filtering, or aggregation workflows"
+    ],
+    "guarantees": {
+      "collection_scope": "page",
+      "completeness": "partial",
+      "supports_absence_proof": false,
+      "configuration": {
+        "kind": "none",
+        "supported_values": [],
+        "coupled_site_parameters_hidden": true
+      }
+    },
+    "acceptance_checks": [
+      "The fetched page is authenticated and contains an orders-history indicator such as 'My Orders'.",
+      "Each returned record has non-empty order_id, date_text, total_text, and status parsed from a single table row.",
+      "When the displayed date matches the evidenced %m/%d/%y format, date is returned as a valid ISO date; otherwise date is null rather than causing row loss.",
+      "When the displayed total can be parsed as a dollar amount, amount is numeric; otherwise amount is null rather than causing row loss.",
+      "If no order rows are present on the authenticated page, the method returns an empty orders array rather than failing solely for emptiness."
+    ],
+    "source_evidence": [
+      {
+        "workflow_id": "task47_t197",
+        "template_id": "197",
+        "code_quote": "row_pattern = re.compile(r'<tr>\\s*<td[^>]*class=\"col id\"[^>]*>(.*?)</td>\\s*<td[^>]*class=\"col date\"[^>]*>(.*?)</td>.*?<td[^>]*class=\"col total\"[^>]*>.*?<span class=\"price\">(.*?)</span>.*?</td>\\s*<td[^>]*class=\"col status\"[^>]*>(.*?)</td>', re.S)",
+        "explanation": "Provides the stable row-level HTML parsing pattern and typed fields actually exposed by the authenticated orders page.",
+        "evidence_match_mode": "exact"
+      },
+      {
+        "workflow_id": "task48_t197",
+        "template_id": "197",
+        "code_quote": "ORDERS_URL = BASE + '/sales/order/history/' ... 'My Orders' in orders_html ... rows = re.findall(...)",
+        "explanation": "Provides the authenticated page fetch boundary and page marker verification for the same site resource.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    ],
+    "feature": "orders"
+  },
+  {
+    "primitive_id": "shopping/orders/list_authenticated_customer_orders_graphql",
+    "method": "list_authenticated_customer_orders_graphql",
+    "capability": "retrieve authenticated customer order records from the shopping site's GraphQL API using site-local customer authentication, with either one requested page or complete traversal across all reported pages",
+    "method_code": "def list_authenticated_customer_orders_graphql(self, base_url, email, password, retrieval_mode='single_page', page_size=20, page_number=1, order_number_filter=None):\n    if not isinstance(base_url, str) or not base_url.strip():\n        raise ValueError(\"base_url must be a non-empty string\")\n    if not isinstance(email, str) or not email.strip():\n        raise ValueError(\"email must be a non-empty string\")\n    if not isinstance(password, str) or not password:\n        raise ValueError(\"password must be a non-empty string\")\n    if retrieval_mode not in ('single_page', 'all_pages'):\n        raise ValueError(\"retrieval_mode must be 'single_page' or 'all_pages'\")\n    if not isinstance(page_size, int) or page_size < 1:\n        raise ValueError(\"page_size must be a positive integer\")\n    if not isinstance(page_number, int) or page_number < 1:\n        raise ValueError(\"page_number must be a positive integer\")\n    if order_number_filter is not None and (not isinstance(order_number_filter, str) or not order_number_filter.strip()):\n        raise ValueError(\"order_number_filter must be null or a non-empty string\")\n\n    root = base_url.rstrip('/')\n    graphql_url = root + '/graphql'\n\n    token_query = (\n        'mutation GenerateCustomerToken($email: String!, $password: String!) {'\n        ' generateCustomerToken(email: $email, password: $password) { token }'\n        '}'\n    )\n    token_resp = self.page.request.post(\n        graphql_url,\n        json={\n            'query': token_query,\n            'variables': {'email': email, 'password': password},\n        },\n        fail_on_status_code=False,\n    )\n    token_payload = token_resp.json()\n    token = (((token_payload.get('data') or {}).get('generateCustomerToken') or {}).get('token'))\n    if not token:\n        raise RuntimeError('Customer GraphQL authentication failed')\n\n    filter_clause = 'filter: { number: { match: $match } }, ' if order_number_filter is not None else ''\n    orders_query = (\n        'query GetOrders($pageSize: Int!, $currentPage: Int!' + (', $match: String!' if order_number_filter is not None else '') + ') {'\n        ' customer {'\n        '   firstname lastname email'\n        '   orders(' + filter_clause + 'pageSize: $pageSize, currentPage: $currentPage) {'\n        '     total_count'\n        '     page_info { current_page page_size total_pages }'\n        '     items {'\n        '       id number order_date created_at status grand_total'\n        '       total { grand_total { value currency } }'\n        '     }'\n        '   }'\n        ' }'\n        '}'\n    )\n\n    def _fetch_page(requested_page):\n        variables = {'pageSize': page_size, 'currentPage': requested_page}\n        if order_number_filter is not None:\n            variables['match'] = order_number_filter\n        resp = self.page.request.post(\n            graphql_url,\n            json={'query': orders_query, 'variables': variables},\n            headers={'Authorization': f'Bearer {token}'},\n            fail_on_status_code=False,\n        )\n        payload = resp.json()\n        customer = ((payload.get('data') or {}).get('customer')) or {}\n        orders_block = customer.get('orders') or {}\n        page_info = orders_block.get('page_info') or {}\n\n        items = []\n        for item in orders_block.get('items') or []:\n            nested_grand_total = (((item.get('total') or {}).get('grand_total')) or {})\n            items.append({\n                'id': item.get('id'),\n                'number': item.get('number'),\n                'order_date': item.get('order_date'),\n                'created_at': item.get('created_at'),\n                'status': item.get('status'),\n                'grand_total': item.get('grand_total'),\n                'total': {\n                    'grand_total': {\n                        'value': nested_grand_total.get('value'),\n                        'currency': nested_grand_total.get('currency'),\n                    }\n                },\n            })\n\n        return {\n            'customer': {\n                'firstname': customer.get('firstname'),\n                'lastname': customer.get('lastname'),\n                'email': customer.get('email'),\n            },\n            'orders': {\n                'total_count': orders_block.get('total_count'),\n                'page_info': {\n                    'current_page': page_info.get('current_page'),\n                    'page_size': page_info.get('page_size'),\n                    'total_pages': page_info.get('total_pages'),\n                },\n                'items': items,\n            },\n        }\n\n    first_page = _fetch_page(page_number)\n    if retrieval_mode == 'single_page':\n        return {\n            'customer': first_page['customer'],\n            'orders': first_page['orders'],\n            'retrieval_mode': 'single_page',\n            'pages_fetched': 1,\n            'order_number_filter': order_number_filter,\n        }\n\n    total_pages = first_page['orders']['page_info'].get('total_pages') or 0\n    aggregated_items = list(first_page['orders']['items'])\n    pages_fetched = 1\n    current_page = page_number + 1\n    while current_page <= total_pages:\n        next_page = _fetch_page(current_page)\n        if next_page['orders']['page_info'].get('current_page') != current_page:\n            raise ValueError('Paginated GraphQL response current_page did not match requested page')\n        if next_page['orders']['page_info'].get('total_pages') != total_pages:\n            raise ValueError('Paginated GraphQL response total_pages changed during traversal')\n        aggregated_items.extend(next_page['orders']['items'])\n        pages_fetched += 1\n        current_page += 1\n\n    return {\n        'customer': first_page['customer'],\n        'orders': {\n            'total_count': first_page['orders']['total_count'],\n            'page_info': {\n                'current_page': first_page['orders']['page_info']['current_page'],\n                'page_size': first_page['orders']['page_info']['page_size'],\n                'total_pages': first_page['orders']['page_info']['total_pages'],\n            },\n            'items': aggregated_items,\n        },\n        'retrieval_mode': 'all_pages',\n        'pages_fetched': pages_fetched,\n        'order_number_filter': order_number_filter,\n    }\n",
+    "owns": [
+      "Authenticating to the site's GraphQL customer API via generateCustomerToken as an internal prerequisite",
+      "Issuing authenticated customer.orders GraphQL requests to the site-local /graphql endpoint",
+      "Supporting either one requested page or complete traversal across all site-reported pages through a semantic retrieval_mode enum",
+      "Applying the site's order-number match filter when supplied",
+      "Parsing customer identity, pagination metadata, and stable order fields into typed records",
+      "Preserving the union of evidenced order fields across overlapping GraphQL order candidates"
+    ],
+    "does_not_own": [
+      "Choosing which order number filter to use for a particular task",
+      "Filtering by task-specific statuses or dates beyond the site's own query parameters",
+      "Ranking or selecting a final answer",
+      "Exposing raw bearer tokens"
+    ],
+    "input_contract": {
+      "type": "object",
+      "properties": {
+        "base_url": {
+          "type": "string",
+          "description": "Base URL of the shopping site deployment"
+        },
+        "email": {
+          "type": "string",
+          "description": "Customer account email address"
+        },
+        "password": {
+          "type": "string",
+          "description": "Customer account password"
+        },
+        "retrieval_mode": {
+          "type": "string",
+          "enum": [
+            "single_page",
+            "all_pages"
+          ],
+          "default": "single_page",
+          "description": "Whether to return one requested page or traverse all reported pages"
+        },
+        "page_size": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 20,
+          "description": "Requested number of orders per page"
+        },
+        "page_number": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1,
+          "description": "Requested starting/current page mapped to GraphQL currentPage"
+        },
+        "order_number_filter": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Optional order number match string supplied to orders(filter:{number:{match:...}})"
+        }
+      },
+      "required": [
+        "base_url",
+        "email",
+        "password"
+      ]
+    },
+    "output_contract": {
+      "type": "object",
+      "properties": {
+        "customer": {
+          "type": "object",
+          "properties": {
+            "firstname": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "lastname": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "email": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "firstname",
+            "lastname",
+            "email"
+          ]
+        },
+        "orders": {
+          "type": "object",
+          "properties": {
+            "total_count": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "page_info": {
+              "type": "object",
+              "properties": {
+                "current_page": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "page_size": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "total_pages": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "current_page",
+                "page_size",
+                "total_pages"
+              ]
+            },
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": [
+                      "string",
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "number": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "order_date": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "created_at": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "status": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "grand_total": {
+                    "type": [
+                      "number",
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "total": {
+                    "type": "object",
+                    "properties": {
+                      "grand_total": {
+                        "type": "object",
+                        "properties": {
+                          "value": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          },
+                          "currency": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "value",
+                          "currency"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "grand_total"
+                    ]
+                  }
+                },
+                "required": [
+                  "id",
+                  "number",
+                  "order_date",
+                  "created_at",
+                  "status",
+                  "grand_total",
+                  "total"
+                ]
+              }
+            }
+          },
+          "required": [
+            "total_count",
+            "page_info",
+            "items"
+          ]
+        },
+        "retrieval_mode": {
+          "type": "string",
+          "enum": [
+            "single_page",
+            "all_pages"
+          ]
+        },
+        "pages_fetched": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "order_number_filter": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "customer",
+        "orders",
+        "retrieval_mode",
+        "pages_fetched",
+        "order_number_filter"
+      ]
+    },
+    "requires": [],
+    "provides": [
+      "shopping.customer.orders_graphql"
+    ],
+    "supported_patterns": [
+      "Authenticated paginated customer order listing via GraphQL",
+      "Authenticate with generateCustomerToken and query customer.orders with optional order number filtering",
+      "Return either one requested page or all reported pages using a semantic retrieval mode rather than overlapping public primitives"
+    ],
+    "guarantees": {
+      "collection_scope": "query",
+      "completeness": "conditional",
+      "supports_absence_proof": false,
+      "configuration": {
+        "kind": "none",
+        "supported_values": [],
+        "coupled_site_parameters_hidden": true
+      }
+    },
+    "acceptance_checks": [
+      "Response parses successfully from data.customer.orders.",
+      "Every returned order item includes id, number, order_date, created_at, status, grand_total, and total.grand_total.value/currency fields with nulls where the site omits a field.",
+      "When retrieval_mode='single_page', the method returns exactly the requested page scope and pages_fetched=1.",
+      "When retrieval_mode='all_pages', traversal continues until the site-reported total_pages are fetched starting from page_number, and pagination consistency is checked across pages.",
+      "If order_number_filter is supplied, it is applied through the site's GraphQL orders number-match filter rather than workflow-side filtering.",
+      "If no orders match, returns an empty items array rather than failing."
+    ],
+    "source_evidence": [
+      {
+        "workflow_id": "task359_t206",
+        "template_id": "206",
+        "code_quote": "orders_query = '{customer{firstname lastname email orders(filter:{number:{match:\"148\"}}){items{number order_date status total{grand_total{value currency}}} total_count}}}'",
+        "explanation": "Shows authenticated customer.orders retrieval with number-match filtering and nested grand total fields.",
+        "evidence_match_mode": "exact"
+      },
+      {
+        "workflow_id": "task189_t214",
+        "template_id": "214",
+        "code_quote": "customer { firstname lastname email orders(pageSize: 200, currentPage: 1) { total_count page_info { current_page page_size total_pages } items { number status created_at grand_total total { grand_total { value currency } } } } }",
+        "explanation": "Shows page-scoped GraphQL retrieval with page_info and created_at/top-level grand_total.",
+        "evidence_match_mode": "exact"
+      },
+      {
+        "workflow_id": "task188_t214",
+        "template_id": "214",
+        "code_quote": "items { id number order_date status grand_total } page_info { current_page page_size total_pages } total_count",
+        "explanation": "Shows the same acquisition family with id and order_date fields.",
+        "evidence_match_mode": "exact"
+      },
+      {
+        "workflow_id": "task331_t147",
+        "template_id": "147",
+        "code_quote": "while page_num <= total_pages: ... all_items.extend(orders['items'])",
+        "explanation": "Shows complete traversal across all site-reported pages for the same customer.orders GraphQL resource.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    ],
+    "feature": "orders"
+  }
+]

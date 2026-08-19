@@ -1,0 +1,180 @@
+[
+  {
+    "attempt": 1,
+    "proposal": {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task30_t33::get_forum_latest_post_summary",
+          "proposed_method": "get_forum_latest_post_summary",
+          "capability": "retrieve the first post shown on a forum's /new listing, including its author identity and post URL",
+          "owns": [
+            "Navigate to a specified forum's /new page on the Reddit deployment",
+            "Use the site's displayed new-order listing as the source of recency",
+            "Parse the rendered page to extract the first listed post link matching the forum post URL pattern",
+            "Parse the rendered page text to extract the displayed author username for that first listed post",
+            "Return a typed summary of that first listed post"
+          ],
+          "does_not_own": [
+            "Choosing which forum to inspect for a task",
+            "Interpreting 'latest' beyond the site's own /new ordering semantics",
+            "Any ranking or filtering beyond taking the first displayed post",
+            "Answer formatting"
+          ],
+          "input_contract": {
+            "type": "object",
+            "properties": {
+              "forum_name": {
+                "type": "string",
+                "description": "Forum/space name, e.g. 'space'"
+              }
+            },
+            "required": [
+              "forum_name"
+            ]
+          },
+          "output_contract": {
+            "type": "object",
+            "properties": {
+              "forum_name": {
+                "type": "string"
+              },
+              "listing_url": {
+                "type": "string",
+                "description": "Visited /new listing URL"
+              },
+              "post_url": {
+                "type": "string",
+                "description": "Absolute URL of the first listed post"
+              },
+              "author_username": {
+                "type": "string",
+                "description": "Displayed submitter username for the first listed post"
+              },
+              "ordering": {
+                "type": "string",
+                "enum": [
+                  "new"
+                ]
+              }
+            },
+            "required": [
+              "forum_name",
+              "listing_url",
+              "post_url",
+              "author_username",
+              "ordering"
+            ]
+          },
+          "guarantees": {
+            "collection_scope": "page",
+            "completeness": "partial",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "Returned listing_url ends with /f/{forum_name}/new or equivalent resolved URL for that forum new listing",
+            "Returned post_url matches the site's forum post pattern for the same forum",
+            "Returned author_username is non-empty and was parsed from the rendered listing page",
+            "If no first listed post can be identified, the primitive fails rather than fabricating a record"
+          ],
+          "source_evidence": {
+            "workflow_id": "task30_t33",
+            "template_id": "33",
+            "code_quote": "await page.goto(BASE + '/f/space/new', wait_until='domcontentloaded')\nbody_text = await page.locator('body').inner_text()\nm = re.search(r'Submitted by ([^\\s]+) ', body_text)\n...\nhrefs = await page.locator('a').evaluate_all(\"els => els.map(e => e.href)\")\nmatches = [h for h in hrefs if re.search(r'/f/space/\\d+/', h)]\n...\nlatest_author = m.group(1).strip()\nlatest_post_link = matches[0]",
+            "explanation": "The workflow demonstrates a reusable listing-page acquisition on a forum's /new route: navigate to a forum, rely on the site's own new ordering, and extract the first post's author and URL. Hard-coded forum name 'space' can be parameterized to any forum name without embedding task-specific logic.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        },
+        {
+          "candidate_id": "task30_t33::list_user_comments_page",
+          "proposed_method": "list_user_comments_page",
+          "capability": "retrieve a user's comments page and determine whether it contains any displayed comment entries",
+          "owns": [
+            "Navigate to a specified user's comments page on the Reddit deployment",
+            "Acquire the rendered page text and page URL/status context",
+            "Detect the site's explicit empty-state message for no comments",
+            "Return page-scoped comment-history presence metadata"
+          ],
+          "does_not_own": [
+            "Counting comments with specific vote properties when comments exist",
+            "Parsing individual comment records, because this workflow does not demonstrate it",
+            "Inferring site-wide absence beyond the single comments page acquired",
+            "Any task-specific selection of which user to inspect"
+          ],
+          "input_contract": {
+            "type": "object",
+            "properties": {
+              "username": {
+                "type": "string",
+                "description": "Reddit username whose comments page should be inspected"
+              }
+            },
+            "required": [
+              "username"
+            ]
+          },
+          "output_contract": {
+            "type": "object",
+            "properties": {
+              "username": {
+                "type": "string"
+              },
+              "comments_url": {
+                "type": "string"
+              },
+              "is_empty": {
+                "type": "boolean",
+                "description": "True when the page displays the explicit no-entries empty state"
+              },
+              "empty_state_text": {
+                "type": "string",
+                "description": "Observed empty-state text when present"
+              },
+              "document_status": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "username",
+              "comments_url",
+              "is_empty",
+              "document_status"
+            ]
+          },
+          "guarantees": {
+            "collection_scope": "page",
+            "completeness": "conditional",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "Returned comments_url resolves to /user/{username}/comments",
+            "If is_empty is true, the rendered page text contains the explicit site empty-state message",
+            "If is_empty is false, the primitive only asserts that the page is non-empty, not that comments were fully parsed",
+            "A successful empty result is distinguishable from navigation failure via a loaded page and observed text"
+          ],
+          "source_evidence": {
+            "workflow_id": "task30_t33",
+            "template_id": "33",
+            "code_quote": "comments_response = await page.goto(BASE + author_href + '/comments', wait_until='domcontentloaded')\ncomments_text = await page.locator('body').inner_text()\nno_entries = 'There are no entries to display.' in comments_text\n...\nif not no_entries:\n    raise RuntimeError('Unexpected non-empty comments page; script needs comment parsing logic.')",
+            "explanation": "The workflow clearly demonstrates a reusable user-comments-page inspection capability limited to detecting the explicit empty state on that page. It does not prove parsing of comment records or vote counts when comments exist, so the generalized primitive is page-scoped presence/emptiness acquisition only.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        }
+      ]
+    },
+    "errors": []
+  }
+]

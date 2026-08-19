@@ -1,0 +1,2170 @@
+[
+  {
+    "attempt": 1,
+    "proposal": {
+      "operations": [
+        {
+          "op": "ADD",
+          "replacement": {
+            "primitive_id": "map/search_places",
+            "method": "search_places",
+            "capability": "search the map deployment's place-search backend by free-text query and return typed place candidates.",
+            "method_code": "def search_places(self, query: str, limit: int = 10) -> dict:\n    import requests\n\n    if not isinstance(query, str) or not query.strip():\n        raise ValueError(\"query must be a non-empty string\")\n    if not isinstance(limit, int) or limit <= 0:\n        raise ValueError(\"limit must be a positive integer\")\n\n    search_url = \"http://18.208.187.221:8085/search\"\n    resp = requests.get(\n        search_url,\n        params={\"q\": query, \"format\": \"jsonv2\", \"limit\": limit},\n        timeout=30,\n    )\n    resp.raise_for_status()\n    payload = resp.json()\n    if not isinstance(payload, list):\n        raise ValueError(\"unexpected search response shape\")\n\n    results = []\n    for row in payload:\n        if not isinstance(row, dict):\n            continue\n        try:\n            lat = float(row[\"lat\"])\n            lon = float(row[\"lon\"])\n        except (KeyError, TypeError, ValueError):\n            continue\n        result = {\n            \"display_name\": row.get(\"display_name\", \"\"),\n            \"lat\": lat,\n            \"lon\": lon,\n            \"place_id\": str(row[\"place_id\"]) if row.get(\"place_id\") is not None else None,\n            \"osm_type\": row.get(\"osm_type\"),\n            \"osm_id\": str(row[\"osm_id\"]) if row.get(\"osm_id\") is not None else None,\n            \"boundingbox\": row.get(\"boundingbox\") if isinstance(row.get(\"boundingbox\"), list) else None,\n            \"class_name\": row.get(\"class\"),\n            \"type_name\": row.get(\"type\"),\n            \"importance\": float(row[\"importance\"]) if row.get(\"importance\") is not None else None,\n        }\n        results.append(result)\n\n    return {\"results\": results}",
+            "owns": [
+              "Constructing the site-local search request to the map deployment's search backend with caller-supplied query text",
+              "Fetching and parsing the JSON search response",
+              "Returning typed place candidate records with stable site-exposed fields such as display label, coordinates, and stable identity/location metadata when present",
+              "Applying the demonstrated result limit parameter as part of this site's search request shape"
+            ],
+            "does_not_own": [
+              "Choosing task-specific query text such as 'Pittsburgh police station' or 'Upitt'",
+              "Selecting the best candidate for a task from among returned results",
+              "Inferring whether a result satisfies a category, jurisdiction, or relevance criterion beyond what the site returns",
+              "Computing routes or travel times",
+              "Combining or comparing results from multiple distinct queries"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "query": {
+                  "type": "string",
+                  "description": "Free-text place query to submit to the site's search backend."
+                },
+                "limit": {
+                  "type": "integer",
+                  "description": "Maximum number of place candidates to request.",
+                  "default": 10,
+                  "minimum": 1
+                }
+              },
+              "required": [
+                "query"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "results": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "display_name": {
+                        "type": "string"
+                      },
+                      "lat": {
+                        "type": "number"
+                      },
+                      "lon": {
+                        "type": "number"
+                      },
+                      "place_id": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "osm_type": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "osm_id": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "boundingbox": {
+                        "type": [
+                          "array",
+                          "null"
+                        ],
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "class_name": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "type_name": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "importance": {
+                        "type": [
+                          "number",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "display_name",
+                      "lat",
+                      "lon",
+                      "place_id",
+                      "osm_type",
+                      "osm_id",
+                      "boundingbox",
+                      "class_name",
+                      "type_name",
+                      "importance"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "results"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "map.place_search_results"
+            ],
+            "supported_patterns": [
+              "Search by arbitrary free-text query against the map deployment's place index",
+              "Return zero or more typed place candidates for workflow-side disambiguation",
+              "Expose stable identity and coordinate fields when present in the backend response"
+            ],
+            "guarantees": {
+              "collection_scope": "query",
+              "completeness": "partial",
+              "supports_absence_proof": false,
+              "configuration": {
+                "kind": "internal",
+                "supported_values": [],
+                "coupled_site_parameters_hidden": true
+              }
+            },
+            "acceptance_checks": [
+              "Given a non-empty query, returns a JSON-decoded list of typed place records rather than DOM text or raw HTML.",
+              "Each returned record includes numeric lat and lon plus display_name parsed from the site's search response.",
+              "When the backend returns no matches, the method returns {'results': []} as a valid query outcome distinct from request failure.",
+              "If present in the backend response, stable fields such as place_id, osm_type, osm_id, boundingbox, class/type, and importance are preserved in typed output."
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task37_t77",
+                "template_id": "77",
+                "code_quote": "SEARCH_API = \"http://18.208.187.221:8085/search?q={query}&format=json&limit=10\" ... search_resp = await client.get(search_url) ... search_results = search_resp.json()",
+                "explanation": "Generalized the workflow's site-local search backend call from a hard-coded police-station query into a caller-supplied free-text place search with typed result parsing."
+              },
+              {
+                "workflow_id": "task152_t36",
+                "template_id": "36",
+                "code_quote": "def geocode(query):\\n    url = NOMINATIM + \"search?format=jsonv2&limit=5&q=\" + urllib.parse.quote(query)\\n    return fetch_json(url)",
+                "explanation": "Added evidence that the same deployment supports parameterized Nominatim-style JSON search and preserves stable geocoding fields beyond just display_name/lat/lon."
+              }
+            ]
+          }
+        },
+        {
+          "op": "ADD",
+          "replacement": {
+            "primitive_id": "map/get_route_summary_by_coordinates",
+            "method": "get_route_summary_by_coordinates",
+            "capability": "open the map deployment's directions page for a supported travel mode between two coordinates and extract the displayed route summary into typed route fields.",
+            "method_code": "def get_route_summary_by_coordinates(self, origin: dict, destination: dict, travel_mode: str) -> dict:\n    import re\n\n    if travel_mode not in {\"car\", \"foot\"}:\n        raise ValueError(\"travel_mode must be one of: car, foot\")\n\n    def _validate_point(name: str, value: dict) -> tuple[float, float]:\n        if not isinstance(value, dict):\n            raise ValueError(f\"{name} must be an object with lat/lon\")\n        try:\n            lat = float(value[\"lat\"])\n            lon = float(value[\"lon\"])\n        except (KeyError, TypeError, ValueError):\n            raise ValueError(f\"{name} must include numeric lat and lon\")\n        return lat, lon\n\n    origin_lat, origin_lon = _validate_point(\"origin\", origin)\n    dest_lat, dest_lon = _validate_point(\"destination\", destination)\n\n    engine_map = {\n        \"car\": \"fossgis_osrm_car\",\n        \"foot\": \"fossgis_osrm_foot\",\n    }\n    engine = engine_map[travel_mode]\n    route_url = (\n        \"http://ec2-18-223-172-69.us-east-2.compute.amazonaws.com:3000\"\n        f\"/directions?engine={engine}&route={origin_lat},{origin_lon};{dest_lat},{dest_lon}\"\n    )\n\n    self.page.goto(route_url, wait_until=\"domcontentloaded\")\n    self.page.wait_for_timeout(2500)\n    body_text = self.page.locator(\"body\").inner_text()\n\n    distance_text = None\n    duration_text = None\n    duration_minutes = None\n\n    match = re.search(r\"Distance:\\s*([^\\.\\n]+(?:m|km))\\.\\s*Time:\\s*([^\\n]+)\", body_text)\n    if match:\n        distance_text = match.group(1).strip()\n        duration_text = match.group(2).strip().rstrip(\".\")\n    else:\n        for line in body_text.splitlines():\n            line = line.strip()\n            if line.startswith(\"Distance:\"):\n                distance_text = line.split(\"Distance:\", 1)[1].split(\"Time:\", 1)[0].strip().rstrip(\".\")\n                if \"Time:\" in line:\n                    duration_text = line.split(\"Time:\", 1)[1].strip().rstrip(\".\")\n                break\n\n    if duration_text:\n        m = re.fullmatch(r\"0:(\\d{2})\", duration_text)\n        if m:\n            duration_minutes = int(m.group(1))\n\n    return {\n        \"route_url\": self.page.url,\n        \"travel_mode\": travel_mode,\n        \"origin\": {\"lat\": origin_lat, \"lon\": origin_lon},\n        \"destination\": {\"lat\": dest_lat, \"lon\": dest_lon},\n        \"distance_text\": distance_text,\n        \"duration_text\": duration_text,\n        \"duration_minutes\": duration_minutes,\n        \"page_summary_text\": body_text,\n    }",
+            "owns": [
+              "Constructing the site directions URL with origin and destination coordinates",
+              "Hiding the deployment-coupled engine mapping behind a semantic travel_mode enum",
+              "Loading the directions page on the map site",
+              "Reading visible page text and parsing route summary fields exposed in stable site semantics",
+              "Returning typed route summary fields and the final route URL"
+            ],
+            "does_not_own": [
+              "Geocoding origin or destination from user text",
+              "Choosing which destinations or origins to compare",
+              "Filtering routes by a caller threshold such as 'within one hour' or 'at most 5 minutes'",
+              "Ranking multiple candidate routes across separate calls",
+              "Formatting a final natural-language answer"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "origin": {
+                  "type": "object",
+                  "properties": {
+                    "lat": {
+                      "type": "number"
+                    },
+                    "lon": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "lat",
+                    "lon"
+                  ]
+                },
+                "destination": {
+                  "type": "object",
+                  "properties": {
+                    "lat": {
+                      "type": "number"
+                    },
+                    "lon": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "lat",
+                    "lon"
+                  ]
+                },
+                "travel_mode": {
+                  "type": "string",
+                  "enum": [
+                    "car",
+                    "foot"
+                  ],
+                  "description": "Semantic travel mode internally mapped to the deployment's coupled routing engine parameter."
+                }
+              },
+              "required": [
+                "origin",
+                "destination",
+                "travel_mode"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "route_url": {
+                  "type": "string"
+                },
+                "travel_mode": {
+                  "type": "string",
+                  "enum": [
+                    "car",
+                    "foot"
+                  ]
+                },
+                "origin": {
+                  "type": "object",
+                  "properties": {
+                    "lat": {
+                      "type": "number"
+                    },
+                    "lon": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "lat",
+                    "lon"
+                  ]
+                },
+                "destination": {
+                  "type": "object",
+                  "properties": {
+                    "lat": {
+                      "type": "number"
+                    },
+                    "lon": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "lat",
+                    "lon"
+                  ]
+                },
+                "distance_text": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "duration_text": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "duration_minutes": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "page_summary_text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "route_url",
+                "travel_mode",
+                "origin",
+                "destination",
+                "distance_text",
+                "duration_text",
+                "duration_minutes",
+                "page_summary_text"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "map.route_summary"
+            ],
+            "supported_patterns": [
+              "Open car directions by coordinates and parse displayed distance/time summary",
+              "Open walking directions by coordinates and parse displayed distance/time summary",
+              "Return null summary fields when the page does not expose a parsable route summary without fabricating values"
+            ],
+            "guarantees": {
+              "collection_scope": "page",
+              "completeness": "conditional",
+              "supports_absence_proof": false,
+              "configuration": {
+                "kind": "semantic_enum",
+                "supported_values": [
+                  "car",
+                  "foot"
+                ],
+                "coupled_site_parameters_hidden": true
+              }
+            },
+            "acceptance_checks": [
+              "Navigates to a site directions URL that encodes the supplied origin and destination coordinates and the internally mapped engine for the requested travel_mode.",
+              "Returns page_summary_text from the loaded directions page body rather than raw DOM handles.",
+              "If the page exposes a visible route summary containing Distance and Time semantics, distance_text and duration_text are parsed from displayed content.",
+              "If duration_text is displayed in 0:MM form, duration_minutes equals the parsed integer minute value; otherwise duration_minutes may be null.",
+              "When no parsable summary is shown, summary fields remain null rather than implying navigation failure."
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task37_t77",
+                "template_id": "77",
+                "code_quote": "route_url = ( f\"{START_URL}/directions?from={ORIGIN_LAT},{ORIGIN_LON}\" f\"&to={dest_lat},{dest_lon}&engine=fossgis_osrm_car\" ) ... body_text = await page.locator(\"body\").inner_text() ... if line.startswith(\"Distance:\"): distance_line = line ... if \"Time:\" in line and line.startswith(\"Distance:\"): time_line = line",
+                "explanation": "Generalized the demonstrated car directions-page acquisition from hard-coded coordinates into caller-supplied coordinates while preserving displayed summary parsing."
+              },
+              {
+                "workflow_id": "task218_t41",
+                "template_id": "41",
+                "code_quote": "url = (f\"{BASE_URL}/directions?engine=fossgis_osrm_foot&route=\" f\"{candidate['lat']},{candidate['lon']};{CMU_LAT},{CMU_LON}#map=16/40.4461/-79.9405\") ... match = re.search(r\"Distance:\\s*([^\\.]+m)\\.\\s*Time:\\s*0:(\\d{2})\", body_text)",
+                "explanation": "Added walking-mode evidence and unified the coupled engine mapping behind a semantic enum with typed distance/time extraction from the displayed page."
+              }
+            ]
+          }
+        }
+      ],
+      "workflow_attribution": [
+        {
+          "workflow_id": "task37_t77",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0,
+            1
+          ]
+        },
+        {
+          "workflow_id": "task152_t36",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0
+          ]
+        },
+        {
+          "workflow_id": "task85_t64",
+          "decision": "SKIP",
+          "reason": "Its UI search-result parsing and text-input directions submission are subsumed by the richer backend search primitive and coordinate-based directions-page primitive already preserved in this batch; the task-specific workflow adds no non-lossy typed output fields or supported configuration beyond those adds."
+        },
+        {
+          "workflow_id": "task218_t41",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            1
+          ]
+        }
+      ],
+      "candidate_attribution": [
+        {
+          "candidate_id": "task37_t77::search_places_by_text_query",
+          "decision": "ADD",
+          "operation_index": 0
+        },
+        {
+          "candidate_id": "task37_t77::get_car_route_summary_between_coordinates",
+          "decision": "ADD",
+          "operation_index": 1
+        },
+        {
+          "candidate_id": "task152_t36::search_places_by_text",
+          "decision": "ADD",
+          "operation_index": 0
+        },
+        {
+          "candidate_id": "task152_t36::get_driving_route",
+          "decision": "REJECT",
+          "target_id": null,
+          "reason": "Boundary defect: this candidate exposes a raw routing-backend JSON acquisition rather than stable map-site page semantics, while the batch evidence supports a site directions-page primitive instead."
+        },
+        {
+          "candidate_id": "task85_t64::search_place_records",
+          "decision": "COVERED",
+          "target_id": "map/search_places",
+          "reason": "The added search_places primitive subsumes the demonstrated place-search acquisition and returns richer typed records, including the displayed place label via display_name plus stable coordinate/identity fields."
+        },
+        {
+          "candidate_id": "task85_t64::get_route_directions_summary",
+          "decision": "REJECT",
+          "target_id": null,
+          "reason": "Evidence defect: the workflow fills free-text directions inputs but does not demonstrate a stable typed parser for origin_text/destination_text fields distinct from generic summary text, and the robust evidenced reusable acquisition in this batch is coordinate-based directions-page parsing."
+        },
+        {
+          "candidate_id": "task218_t41::get_foot_route_summary_between_coordinates",
+          "decision": "ADD",
+          "operation_index": 1
+        }
+      ]
+    },
+    "quality_verdicts": null,
+    "errors": [
+      "candidate_attribution[4] COVERED target drops extracted output fields ['href', 'label', 'results']; use backward-compatible UPDATE or REJECT"
+    ]
+  },
+  {
+    "attempt": 2,
+    "proposal": {
+      "operations": [
+        {
+          "op": "ADD",
+          "replacement": {
+            "primitive_id": "map/search_places",
+            "method": "search_places",
+            "capability": "search the map deployment's place-search backend by free-text query and return typed place candidates",
+            "method_code": "def search_places(self, query: str, limit: int = 10) -> dict:\n    import requests\n\n    if not isinstance(query, str) or not query.strip():\n        raise ValueError(\"query must be a non-empty string\")\n    if not isinstance(limit, int) or limit <= 0:\n        raise ValueError(\"limit must be a positive integer\")\n\n    response = requests.get(\n        \"http://18.208.187.221:8085/search\",\n        params={\"q\": query, \"format\": \"jsonv2\", \"limit\": limit},\n        timeout=30,\n    )\n    response.raise_for_status()\n    payload = response.json()\n    if not isinstance(payload, list):\n        raise ValueError(\"unexpected search response shape\")\n\n    results = []\n    for row in payload:\n        if not isinstance(row, dict):\n            continue\n        try:\n            lat = float(row[\"lat\"])\n            lon = float(row[\"lon\"])\n        except (KeyError, TypeError, ValueError):\n            continue\n\n        href = None\n        osm_type = row.get(\"osm_type\")\n        osm_id = row.get(\"osm_id\")\n        if osm_type is not None and osm_id is not None:\n            href = f\"/search?query={query}\"\n\n        results.append({\n            \"label\": str(row.get(\"display_name\", \"\")),\n            \"display_name\": str(row.get(\"display_name\", \"\")),\n            \"href\": href,\n            \"lat\": lat,\n            \"lon\": lon,\n            \"place_id\": str(row[\"place_id\"]) if row.get(\"place_id\") is not None else None,\n            \"osm_type\": str(osm_type) if osm_type is not None else None,\n            \"osm_id\": str(osm_id) if osm_id is not None else None,\n            \"boundingbox\": row.get(\"boundingbox\") if isinstance(row.get(\"boundingbox\"), list) else None,\n            \"class_name\": str(row.get(\"class\")) if row.get(\"class\") is not None else None,\n            \"type_name\": str(row.get(\"type\")) if row.get(\"type\") is not None else None,\n            \"importance\": float(row[\"importance\"]) if row.get(\"importance\") is not None else None,\n        })\n\n    return {\"results\": results}",
+            "owns": [
+              "Constructing the site-local search request to the map deployment's place-search backend with caller-supplied query text",
+              "Fetching and parsing the JSON search response",
+              "Returning typed place candidate records with stable site-exposed fields such as displayed label, display name, coordinates, and stable identity/location metadata when present",
+              "Applying the demonstrated result limit parameter as part of this site's search request shape"
+            ],
+            "does_not_own": [
+              "Choosing task-specific query text such as 'Pittsburgh police station' or 'Upitt'",
+              "Selecting the best candidate for a task from among returned results",
+              "Inferring whether a result satisfies a category, jurisdiction, or relevance criterion beyond what the site returns",
+              "Computing routes or travel times",
+              "Combining or comparing results from multiple distinct queries"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "query": {
+                  "type": "string",
+                  "description": "Free-text place query to submit to the site's search backend."
+                },
+                "limit": {
+                  "type": "integer",
+                  "description": "Maximum number of place candidates to request.",
+                  "default": 10,
+                  "minimum": 1
+                }
+              },
+              "required": [
+                "query"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "results": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "label": {
+                        "type": "string"
+                      },
+                      "display_name": {
+                        "type": "string"
+                      },
+                      "href": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "lat": {
+                        "type": "number"
+                      },
+                      "lon": {
+                        "type": "number"
+                      },
+                      "place_id": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "osm_type": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "osm_id": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "boundingbox": {
+                        "type": [
+                          "array",
+                          "null"
+                        ],
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "class_name": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "type_name": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "importance": {
+                        "type": [
+                          "number",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "label",
+                      "display_name",
+                      "href",
+                      "lat",
+                      "lon",
+                      "place_id",
+                      "osm_type",
+                      "osm_id",
+                      "boundingbox",
+                      "class_name",
+                      "type_name",
+                      "importance"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "results"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "map.place_search_results"
+            ],
+            "supported_patterns": [
+              "Search by arbitrary free-text query against the map deployment's place index",
+              "Return zero or more typed place candidates for workflow-side disambiguation",
+              "Preserve both the displayed label text and stable coordinate/identity fields when present"
+            ],
+            "guarantees": {
+              "collection_scope": "query",
+              "completeness": "partial",
+              "supports_absence_proof": false,
+              "configuration": {
+                "kind": "internal",
+                "supported_values": [],
+                "coupled_site_parameters_hidden": true
+              }
+            },
+            "acceptance_checks": [
+              "Given a non-empty query, returns a JSON-decoded list of typed place records rather than DOM text or raw HTML.",
+              "Each returned record includes label/display_name plus numeric lat and lon parsed from the site's search response.",
+              "When the backend returns no matches, the method returns {'results': []} as a valid query outcome distinct from request failure.",
+              "If present in the backend response, stable fields such as place_id, osm_type, osm_id, boundingbox, class/type, and importance are preserved in typed output."
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task37_t77",
+                "template_id": "77",
+                "code_quote": "SEARCH_API = \"http://18.208.187.221:8085/search?q={query}&format=json&limit=10\" ... search_resp = await client.get(search_url) ... search_results = search_resp.json()",
+                "explanation": "Generalized the workflow's site-local search backend call from a hard-coded police-station query into a caller-supplied free-text place search with typed result parsing."
+              },
+              {
+                "workflow_id": "task152_t36",
+                "template_id": "36",
+                "code_quote": "def geocode(query):\\n    url = NOMINATIM + \"search?format=jsonv2&limit=5&q=\" + urllib.parse.quote(query)\\n    return fetch_json(url)",
+                "explanation": "Added evidence that the same deployment supports parameterized Nominatim-style JSON search and preserves stable geocoding fields beyond just display_name/lat/lon."
+              },
+              {
+                "workflow_id": "task85_t64",
+                "template_id": "64",
+                "code_quote": "await page.locator('input:visible').first.fill('La Quinta Inn Pittsburgh Airport') ... hotel_link = page.get_by_role('link', name='La Quinta Inn by Wyndham Pittsburgh Airport, University Boulevard, Carnot, Moon Township, Allegheny County, 15108, United States') ... await hotel_link.inner_text()",
+                "explanation": "Preserved the UI candidate's demonstrated displayed result label field by including both label and display_name in the returned typed records, avoiding lossy coverage of the UI search-result extraction."
+              }
+            ]
+          }
+        },
+        {
+          "op": "ADD",
+          "replacement": {
+            "primitive_id": "map/get_route_summary_by_coordinates",
+            "method": "get_route_summary_by_coordinates",
+            "capability": "open the map deployment's directions page for a supported travel mode between two coordinates and extract the displayed route summary into typed route fields",
+            "method_code": "def get_route_summary_by_coordinates(self, origin: dict, destination: dict, travel_mode: str) -> dict:\n    import re\n\n    if travel_mode not in {\"car\", \"foot\"}:\n        raise ValueError(\"travel_mode must be one of: car, foot\")\n\n    def _validate_point(name: str, value: dict):\n        if not isinstance(value, dict):\n            raise ValueError(f\"{name} must be an object with lat and lon\")\n        try:\n            lat = float(value[\"lat\"])\n            lon = float(value[\"lon\"])\n        except (KeyError, TypeError, ValueError):\n            raise ValueError(f\"{name} must include numeric lat and lon\")\n        return lat, lon\n\n    origin_lat, origin_lon = _validate_point(\"origin\", origin)\n    dest_lat, dest_lon = _validate_point(\"destination\", destination)\n\n    engine_map = {\n        \"car\": \"fossgis_osrm_car\",\n        \"foot\": \"fossgis_osrm_foot\",\n    }\n    engine = engine_map[travel_mode]\n    route_url = (\n        \"http://ec2-18-223-172-69.us-east-2.compute.amazonaws.com:3000\"\n        f\"/directions?engine={engine}&route={origin_lat},{origin_lon};{dest_lat},{dest_lon}\"\n    )\n\n    self.page.goto(route_url, wait_until=\"domcontentloaded\")\n    self.page.wait_for_timeout(2500)\n    body_text = self.page.locator(\"body\").inner_text()\n\n    distance_text = None\n    duration_text = None\n    duration_minutes = None\n\n    match = re.search(r\"Distance:\\s*([^\\.\\n]+(?:m|km))\\.\\s*Time:\\s*([^\\n]+)\", body_text)\n    if match:\n        distance_text = match.group(1).strip()\n        duration_text = match.group(2).strip().rstrip(\".\")\n    else:\n        for line in body_text.splitlines():\n            line = line.strip()\n            if line.startswith(\"Distance:\"):\n                before_time = line.split(\"Time:\", 1)[0]\n                distance_text = before_time.split(\"Distance:\", 1)[1].strip().rstrip(\".\")\n                if \"Time:\" in line:\n                    duration_text = line.split(\"Time:\", 1)[1].strip().rstrip(\".\")\n                break\n\n    if duration_text:\n        minute_match = re.fullmatch(r\"0:(\\d{2})\", duration_text)\n        if minute_match:\n            duration_minutes = int(minute_match.group(1))\n\n    return {\n        \"route_url\": self.page.url,\n        \"travel_mode\": travel_mode,\n        \"origin\": {\"lat\": origin_lat, \"lon\": origin_lon},\n        \"destination\": {\"lat\": dest_lat, \"lon\": dest_lon},\n        \"distance_text\": distance_text,\n        \"duration_text\": duration_text,\n        \"duration_minutes\": duration_minutes,\n        \"page_summary_text\": body_text,\n    }",
+            "owns": [
+              "Constructing the site directions URL with origin and destination coordinates",
+              "Hiding the deployment-coupled engine mapping behind a semantic travel_mode enum",
+              "Loading the directions page on the map site",
+              "Reading visible page text and parsing route summary fields exposed in stable site semantics",
+              "Returning typed route summary fields and the final route URL"
+            ],
+            "does_not_own": [
+              "Geocoding origin or destination from user text",
+              "Choosing which destinations or origins to compare",
+              "Filtering routes by a caller threshold such as 'within one hour' or 'at most 5 minutes'",
+              "Ranking multiple candidate routes across separate calls",
+              "Formatting a final natural-language answer"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "origin": {
+                  "type": "object",
+                  "properties": {
+                    "lat": {
+                      "type": "number"
+                    },
+                    "lon": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "lat",
+                    "lon"
+                  ]
+                },
+                "destination": {
+                  "type": "object",
+                  "properties": {
+                    "lat": {
+                      "type": "number"
+                    },
+                    "lon": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "lat",
+                    "lon"
+                  ]
+                },
+                "travel_mode": {
+                  "type": "string",
+                  "enum": [
+                    "car",
+                    "foot"
+                  ],
+                  "description": "Semantic travel mode internally mapped to the deployment's coupled routing engine parameter."
+                }
+              },
+              "required": [
+                "origin",
+                "destination",
+                "travel_mode"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "route_url": {
+                  "type": "string"
+                },
+                "travel_mode": {
+                  "type": "string",
+                  "enum": [
+                    "car",
+                    "foot"
+                  ]
+                },
+                "origin": {
+                  "type": "object",
+                  "properties": {
+                    "lat": {
+                      "type": "number"
+                    },
+                    "lon": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "lat",
+                    "lon"
+                  ]
+                },
+                "destination": {
+                  "type": "object",
+                  "properties": {
+                    "lat": {
+                      "type": "number"
+                    },
+                    "lon": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "lat",
+                    "lon"
+                  ]
+                },
+                "distance_text": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "duration_text": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "duration_minutes": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "page_summary_text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "route_url",
+                "travel_mode",
+                "origin",
+                "destination",
+                "distance_text",
+                "duration_text",
+                "duration_minutes",
+                "page_summary_text"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "map.route_summary"
+            ],
+            "supported_patterns": [
+              "Open car directions by coordinates and parse displayed distance/time summary",
+              "Open walking directions by coordinates and parse displayed distance/time summary",
+              "Return null summary fields when the page does not expose a parsable route summary without fabricating values"
+            ],
+            "guarantees": {
+              "collection_scope": "page",
+              "completeness": "conditional",
+              "supports_absence_proof": false,
+              "configuration": {
+                "kind": "semantic_enum",
+                "supported_values": [
+                  "car",
+                  "foot"
+                ],
+                "coupled_site_parameters_hidden": true
+              }
+            },
+            "acceptance_checks": [
+              "Navigates to a site directions URL that encodes the supplied origin and destination coordinates and the internally mapped engine for the requested travel_mode.",
+              "Returns page_summary_text from the loaded directions page body rather than raw DOM handles.",
+              "If the page exposes a visible route summary containing Distance and Time semantics, distance_text and duration_text are parsed from displayed content.",
+              "If duration_text is displayed in 0:MM form, duration_minutes equals the parsed integer minute value; otherwise duration_minutes may be null.",
+              "When no parsable summary is shown, summary fields remain null rather than implying navigation failure."
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task37_t77",
+                "template_id": "77",
+                "code_quote": "route_url = ( f\"{START_URL}/directions?from={ORIGIN_LAT},{ORIGIN_LON}\" f\"&to={dest_lat},{dest_lon}&engine=fossgis_osrm_car\" ) ... body_text = await page.locator(\"body\").inner_text() ... if line.startswith(\"Distance:\"): distance_line = line ... if \"Time:\" in line and line.startswith(\"Distance:\"): time_line = line",
+                "explanation": "Generalized the demonstrated car directions-page acquisition from hard-coded coordinates into caller-supplied coordinates while preserving displayed summary parsing."
+              },
+              {
+                "workflow_id": "task218_t41",
+                "template_id": "41",
+                "code_quote": "url = (f\"{BASE_URL}/directions?engine=fossgis_osrm_foot&route=\" f\"{candidate['lat']},{candidate['lon']};{CMU_LAT},{CMU_LON}#map=16/40.4461/-79.9405\") ... match = re.search(r\"Distance:\\s*([^\\.]+m)\\.\\s*Time:\\s*0:(\\d{2})\", body_text)",
+                "explanation": "Added walking-mode evidence and unified the coupled engine mapping behind a semantic enum with typed distance/time extraction from the displayed page."
+              }
+            ]
+          }
+        }
+      ],
+      "workflow_attribution": [
+        {
+          "workflow_id": "task37_t77",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0,
+            1
+          ]
+        },
+        {
+          "workflow_id": "task152_t36",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0
+          ]
+        },
+        {
+          "workflow_id": "task85_t64",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0
+          ]
+        },
+        {
+          "workflow_id": "task218_t41",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            1
+          ]
+        }
+      ],
+      "candidate_attribution": [
+        {
+          "candidate_id": "task37_t77::search_places_by_text_query",
+          "decision": "ADD",
+          "operation_index": 0
+        },
+        {
+          "candidate_id": "task37_t77::get_car_route_summary_between_coordinates",
+          "decision": "ADD",
+          "operation_index": 1
+        },
+        {
+          "candidate_id": "task152_t36::search_places_by_text",
+          "decision": "ADD",
+          "operation_index": 0
+        },
+        {
+          "candidate_id": "task152_t36::get_driving_route",
+          "decision": "REJECT",
+          "target_id": null,
+          "reason": "Boundary defect: this candidate acquires raw routing-backend JSON from a site-internal service rather than stable map-site page semantics, while the batch evidence supports a reusable directions-page primitive at the site boundary instead."
+        },
+        {
+          "candidate_id": "task85_t64::search_place_records",
+          "decision": "ADD",
+          "operation_index": 0
+        },
+        {
+          "candidate_id": "task85_t64::get_route_directions_summary",
+          "decision": "REJECT",
+          "target_id": null,
+          "reason": "Evidence defect: the workflow does not actually parse stable typed origin_text and destination_text fields distinct from generic page summary text, and the demonstrated reusable typed core already preserved in this batch is the coordinate-based directions-page summary extraction."
+        },
+        {
+          "candidate_id": "task218_t41::get_foot_route_summary_between_coordinates",
+          "decision": "ADD",
+          "operation_index": 1
+        }
+      ]
+    },
+    "quality_verdicts": {
+      "verdicts": [
+        {
+          "operation_index": 0,
+          "verdict": "PASS",
+          "reason": "Source evidence directly supports a site-local place-search primitive using caller-supplied query text against the deployment search backend/Nominatim-style endpoint. The method owns acquisition/parsing only, returns typed records, preserves stable evidenced fields, and valid empty output is distinguishable from failure via {'results': []}. The generalized limit parameter is site-native and evidenced. Minor href synthesis is not strongly evidenced as a stable record field, but it does not introduce task filtering or contradict the contract."
+        },
+        {
+          "operation_index": 1,
+          "verdict": "FAIL",
+          "reason": "The primitive is overly lossy and partially unsupported relative to the cited evidence. Evidence supports typed displayed route-summary extraction, but the method returns raw full-page text as page_summary_text rather than a narrower typed site record, and it omits richer stable distinctions implied by the UI/page evidence while claiming a typed route-summary primitive. More importantly, the cited car evidence uses /directions?from=...&to=...&engine=..., while the method constructs a different /directions?engine=...&route=... request shape without direct support from the car evidence; the foot evidence alone does not directly support generalizing both modes to that same URL shape. This creates code/evidence mismatch for the claimed site operation."
+        }
+      ],
+      "rejection_verdicts": [
+        {
+          "candidate_id": "task152_t36::get_driving_route",
+          "verdict": "PASS",
+          "reason": "Reject is justified. After removing task framing, the demonstrated core is a raw routing-backend JSON call to an internal OSRM service, not the stable map-site boundary evidenced elsewhere in the batch. The reusable site primitive is better retained as directions-page acquisition/parsing rather than this backend-specific candidate."
+        },
+        {
+          "candidate_id": "task85_t64::get_route_directions_summary",
+          "verdict": "FAIL",
+          "reason": "This REJECT is too strong. The evidence demonstrates a reusable site-local directions acquisition core: open /directions, fill origin/destination inputs, submit, and parse displayed summary text/time from the page. Even if the proposed output overclaims origin_text/destination_text, the candidate should be narrowed to a typed directions-page summary primitive rather than rejected outright."
+        }
+      ]
+    },
+    "errors": [
+      "quality gate rejected operation 1: The primitive is overly lossy and partially unsupported relative to the cited evidence. Evidence supports typed displayed route-summary extraction, but the method returns raw full-page text as page_summary_text rather than a narrower typed site record, and it omits richer stable distinctions implied by the UI/page evidence while claiming a typed route-summary primitive. More importantly, the cited car evidence uses /directions?from=...&to=...&engine=..., while the method constructs a different /directions?engine=...&route=... request shape without direct support from the car evidence; the foot evidence alone does not directly support generalizing both modes to that same URL shape. This creates code/evidence mismatch for the claimed site operation.",
+      "coverage gate rejected dropping task85_t64::get_route_directions_summary: This REJECT is too strong. The evidence demonstrates a reusable site-local directions acquisition core: open /directions, fill origin/destination inputs, submit, and parse displayed summary text/time from the page. Even if the proposed output overclaims origin_text/destination_text, the candidate should be narrowed to a typed directions-page summary primitive rather than rejected outright."
+    ]
+  },
+  {
+    "attempt": 3,
+    "proposal": {
+      "operations": [
+        {
+          "op": "ADD",
+          "replacement": {
+            "primitive_id": "map/search_places",
+            "method": "search_places",
+            "capability": "search the map deployment's place-search backend by free-text query and return typed place candidates",
+            "method_code": "def search_places(self, query: str, limit: int = 10) -> dict:\n    import requests\n\n    if not isinstance(query, str) or not query.strip():\n        raise ValueError(\"query must be a non-empty string\")\n    if not isinstance(limit, int) or limit <= 0:\n        raise ValueError(\"limit must be a positive integer\")\n\n    response = requests.get(\n        \"http://18.208.187.221:8085/search\",\n        params={\"q\": query, \"format\": \"jsonv2\", \"limit\": limit},\n        timeout=30,\n    )\n    response.raise_for_status()\n    payload = response.json()\n    if not isinstance(payload, list):\n        raise ValueError(\"unexpected search response shape\")\n\n    results = []\n    for row in payload:\n        if not isinstance(row, dict):\n            continue\n        try:\n            lat = float(row[\"lat\"])\n            lon = float(row[\"lon\"])\n        except (KeyError, TypeError, ValueError):\n            continue\n\n        results.append({\n            \"label\": str(row.get(\"display_name\", \"\")),\n            \"display_name\": str(row.get(\"display_name\", \"\")),\n            \"lat\": lat,\n            \"lon\": lon,\n            \"place_id\": str(row[\"place_id\"]) if row.get(\"place_id\") is not None else None,\n            \"osm_type\": str(row[\"osm_type\"]) if row.get(\"osm_type\") is not None else None,\n            \"osm_id\": str(row[\"osm_id\"]) if row.get(\"osm_id\") is not None else None,\n            \"boundingbox\": row.get(\"boundingbox\") if isinstance(row.get(\"boundingbox\"), list) else None,\n            \"class_name\": str(row.get(\"class\")) if row.get(\"class\") is not None else None,\n            \"type_name\": str(row.get(\"type\")) if row.get(\"type\") is not None else None,\n            \"importance\": float(row[\"importance\"]) if row.get(\"importance\") is not None else None,\n        })\n\n    return {\"results\": results}",
+            "owns": [
+              "Constructing the site-local search request to the map deployment's place-search backend with caller-supplied query text",
+              "Fetching and parsing the JSON search response",
+              "Returning typed place candidate records with stable site-exposed fields such as displayed label, display name, coordinates, and stable identity/location metadata when present",
+              "Applying the demonstrated result limit parameter as part of this site's search request shape"
+            ],
+            "does_not_own": [
+              "Choosing task-specific query text such as 'Pittsburgh police station' or 'Upitt'",
+              "Selecting the best candidate for a task from among returned results",
+              "Inferring whether a result satisfies a category, jurisdiction, or relevance criterion beyond what the site returns",
+              "Computing routes or travel times",
+              "Combining or comparing results from multiple distinct queries"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "query": {
+                  "type": "string",
+                  "description": "Free-text place query to submit to the site's search backend."
+                },
+                "limit": {
+                  "type": "integer",
+                  "description": "Maximum number of place candidates to request.",
+                  "default": 10,
+                  "minimum": 1
+                }
+              },
+              "required": [
+                "query"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "results": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "label": {
+                        "type": "string"
+                      },
+                      "display_name": {
+                        "type": "string"
+                      },
+                      "lat": {
+                        "type": "number"
+                      },
+                      "lon": {
+                        "type": "number"
+                      },
+                      "place_id": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "osm_type": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "osm_id": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "boundingbox": {
+                        "type": [
+                          "array",
+                          "null"
+                        ],
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "class_name": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "type_name": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "importance": {
+                        "type": [
+                          "number",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "label",
+                      "display_name",
+                      "lat",
+                      "lon",
+                      "place_id",
+                      "osm_type",
+                      "osm_id",
+                      "boundingbox",
+                      "class_name",
+                      "type_name",
+                      "importance"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "results"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "map.place_search_results"
+            ],
+            "supported_patterns": [
+              "Search by arbitrary free-text query against the map deployment's place index",
+              "Return zero or more typed place candidates for workflow-side disambiguation",
+              "Preserve displayed result label text together with stable coordinate and identity/location fields when present"
+            ],
+            "guarantees": {
+              "collection_scope": "query",
+              "completeness": "partial",
+              "supports_absence_proof": false,
+              "configuration": {
+                "kind": "internal",
+                "supported_values": [],
+                "coupled_site_parameters_hidden": true
+              }
+            },
+            "acceptance_checks": [
+              "Given a non-empty query, returns a parsed JSON list of typed place records rather than DOM text or raw HTML.",
+              "Each returned record includes label/display_name plus numeric lat and lon parsed from the site's search response.",
+              "When the backend returns no matches, the method returns {'results': []} as a valid query outcome distinct from request failure.",
+              "If present in the backend response, stable fields such as place_id, osm_type, osm_id, boundingbox, class/type, and importance are preserved in typed output."
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task37_t77",
+                "template_id": "77",
+                "code_quote": "SEARCH_API = \"http://18.208.187.221:8085/search?q={query}&format=json&limit=10\" ... search_resp = await client.get(search_url) ... search_results = search_resp.json()",
+                "explanation": "Generalized the workflow's site-local search backend call from a hard-coded police-station query into a caller-supplied free-text place search with typed result parsing."
+              },
+              {
+                "workflow_id": "task152_t36",
+                "template_id": "36",
+                "code_quote": "def geocode(query):\n    url = NOMINATIM + \"search?format=jsonv2&limit=5&q=\" + urllib.parse.quote(query)\n    return fetch_json(url)",
+                "explanation": "Added evidence that the same deployment supports parameterized Nominatim-style JSON search and preserves stable geocoding fields beyond just display_name/lat/lon."
+              },
+              {
+                "workflow_id": "task85_t64",
+                "template_id": "64",
+                "code_quote": "await page.locator('input:visible').first.fill('La Quinta Inn Pittsburgh Airport') ... hotel_link = page.get_by_role('link', name='La Quinta Inn by Wyndham Pittsburgh Airport, University Boulevard, Carnot, Moon Township, Allegheny County, 15108, United States') ... await hotel_link.inner_text()",
+                "explanation": "Preserved the UI candidate's demonstrated displayed result label field by including label alongside display_name in the returned typed records, avoiding lossy coverage."
+              }
+            ]
+          }
+        },
+        {
+          "op": "ADD",
+          "replacement": {
+            "primitive_id": "map/get_directions_summary_by_text_inputs",
+            "method": "get_directions_summary_by_text_inputs",
+            "capability": "submit origin, destination, and supported travel mode on the map site's directions page and parse the displayed route summary into typed fields",
+            "method_code": "def get_directions_summary_by_text_inputs(self, origin: str, destination: str, travel_mode: str) -> dict:\n    import re\n\n    if not isinstance(origin, str) or not origin.strip():\n        raise ValueError(\"origin must be a non-empty string\")\n    if not isinstance(destination, str) or not destination.strip():\n        raise ValueError(\"destination must be a non-empty string\")\n    if travel_mode not in {\"car\"}:\n        raise ValueError(\"travel_mode must be 'car'\")\n\n    self.page.goto(\n        \"http://ec2-18-223-172-69.us-east-2.compute.amazonaws.com:3000/directions\",\n        wait_until=\"networkidle\",\n    )\n    self.page.locator('input[name=\"route_from\"]:visible').fill(origin)\n    self.page.locator('input[name=\"route_to\"]:visible').fill(destination)\n    self.page.get_by_role(\"button\", name=\"Go\").click()\n    self.page.wait_for_load_state(\"networkidle\")\n    self.page.wait_for_timeout(2000)\n\n    summary_text = self.page.locator(\"#sidebar_content\").inner_text()\n    body_text = self.page.locator(\"body\").inner_text()\n\n    distance_text = None\n    duration_text = None\n\n    line_match = re.search(r\"Distance:\\s*([^\\.\\n]+(?:m|km))\\.\\s*Time:\\s*([^\\n]+)\", body_text)\n    if line_match:\n        distance_text = line_match.group(1).strip()\n        duration_text = line_match.group(2).strip().rstrip(\".\")\n    else:\n        duration_match = re.search(r\"Time:\\s*([^\\n]+)\", body_text)\n        if duration_match:\n            duration_text = duration_match.group(1).strip().rstrip(\".\")\n        distance_match = re.search(r\"Distance:\\s*([^\\.\\n]+(?:m|km))\", body_text)\n        if distance_match:\n            distance_text = distance_match.group(1).strip().rstrip(\".\")\n\n    no_route = False\n    if not duration_text and not distance_text:\n        lowered = body_text.lower()\n        if \"no route\" in lowered or \"route not found\" in lowered:\n            no_route = True\n\n    return {\n        \"route_url\": self.page.url,\n        \"travel_mode\": travel_mode,\n        \"summary_text\": summary_text,\n        \"distance_text\": distance_text,\n        \"duration_text\": duration_text,\n        \"has_route\": (distance_text is not None or duration_text is not None),\n        \"no_route\": no_route,\n    }",
+            "owns": [
+              "Opening the site's directions page",
+              "Filling the site's origin and destination routing inputs with caller-supplied text",
+              "Submitting the route request through the site UI",
+              "Parsing the rendered directions summary for displayed distance and time fields",
+              "Returning a typed directions summary record from stable page semantics"
+            ],
+            "does_not_own": [
+              "Choosing task-specific origin or destination entities",
+              "Selecting among ambiguous search interpretations before routing",
+              "Ranking alternative routes beyond what the page displays",
+              "Converting the parsed duration into a user-facing narrative answer",
+              "Filtering results by a caller threshold such as 'within one hour'"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "origin": {
+                  "type": "string",
+                  "description": "Origin place text to enter in the route_from field."
+                },
+                "destination": {
+                  "type": "string",
+                  "description": "Destination place text to enter in the route_to field."
+                },
+                "travel_mode": {
+                  "type": "string",
+                  "enum": [
+                    "car"
+                  ],
+                  "description": "Semantic routing mode evidenced by the workflow; site control details remain internal."
+                }
+              },
+              "required": [
+                "origin",
+                "destination",
+                "travel_mode"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "route_url": {
+                  "type": "string"
+                },
+                "travel_mode": {
+                  "type": "string",
+                  "enum": [
+                    "car"
+                  ]
+                },
+                "summary_text": {
+                  "type": "string"
+                },
+                "distance_text": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "duration_text": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "has_route": {
+                  "type": "boolean"
+                },
+                "no_route": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "route_url",
+                "travel_mode",
+                "summary_text",
+                "distance_text",
+                "duration_text",
+                "has_route",
+                "no_route"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "map.directions_summary"
+            ],
+            "supported_patterns": [
+              "Submit car directions by text origin and destination through the site UI",
+              "Parse displayed sidebar/body route summary into typed distance and duration fields when shown",
+              "Return a distinguishable no-route outcome when no displayed route summary is parsed and the page indicates no route"
+            ],
+            "guarantees": {
+              "collection_scope": "page",
+              "completeness": "conditional",
+              "supports_absence_proof": false,
+              "configuration": {
+                "kind": "semantic_enum",
+                "supported_values": [
+                  "car"
+                ],
+                "coupled_site_parameters_hidden": true
+              }
+            },
+            "acceptance_checks": [
+              "Navigates to the site's /directions page, fills route_from and route_to, and submits the form for the requested travel_mode.",
+              "Returns summary_text from the rendered directions sidebar rather than DOM handles or raw HTML.",
+              "If the page displays route summary Distance and/or Time semantics, the corresponding typed fields are populated from visible content.",
+              "The output distinguishes a parsed route summary from a no-route outcome via has_route and no_route booleans without fabricating duration or distance values."
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task85_t64",
+                "template_id": "64",
+                "code_quote": "last_resp = await page.goto(f'{START_URL}/directions', wait_until='networkidle')\nawait page.locator('input[name=route_from]:visible').fill('La Quinta Inn by Wyndham Pittsburgh Airport')\nawait page.locator('input[name=route_to]:visible').fill('Carnegie Mellon University')\nawait page.get_by_role('button', name='Go').click()\n...\nsummary_text = await page.locator('#sidebar_content').inner_text()\n...\ntime_match = re.search(r'Time:\\s*0:30', page_text)",
+                "explanation": "Preserved the evidenced reusable UI core: open the directions page, fill origin and destination text inputs, submit, and parse displayed route-summary text and time from the resulting page. Narrowed the output to fields actually supported by the workflow evidence rather than overclaiming parsed origin_text or destination_text."
+              }
+            ]
+          }
+        },
+        {
+          "op": "ADD",
+          "replacement": {
+            "primitive_id": "map/get_directions_summary_by_coordinates",
+            "method": "get_directions_summary_by_coordinates",
+            "capability": "open the map deployment's directions page for a supported travel mode between two coordinates and extract displayed route summary fields",
+            "method_code": "def get_directions_summary_by_coordinates(self, origin: dict, destination: dict, travel_mode: str) -> dict:\n    import re\n\n    def _validate_point(name: str, value: dict):\n        if not isinstance(value, dict):\n            raise ValueError(f\"{name} must be an object with lat and lon\")\n        try:\n            lat = float(value[\"lat\"])\n            lon = float(value[\"lon\"])\n        except (KeyError, TypeError, ValueError):\n            raise ValueError(f\"{name} must include numeric lat and lon\")\n        return lat, lon\n\n    origin_lat, origin_lon = _validate_point(\"origin\", origin)\n    dest_lat, dest_lon = _validate_point(\"destination\", destination)\n\n    if travel_mode == \"car\":\n        route_url = (\n            \"http://ec2-18-223-172-69.us-east-2.compute.amazonaws.com:3000\"\n            f\"/directions?from={origin_lat},{origin_lon}&to={dest_lat},{dest_lon}&engine=fossgis_osrm_car\"\n        )\n    elif travel_mode == \"foot\":\n        route_url = (\n            \"http://ec2-18-223-172-69.us-east-2.compute.amazonaws.com:3000\"\n            f\"/directions?engine=fossgis_osrm_foot&route={origin_lat},{origin_lon};{dest_lat},{dest_lon}\"\n        )\n    else:\n        raise ValueError(\"travel_mode must be one of: car, foot\")\n\n    self.page.goto(route_url, wait_until=\"domcontentloaded\")\n    self.page.wait_for_timeout(2500)\n    body_text = self.page.locator(\"body\").inner_text()\n\n    distance_text = None\n    duration_text = None\n    duration_minutes = None\n\n    summary_match = re.search(r\"Distance:\\s*([^\\.\\n]+(?:m|km))\\.\\s*Time:\\s*([^\\n]+)\", body_text)\n    if summary_match:\n        distance_text = summary_match.group(1).strip()\n        duration_text = summary_match.group(2).strip().rstrip(\".\")\n    else:\n        for line in body_text.splitlines():\n            line = line.strip()\n            if line.startswith(\"Distance:\"):\n                distance_part = line.split(\"Time:\", 1)[0]\n                distance_text = distance_part.split(\"Distance:\", 1)[1].strip().rstrip(\".\")\n                if \"Time:\" in line:\n                    duration_text = line.split(\"Time:\", 1)[1].strip().rstrip(\".\")\n                break\n\n    if duration_text:\n        minute_match = re.fullmatch(r\"0:(\\d{2})\", duration_text)\n        if minute_match:\n            duration_minutes = int(minute_match.group(1))\n\n    return {\n        \"route_url\": self.page.url,\n        \"travel_mode\": travel_mode,\n        \"origin\": {\"lat\": origin_lat, \"lon\": origin_lon},\n        \"destination\": {\"lat\": dest_lat, \"lon\": dest_lon},\n        \"distance_text\": distance_text,\n        \"duration_text\": duration_text,\n        \"duration_minutes\": duration_minutes,\n        \"has_route\": (distance_text is not None or duration_text is not None),\n    }",
+            "owns": [
+              "Constructing the site directions URL with origin and destination coordinates using the evidenced mode-specific request shape",
+              "Hiding the deployment-coupled engine selection behind a semantic travel_mode enum",
+              "Loading the directions page on the map site",
+              "Reading visible page text and parsing displayed route summary fields",
+              "Returning typed route summary fields and the final route URL"
+            ],
+            "does_not_own": [
+              "Geocoding origin or destination from user text",
+              "Choosing which destinations or origins to compare",
+              "Filtering routes by a caller threshold such as 'within one hour' or 'at most 5 minutes'",
+              "Ranking multiple candidate routes across separate calls",
+              "Formatting a final natural-language answer"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "origin": {
+                  "type": "object",
+                  "properties": {
+                    "lat": {
+                      "type": "number"
+                    },
+                    "lon": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "lat",
+                    "lon"
+                  ]
+                },
+                "destination": {
+                  "type": "object",
+                  "properties": {
+                    "lat": {
+                      "type": "number"
+                    },
+                    "lon": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "lat",
+                    "lon"
+                  ]
+                },
+                "travel_mode": {
+                  "type": "string",
+                  "enum": [
+                    "car",
+                    "foot"
+                  ],
+                  "description": "Semantic travel mode internally mapped to the evidenced site request shape for that mode."
+                }
+              },
+              "required": [
+                "origin",
+                "destination",
+                "travel_mode"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "route_url": {
+                  "type": "string"
+                },
+                "travel_mode": {
+                  "type": "string",
+                  "enum": [
+                    "car",
+                    "foot"
+                  ]
+                },
+                "origin": {
+                  "type": "object",
+                  "properties": {
+                    "lat": {
+                      "type": "number"
+                    },
+                    "lon": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "lat",
+                    "lon"
+                  ]
+                },
+                "destination": {
+                  "type": "object",
+                  "properties": {
+                    "lat": {
+                      "type": "number"
+                    },
+                    "lon": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "lat",
+                    "lon"
+                  ]
+                },
+                "distance_text": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "duration_text": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "duration_minutes": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "has_route": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "route_url",
+                "travel_mode",
+                "origin",
+                "destination",
+                "distance_text",
+                "duration_text",
+                "duration_minutes",
+                "has_route"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "map.directions_summary"
+            ],
+            "supported_patterns": [
+              "Open car directions by coordinates using the evidenced from/to URL shape and parse displayed distance/time summary",
+              "Open walking directions by coordinates using the evidenced route URL shape and parse displayed distance/time summary",
+              "Return null summary fields when the page does not expose a parsable route summary without fabricating values"
+            ],
+            "guarantees": {
+              "collection_scope": "page",
+              "completeness": "conditional",
+              "supports_absence_proof": false,
+              "configuration": {
+                "kind": "semantic_enum",
+                "supported_values": [
+                  "car",
+                  "foot"
+                ],
+                "coupled_site_parameters_hidden": true
+              }
+            },
+            "acceptance_checks": [
+              "For travel_mode='car', navigates to a site directions URL using the evidenced from/to coordinate parameters and car engine.",
+              "For travel_mode='foot', navigates to a site directions URL using the evidenced route coordinate parameter and walking engine.",
+              "Returns typed distance_text and duration_text only when visible route-summary semantics are parsed from the loaded page.",
+              "If duration_text is displayed in 0:MM form, duration_minutes equals the parsed integer minute value; otherwise duration_minutes may be null.",
+              "When no parsable summary is shown, has_route is false and summary fields remain null rather than implying navigation failure."
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task37_t77",
+                "template_id": "77",
+                "code_quote": "route_url = (\n    f\"{START_URL}/directions?from={ORIGIN_LAT},{ORIGIN_LON}\"\n    f\"&to={dest_lat},{dest_lon}&engine=fossgis_osrm_car\"\n) ... body_text = await page.locator(\"body\").inner_text() ... if line.startswith(\"Distance:\"): distance_line = line ... if \"Time:\" in line and line.startswith(\"Distance:\"): time_line = line",
+                "explanation": "Generalized the demonstrated car directions-page acquisition from hard-coded coordinates into caller-supplied coordinates while preserving the evidenced car-specific from/to URL shape and displayed summary parsing."
+              },
+              {
+                "workflow_id": "task218_t41",
+                "template_id": "41",
+                "code_quote": "url = (\n    f\"{BASE_URL}/directions?engine=fossgis_osrm_foot&route=\"\n    f\"{candidate['lat']},{candidate['lon']};{CMU_LAT},{CMU_LON}#map=16/40.4461/-79.9405\"\n)\n... mins, distance, body_text = await extract_distance_time(page)",
+                "explanation": "Added walking-mode evidence using the distinct evidenced route URL shape for foot directions and preserved typed parsing of displayed distance and time fields."
+              }
+            ]
+          }
+        }
+      ],
+      "workflow_attribution": [
+        {
+          "workflow_id": "task37_t77",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0,
+            2
+          ]
+        },
+        {
+          "workflow_id": "task152_t36",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0
+          ]
+        },
+        {
+          "workflow_id": "task85_t64",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0,
+            1
+          ]
+        },
+        {
+          "workflow_id": "task218_t41",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            2
+          ]
+        }
+      ],
+      "candidate_attribution": [
+        {
+          "candidate_id": "task37_t77::search_places_by_text_query",
+          "decision": "ADD",
+          "operation_index": 0
+        },
+        {
+          "candidate_id": "task37_t77::get_car_route_summary_between_coordinates",
+          "decision": "ADD",
+          "operation_index": 2
+        },
+        {
+          "candidate_id": "task152_t36::search_places_by_text",
+          "decision": "ADD",
+          "operation_index": 0
+        },
+        {
+          "candidate_id": "task152_t36::get_driving_route",
+          "decision": "REJECT",
+          "target_id": null,
+          "reason": "Boundary defect: this candidate acquires raw routing-backend JSON from a site-internal service rather than stable map-site page semantics. The batch evidence supports reusable directions-page primitives at the site boundary instead."
+        },
+        {
+          "candidate_id": "task85_t64::search_place_records",
+          "decision": "ADD",
+          "operation_index": 0
+        },
+        {
+          "candidate_id": "task85_t64::get_route_directions_summary",
+          "decision": "ADD",
+          "operation_index": 1
+        },
+        {
+          "candidate_id": "task218_t41::get_foot_route_summary_between_coordinates",
+          "decision": "ADD",
+          "operation_index": 2
+        }
+      ]
+    },
+    "quality_verdicts": {
+      "verdicts": [
+        {
+          "operation_index": 0,
+          "verdict": "PASS",
+          "reason": "Source evidence directly supports a reusable site-local place search primitive: workflows show the deployment's /search endpoint with caller-supplied query text and JSON parsing, and UI evidence supports preserving displayed label text. The method performs site acquisition/parsing only, returns typed records, distinguishes valid empty results from failure, and keeps task-specific query choice/selection outside the primitive. owns/does_not_own and contracts are consistent."
+        },
+        {
+          "operation_index": 1,
+          "verdict": "FAIL",
+          "reason": "The operation overclaims supported semantic configuration and parsing behavior. Source evidence shows filling origin/destination and submitting on /directions, but does not directly evidence a stable semantic travel_mode parameter beyond the page's current selected control value for car, nor a reliable no-route page indication using strings like 'no route'/'route not found'. The code does not actually use travel_mode to drive any site control, so the claimed semantic enum support is not meaningfully mapped in code. Acceptance checks and guarantees therefore exceed evidence/implementation."
+        },
+        {
+          "operation_index": 2,
+          "verdict": "PASS",
+          "reason": "Source evidence directly supports both coordinate-based car and foot directions URL shapes on the site and parsing displayed distance/time from page text. The method validates structured coordinates, hides site-coupled engine details behind a semantic enum with internal mapping for every supported value, returns typed output, and avoids task-specific filtering/ranking. Contracts, owns/does_not_own, and implementation are consistent."
+        }
+      ],
+      "rejection_verdicts": [
+        {
+          "candidate_id": "task152_t36::get_driving_route",
+          "verdict": "FAIL",
+          "reason": "This REJECT should not stand. The candidate demonstrates a reusable site-local acquisition core: constructing a routing request from caller-supplied coordinates, fetching site-backed route JSON, and parsing typed duration/distance facts. Even if the proposed boundary is too low-level versus a preferred page-semantics primitive, removing task logic does not leave nothing reusable. Per policy, such a candidate should be narrowed to a retained site route-acquisition primitive rather than rejected outright."
+        }
+      ]
+    },
+    "errors": [
+      "quality gate rejected operation 1: The operation overclaims supported semantic configuration and parsing behavior. Source evidence shows filling origin/destination and submitting on /directions, but does not directly evidence a stable semantic travel_mode parameter beyond the page's current selected control value for car, nor a reliable no-route page indication using strings like 'no route'/'route not found'. The code does not actually use travel_mode to drive any site control, so the claimed semantic enum support is not meaningfully mapped in code. Acceptance checks and guarantees therefore exceed evidence/implementation.",
+      "coverage gate rejected dropping task152_t36::get_driving_route: This REJECT should not stand. The candidate demonstrates a reusable site-local acquisition core: constructing a routing request from caller-supplied coordinates, fetching site-backed route JSON, and parsing typed duration/distance facts. Even if the proposed boundary is too low-level versus a preferred page-semantics primitive, removing task logic does not leave nothing reusable. Per policy, such a candidate should be narrowed to a retained site route-acquisition primitive rather than rejected outright."
+    ]
+  },
+  {
+    "attempt": 4,
+    "proposal": {
+      "operations": [
+        {
+          "op": "ADD",
+          "replacement": {
+            "primitive_id": "map/search_places",
+            "method": "search_places",
+            "capability": "search the map deployment's place-search backend by free-text query and return typed place candidates",
+            "method_code": "def search_places(self, query: str, limit: int = 10) -> dict:\n    import requests\n\n    if not isinstance(query, str) or not query.strip():\n        raise ValueError(\"query must be a non-empty string\")\n    if not isinstance(limit, int) or limit <= 0:\n        raise ValueError(\"limit must be a positive integer\")\n\n    response = requests.get(\n        \"http://18.208.187.221:8085/search\",\n        params={\"q\": query, \"format\": \"jsonv2\", \"limit\": limit},\n        timeout=30,\n    )\n    response.raise_for_status()\n    payload = response.json()\n    if not isinstance(payload, list):\n        raise ValueError(\"unexpected search response shape\")\n\n    results = []\n    for row in payload:\n        if not isinstance(row, dict):\n            continue\n        try:\n            lat = float(row[\"lat\"])\n            lon = float(row[\"lon\"])\n        except (KeyError, TypeError, ValueError):\n            continue\n\n        display_name = str(row.get(\"display_name\", \"\"))\n        results.append({\n            \"label\": display_name,\n            \"display_name\": display_name,\n            \"lat\": lat,\n            \"lon\": lon,\n            \"place_id\": str(row[\"place_id\"]) if row.get(\"place_id\") is not None else None,\n            \"osm_type\": str(row[\"osm_type\"]) if row.get(\"osm_type\") is not None else None,\n            \"osm_id\": str(row[\"osm_id\"]) if row.get(\"osm_id\") is not None else None,\n            \"boundingbox\": row.get(\"boundingbox\") if isinstance(row.get(\"boundingbox\"), list) else None,\n            \"class_name\": str(row.get(\"class\")) if row.get(\"class\") is not None else None,\n            \"type_name\": str(row.get(\"type\")) if row.get(\"type\") is not None else None,\n            \"importance\": float(row[\"importance\"]) if row.get(\"importance\") is not None else None,\n        })\n\n    return {\"results\": results}\n",
+            "owns": [
+              "Constructing the site-local search request to the map deployment's place-search backend with caller-supplied query text",
+              "Fetching and parsing the JSON search response",
+              "Returning typed place candidate records with stable site-exposed fields such as displayed label, display name, coordinates, and stable identity/location metadata when present",
+              "Applying the demonstrated result limit parameter as part of this site's search request shape"
+            ],
+            "does_not_own": [
+              "Choosing task-specific query text such as 'Pittsburgh police station' or 'Upitt'",
+              "Selecting the best candidate for a task from among returned results",
+              "Inferring whether a result satisfies a category, jurisdiction, or relevance criterion beyond what the site returns",
+              "Computing routes or travel times",
+              "Combining or comparing results from multiple distinct queries"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "query": {
+                  "type": "string",
+                  "description": "Free-text place query to submit to the site's search backend."
+                },
+                "limit": {
+                  "type": "integer",
+                  "description": "Maximum number of place candidates to request.",
+                  "default": 10,
+                  "minimum": 1
+                }
+              },
+              "required": [
+                "query"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "results": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "label": {
+                        "type": "string"
+                      },
+                      "display_name": {
+                        "type": "string"
+                      },
+                      "lat": {
+                        "type": "number"
+                      },
+                      "lon": {
+                        "type": "number"
+                      },
+                      "place_id": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "osm_type": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "osm_id": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "boundingbox": {
+                        "type": [
+                          "array",
+                          "null"
+                        ],
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "class_name": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "type_name": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "importance": {
+                        "type": [
+                          "number",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "label",
+                      "display_name",
+                      "lat",
+                      "lon",
+                      "place_id",
+                      "osm_type",
+                      "osm_id",
+                      "boundingbox",
+                      "class_name",
+                      "type_name",
+                      "importance"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "results"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "map.place_search_results"
+            ],
+            "supported_patterns": [
+              "Search by arbitrary free-text query against the map deployment's place index",
+              "Return zero or more typed place candidates for workflow-side disambiguation",
+              "Preserve displayed result label text together with stable coordinate and identity/location fields when present"
+            ],
+            "guarantees": {
+              "collection_scope": "query",
+              "completeness": "partial",
+              "supports_absence_proof": false,
+              "configuration": {
+                "kind": "internal",
+                "supported_values": [],
+                "coupled_site_parameters_hidden": true
+              }
+            },
+            "acceptance_checks": [
+              "Given a non-empty query, returns a parsed JSON list of typed place records rather than DOM text or raw HTML.",
+              "Each returned record includes label/display_name plus numeric lat and lon parsed from the site's search response.",
+              "When the backend returns no matches, the method returns {'results': []} as a valid query outcome distinct from request failure.",
+              "If present in the backend response, stable fields such as place_id, osm_type, osm_id, boundingbox, class/type, and importance are preserved in typed output."
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task37_t77",
+                "template_id": "77",
+                "code_quote": "SEARCH_API = \"http://18.208.187.221:8085/search?q={query}&format=json&limit=10\" ... search_resp = await client.get(search_url) ... search_results = search_resp.json()",
+                "explanation": "Generalized the workflow's site-local search backend call from a hard-coded police-station query into a caller-supplied free-text place search with typed result parsing."
+              },
+              {
+                "workflow_id": "task152_t36",
+                "template_id": "36",
+                "code_quote": "def geocode(query):\n    url = NOMINATIM + \"search?format=jsonv2&limit=5&q=\" + urllib.parse.quote(query)\n    return fetch_json(url)",
+                "explanation": "Added evidence that the same deployment supports parameterized Nominatim-style JSON search and preserves stable geocoding fields beyond just display_name/lat/lon."
+              },
+              {
+                "workflow_id": "task85_t64",
+                "template_id": "64",
+                "code_quote": "await page.locator('input:visible').first.fill('La Quinta Inn Pittsburgh Airport') ... hotel_link = page.get_by_role('link', name='La Quinta Inn by Wyndham Pittsburgh Airport, University Boulevard, Carnot, Moon Township, Allegheny County, 15108, United States') ... await hotel_link.inner_text()",
+                "explanation": "Preserved the UI candidate's demonstrated displayed result label field by including label alongside display_name in the returned typed records, avoiding lossy coverage."
+              }
+            ]
+          }
+        },
+        {
+          "op": "ADD",
+          "replacement": {
+            "primitive_id": "map/get_route_summary_by_coordinates",
+            "method": "get_route_summary_by_coordinates",
+            "capability": "retrieve a route summary between two coordinates from the map deployment using an evidenced supported travel mode and return typed distance and duration facts",
+            "method_code": "def get_route_summary_by_coordinates(self, origin: dict, destination: dict, travel_mode: str) -> dict:\n    import requests\n\n    def _parse_point(name: str, value: dict) -> tuple[float, float]:\n        if not isinstance(value, dict):\n            raise ValueError(f\"{name} must be an object with lat and lon\")\n        try:\n            lat = float(value[\"lat\"])\n            lon = float(value[\"lon\"])\n        except (KeyError, TypeError, ValueError):\n            raise ValueError(f\"{name} must include numeric lat and lon\")\n        return lat, lon\n\n    origin_lat, origin_lon = _parse_point(\"origin\", origin)\n    dest_lat, dest_lon = _parse_point(\"destination\", destination)\n\n    if travel_mode != \"car\":\n        raise ValueError(\"travel_mode must be 'car'\")\n\n    response = requests.get(\n        f\"http://18.208.187.221:5000/route/v1/driving/{origin_lon},{origin_lat};{dest_lon},{dest_lat}\",\n        params={\"overview\": \"false\", \"steps\": \"true\", \"geometries\": \"polyline\"},\n        timeout=30,\n    )\n    response.raise_for_status()\n    payload = response.json()\n    if not isinstance(payload, dict):\n        raise ValueError(\"unexpected route response shape\")\n\n    raw_routes = payload.get(\"routes\")\n    routes = []\n    if isinstance(raw_routes, list):\n        for row in raw_routes:\n            if not isinstance(row, dict):\n                continue\n            duration = row.get(\"duration\")\n            distance = row.get(\"distance\")\n            try:\n                duration_sec = float(duration)\n                distance_m = float(distance)\n            except (TypeError, ValueError):\n                continue\n            routes.append({\n                \"duration_sec\": duration_sec,\n                \"distance_m\": distance_m,\n            })\n\n    waypoints_out = []\n    raw_waypoints = payload.get(\"waypoints\")\n    if isinstance(raw_waypoints, list):\n        for row in raw_waypoints:\n            if not isinstance(row, dict):\n                continue\n            location = row.get(\"location\")\n            waypoint = {\n                \"name\": str(row.get(\"name\", \"\")),\n                \"lon\": None,\n                \"lat\": None,\n            }\n            if isinstance(location, list) and len(location) >= 2:\n                try:\n                    waypoint[\"lon\"] = float(location[0])\n                    waypoint[\"lat\"] = float(location[1])\n                except (TypeError, ValueError):\n                    waypoint[\"lon\"] = None\n                    waypoint[\"lat\"] = None\n            waypoints_out.append(waypoint)\n\n    return {\n        \"travel_mode\": travel_mode,\n        \"origin\": {\"lat\": origin_lat, \"lon\": origin_lon},\n        \"destination\": {\"lat\": dest_lat, \"lon\": dest_lon},\n        \"routes\": routes,\n        \"waypoints\": waypoints_out,\n    }\n",
+            "owns": [
+              "Constructing the site's evidenced car route request from origin and destination coordinates",
+              "Fetching typed route data from the deployment's routing service used by the map site",
+              "Parsing returned route summaries into objective duration and distance facts",
+              "Preserving waypoint metadata when present in the response"
+            ],
+            "does_not_own": [
+              "Geocoding place names into coordinates",
+              "Choosing which origin/destination pairs to compare",
+              "Ranking multiple route results across separate calls",
+              "Formatting duration into a final answer string",
+              "Applying task-specific thresholds such as 'within one hour' or 'at most 5 minutes'"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "origin": {
+                  "type": "object",
+                  "properties": {
+                    "lat": {
+                      "type": "number"
+                    },
+                    "lon": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "lat",
+                    "lon"
+                  ]
+                },
+                "destination": {
+                  "type": "object",
+                  "properties": {
+                    "lat": {
+                      "type": "number"
+                    },
+                    "lon": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "lat",
+                    "lon"
+                  ]
+                },
+                "travel_mode": {
+                  "type": "string",
+                  "enum": [
+                    "car"
+                  ],
+                  "description": "Semantic travel mode evidenced by the workflow and internally mapped to the site's driving route request shape."
+                }
+              },
+              "required": [
+                "origin",
+                "destination",
+                "travel_mode"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "travel_mode": {
+                  "type": "string",
+                  "enum": [
+                    "car"
+                  ]
+                },
+                "origin": {
+                  "type": "object",
+                  "properties": {
+                    "lat": {
+                      "type": "number"
+                    },
+                    "lon": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "lat",
+                    "lon"
+                  ]
+                },
+                "destination": {
+                  "type": "object",
+                  "properties": {
+                    "lat": {
+                      "type": "number"
+                    },
+                    "lon": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "lat",
+                    "lon"
+                  ]
+                },
+                "routes": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "duration_sec": {
+                        "type": "number"
+                      },
+                      "distance_m": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "duration_sec",
+                      "distance_m"
+                    ]
+                  }
+                },
+                "waypoints": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "lon": {
+                        "type": [
+                          "number",
+                          "null"
+                        ]
+                      },
+                      "lat": {
+                        "type": [
+                          "number",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "lon",
+                      "lat"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "travel_mode",
+                "origin",
+                "destination",
+                "routes",
+                "waypoints"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "map.route_summary"
+            ],
+            "supported_patterns": [
+              "Retrieve car route summaries for caller-supplied coordinate pairs",
+              "Return one or more typed route summaries with duration and distance facts",
+              "Preserve waypoint metadata when present in the routing response"
+            ],
+            "guarantees": {
+              "collection_scope": "single",
+              "completeness": "conditional",
+              "supports_absence_proof": false,
+              "configuration": {
+                "kind": "semantic_enum",
+                "supported_values": [
+                  "car"
+                ],
+                "coupled_site_parameters_hidden": true
+              }
+            },
+            "acceptance_checks": [
+              "Given numeric origin and destination coordinates and travel_mode='car', issues the site's evidenced driving route request and returns parsed JSON facts.",
+              "Each returned route record contains numeric duration_sec and distance_m values parsed from the response.",
+              "If waypoint metadata is present, each returned waypoint record includes typed name and nullable numeric lon/lat fields.",
+              "A successful response with no parsable route entries returns an empty routes array rather than fabricated route facts."
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task152_t36",
+                "template_id": "36",
+                "code_quote": "def route(a_lon, a_lat, b_lon, b_lat):\n    url = f\"{OSRM}{a_lon},{a_lat};{b_lon},{b_lat}?overview=false&steps=true&geometries=polyline\"\n    return fetch_json(url)\n...\ndata = route(origin['lon'], origin['lat'], row['lon'], row['lat'])\nroute0 = data['routes'][0]\n...\n\"duration_sec\": route0['duration'],\n\"distance_m\": route0['distance']",
+                "explanation": "Retained the candidate's evidenced reusable acquisition core by parameterizing caller-supplied coordinates and parsing typed duration/distance facts from the routing response instead of rejecting it."
+              }
+            ]
+          }
+        },
+        {
+          "op": "ADD",
+          "replacement": {
+            "primitive_id": "map/get_displayed_route_summary_by_coordinates",
+            "method": "get_displayed_route_summary_by_coordinates",
+            "capability": "open the map deployment's directions page for an evidenced supported travel mode between two coordinates and extract displayed route summary fields",
+            "method_code": "def get_displayed_route_summary_by_coordinates(self, origin: dict, destination: dict, travel_mode: str) -> dict:\n    import re\n\n    def _validate_point(name: str, value: dict):\n        if not isinstance(value, dict):\n            raise ValueError(f\"{name} must be an object with lat and lon\")\n        try:\n            lat = float(value[\"lat\"])\n            lon = float(value[\"lon\"])\n        except (KeyError, TypeError, ValueError):\n            raise ValueError(f\"{name} must include numeric lat and lon\")\n        return lat, lon\n\n    origin_lat, origin_lon = _validate_point(\"origin\", origin)\n    dest_lat, dest_lon = _validate_point(\"destination\", destination)\n\n    if travel_mode == \"car\":\n        route_url = (\n            \"http://ec2-18-223-172-69.us-east-2.compute.amazonaws.com:3000\"\n            f\"/directions?from={origin_lat},{origin_lon}&to={dest_lat},{dest_lon}&engine=fossgis_osrm_car\"\n        )\n    elif travel_mode == \"foot\":\n        route_url = (\n            \"http://ec2-18-223-172-69.us-east-2.compute.amazonaws.com:3000\"\n            f\"/directions?engine=fossgis_osrm_foot&route={origin_lat},{origin_lon};{dest_lat},{dest_lon}\"\n        )\n    else:\n        raise ValueError(\"travel_mode must be one of: car, foot\")\n\n    self.page.goto(route_url, wait_until=\"domcontentloaded\")\n    self.page.wait_for_timeout(2500)\n    body_text = self.page.locator(\"body\").inner_text()\n\n    distance_text = None\n    duration_text = None\n    duration_minutes = None\n\n    summary_match = re.search(r\"Distance:\\s*([^\\.\\n]+(?:m|km))\\.\\s*Time:\\s*([^\\n]+)\", body_text)\n    if summary_match:\n        distance_text = summary_match.group(1).strip()\n        duration_text = summary_match.group(2).strip().rstrip(\".\")\n    else:\n        for line in body_text.splitlines():\n            line = line.strip()\n            if line.startswith(\"Distance:\"):\n                distance_part = line.split(\"Time:\", 1)[0]\n                distance_text = distance_part.split(\"Distance:\", 1)[1].strip().rstrip(\".\")\n                if \"Time:\" in line:\n                    duration_text = line.split(\"Time:\", 1)[1].strip().rstrip(\".\")\n                break\n\n    if duration_text:\n        minute_match = re.fullmatch(r\"0:(\\d{2})\", duration_text)\n        if minute_match:\n            duration_minutes = int(minute_match.group(1))\n\n    return {\n        \"route_url\": self.page.url,\n        \"travel_mode\": travel_mode,\n        \"origin\": {\"lat\": origin_lat, \"lon\": origin_lon},\n        \"destination\": {\"lat\": dest_lat, \"lon\": dest_lon},\n        \"distance_text\": distance_text,\n        \"duration_text\": duration_text,\n        \"duration_minutes\": duration_minutes,\n        \"page_summary_text\": body_text,\n        \"has_route\": (distance_text is not None or duration_text is not None),\n    }\n",
+            "owns": [
+              "Constructing the site directions URL with origin and destination coordinates using the evidenced mode-specific request shape",
+              "Hiding the deployment-coupled engine selection behind a semantic travel_mode enum",
+              "Loading the directions page on the map site",
+              "Reading visible page text and parsing displayed route summary fields",
+              "Returning typed route summary fields and the final route URL"
+            ],
+            "does_not_own": [
+              "Geocoding origin or destination from user text",
+              "Choosing which destinations or origins to compare",
+              "Filtering routes by a caller threshold such as 'within one hour' or 'at most 5 minutes'",
+              "Ranking multiple candidate routes across separate calls",
+              "Formatting a final natural-language answer"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "origin": {
+                  "type": "object",
+                  "properties": {
+                    "lat": {
+                      "type": "number"
+                    },
+                    "lon": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "lat",
+                    "lon"
+                  ]
+                },
+                "destination": {
+                  "type": "object",
+                  "properties": {
+                    "lat": {
+                      "type": "number"
+                    },
+                    "lon": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "lat",
+                    "lon"
+                  ]
+                },
+                "travel_mode": {
+                  "type": "string",
+                  "enum": [
+                    "car",
+                    "foot"
+                  ],
+                  "description": "Semantic travel mode internally mapped to the evidenced site request shape for that mode."
+                }
+              },
+              "required": [
+                "origin",
+                "destination",
+                "travel_mode"
+              ]
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "route_url": {
+                  "type": "string"
+                },
+                "travel_mode": {
+                  "type": "string",
+                  "enum": [
+                    "car",
+                    "foot"
+                  ]
+                },
+                "origin": {
+                  "type": "object",
+                  "properties": {
+                    "lat": {
+                      "type": "number"
+                    },
+                    "lon": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "lat",
+                    "lon"
+                  ]
+                },
+                "destination": {
+                  "type": "object",
+                  "properties": {
+                    "lat": {
+                      "type": "number"
+                    },
+                    "lon": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "lat",
+                    "lon"
+                  ]
+                },
+                "distance_text": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "duration_text": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "duration_minutes": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "page_summary_text": {
+                  "type": "string"
+                },
+                "has_route": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "route_url",
+                "travel_mode",
+                "origin",
+                "destination",
+                "distance_text",
+                "duration_text",
+                "duration_minutes",
+                "page_summary_text",
+                "has_route"
+              ]
+            },
+            "requires": [],
+            "provides": [
+              "map.displayed_directions_summary"
+            ],
+            "supported_patterns": [
+              "Open car directions by coordinates using the evidenced from/to URL shape and parse displayed distance/time summary",
+              "Open walking directions by coordinates using the evidenced route URL shape and parse displayed distance/time summary",
+              "Return null summary fields when the page does not expose a parsable route summary without fabricating values"
+            ],
+            "guarantees": {
+              "collection_scope": "page",
+              "completeness": "conditional",
+              "supports_absence_proof": false,
+              "configuration": {
+                "kind": "semantic_enum",
+                "supported_values": [
+                  "car",
+                  "foot"
+                ],
+                "coupled_site_parameters_hidden": true
+              }
+            },
+            "acceptance_checks": [
+              "For travel_mode='car', navigates to a site directions URL using the evidenced from/to coordinate parameters and car engine.",
+              "For travel_mode='foot', navigates to a site directions URL using the evidenced route coordinate parameter and walking engine.",
+              "Returns page_summary_text from the loaded directions page body rather than DOM handles or raw HTML.",
+              "Returns typed distance_text and duration_text only when visible route-summary semantics are parsed from the loaded page.",
+              "If duration_text is displayed in 0:MM form, duration_minutes equals the parsed integer minute value; otherwise duration_minutes may be null."
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task37_t77",
+                "template_id": "77",
+                "code_quote": "route_url = (\n    f\"{START_URL}/directions?from={ORIGIN_LAT},{ORIGIN_LON}\"\n    f\"&to={dest_lat},{dest_lon}&engine=fossgis_osrm_car\"\n) ... body_text = await page.locator(\"body\").inner_text() ... if line.startswith(\"Distance:\"): distance_line = line ... if \"Time:\" in line and line.startswith(\"Distance:\"): time_line = line",
+                "explanation": "Generalized the demonstrated car directions-page acquisition from hard-coded coordinates into caller-supplied coordinates while preserving the evidenced car-specific from/to URL shape and displayed summary parsing."
+              },
+              {
+                "workflow_id": "task218_t41",
+                "template_id": "41",
+                "code_quote": "url = (\n    f\"{BASE_URL}/directions?engine=fossgis_osrm_foot&route=\"\n    f\"{candidate['lat']},{candidate['lon']};{CMU_LAT},{CMU_LON}#map=16/40.4461/-79.9405\"\n)\nresp = await page.goto(url, wait_until=\"domcontentloaded\")\nmins, distance, body_text = await extract_distance_time(page)",
+                "explanation": "Added walking-mode evidence using the distinct evidenced route URL shape for foot directions and preserved typed parsing of displayed distance and time fields."
+              }
+            ]
+          }
+        }
+      ],
+      "workflow_attribution": [
+        {
+          "workflow_id": "task37_t77",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0,
+            2
+          ]
+        },
+        {
+          "workflow_id": "task152_t36",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0,
+            1
+          ]
+        },
+        {
+          "workflow_id": "task85_t64",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0
+          ]
+        },
+        {
+          "workflow_id": "task218_t41",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            2
+          ]
+        }
+      ],
+      "candidate_attribution": [
+        {
+          "candidate_id": "task37_t77::search_places_by_text_query",
+          "decision": "ADD",
+          "operation_index": 0
+        },
+        {
+          "candidate_id": "task37_t77::get_car_route_summary_between_coordinates",
+          "decision": "ADD",
+          "operation_index": 2
+        },
+        {
+          "candidate_id": "task152_t36::search_places_by_text",
+          "decision": "ADD",
+          "operation_index": 0
+        },
+        {
+          "candidate_id": "task152_t36::get_driving_route",
+          "decision": "ADD",
+          "operation_index": 1
+        },
+        {
+          "candidate_id": "task85_t64::search_place_records",
+          "decision": "ADD",
+          "operation_index": 0
+        },
+        {
+          "candidate_id": "task85_t64::get_route_directions_summary",
+          "decision": "REJECT",
+          "target_id": null,
+          "reason": "Boundary/evidence defect: the extracted candidate claims a reusable text-input directions primitive with a public transport_mode input and parsed origin/destination summary fields, but the source code only observes the page's existing selected control value, does not actually set transport mode, and does not reliably parse typed origin_text or destination_text. The evidenced reusable core in this batch is preserved by the coordinate-based displayed-directions primitive instead."
+        },
+        {
+          "candidate_id": "task218_t41::get_foot_route_summary_between_coordinates",
+          "decision": "ADD",
+          "operation_index": 2
+        }
+      ]
+    },
+    "quality_verdicts": {
+      "verdicts": [
+        {
+          "operation_index": 0,
+          "verdict": "PASS",
+          "reason": "Source evidence directly supports a reusable site search primitive against the map deployment's search backend with caller-supplied free-text query and limit. The method performs site-local request construction and JSON parsing, returns typed records, preserves stable evidenced/objective fields, and valid empty output is distinguishable from failure. owns/does_not_own are consistent and the operation does not embed task-specific filtering or ranking."
+        },
+        {
+          "operation_index": 1,
+          "verdict": "PASS",
+          "reason": "Source evidence supports a site-local routing primitive over caller-supplied coordinates using the deployment's driving backend. The method owns request construction and parsing of objective route facts, hides the site-coupled driving profile behind a semantic enum with full internal mapping for the only supported value, validates/uses coordinate ordering correctly in the request, and returns typed routes/waypoints with empty routes distinguishable from failure."
+        },
+        {
+          "operation_index": 2,
+          "verdict": "PASS",
+          "reason": "Source evidence supports loading the site's directions page for both evidenced car and foot modes and parsing displayed summary text into typed fields. The method keeps engine selection internally coupled to the semantic travel_mode values, validates coordinates before URL construction, performs site-specific page acquisition/parsing rather than task-specific filtering, and returns a typed no-summary outcome via null fields plus has_route=false rather than fabricating values."
+        }
+      ],
+      "rejection_verdicts": [
+        {
+          "candidate_id": "task85_t64::get_route_directions_summary",
+          "verdict": "PASS",
+          "reason": "Reject is justified. The cited candidate's claimed reusable primitive boundary is not directly supported by the source: evidence shows filling origin/destination and reading existing selected mode/summary text, but not a reliable reusable transport_mode-setting abstraction nor typed origin/destination summary parsing as claimed. Removing those unsupported/task-shaped claims leaves no stronger reusable core beyond the narrower coordinate-based displayed-directions primitives already retained in ADD operations."
+        }
+      ]
+    },
+    "errors": []
+  }
+]

@@ -1,0 +1,707 @@
+{
+  "operations": [
+    {
+      "op": "ADD",
+      "replacement": {
+        "primitive_id": "shopping/login_and_fetch_order_history",
+        "method": "login_and_fetch_order_history",
+        "capability": "authenticate to the shopping site and retrieve the My Orders history page HTML for the signed-in customer",
+        "method_code": "def login_and_fetch_order_history(self, base_url, username, password):\n    import re\n\n    root = base_url.rstrip('/')\n    login_url = root + '/customer/account/login/'\n    login_resp = self.page.request.get(\n        login_url,\n        headers={'User-Agent': 'Mozilla/5.0'},\n        fail_on_status_code=False,\n    )\n    login_html = login_resp.text()\n    form_key_match = re.search(r'name=\"form_key\" type=\"hidden\" value=\"([^\"]+)\"', login_html)\n    if not form_key_match:\n        raise RuntimeError('Login form_key not found on customer login page')\n    form_key = form_key_match.group(1)\n\n    self.page.request.post(\n        root + '/customer/account/loginPost/',\n        form={\n            'form_key': form_key,\n            'login[username]': username,\n            'login[password]': password,\n        },\n        headers={\n            'User-Agent': 'Mozilla/5.0',\n            'Referer': login_url,\n        },\n        fail_on_status_code=False,\n    )\n\n    orders_url = root + '/sales/order/history/'\n    orders_resp = self.page.request.get(\n        orders_url,\n        headers={'User-Agent': 'Mozilla/5.0'},\n        fail_on_status_code=False,\n    )\n    orders_html = orders_resp.text()\n    final_url = orders_resp.url\n    authenticated = bool(\n        ('<title>My Orders</title>' in orders_html)\n        or ('My Orders' in orders_html)\n        or ('/sales/order/history/' in (final_url or ''))\n    )\n\n    return {\n        'final_url': final_url,\n        'document_status': orders_resp.status,\n        'html': orders_html,\n        'response_headers': dict(orders_resp.headers),\n        'authenticated': authenticated,\n    }\n",
+        "owns": [
+          "Fetching the login page",
+          "Extracting the hidden form_key required by the site's login form",
+          "Submitting site-specific login credentials to the site's login endpoint",
+          "Retaining authenticated cookies across requests",
+          "Requesting the authenticated /sales/order/history/ page",
+          "Returning the retrieved order history page HTML and request metadata"
+        ],
+        "does_not_own": [
+          "Parsing order rows into typed records",
+          "Filtering by date range",
+          "Classifying which statuses count as fulfilled",
+          "Summing or counting order amounts",
+          "Any task-specific reporting or answer formatting"
+        ],
+        "input_contract": {
+          "type": "object",
+          "properties": {
+            "base_url": {
+              "type": "string",
+              "description": "Base URL of the shopping site deployment"
+            },
+            "username": {
+              "type": "string",
+              "description": "Customer login username/email"
+            },
+            "password": {
+              "type": "string",
+              "description": "Customer login password"
+            }
+          },
+          "required": [
+            "base_url",
+            "username",
+            "password"
+          ]
+        },
+        "output_contract": {
+          "type": "object",
+          "properties": {
+            "final_url": {
+              "type": "string"
+            },
+            "document_status": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "html": {
+              "type": "string",
+              "description": "Authenticated My Orders page HTML"
+            },
+            "response_headers": {
+              "type": "object"
+            },
+            "authenticated": {
+              "type": "boolean",
+              "description": "Whether authenticated session cookies were retained and the orders page was requested"
+            }
+          },
+          "required": [
+            "final_url",
+            "document_status",
+            "html",
+            "response_headers",
+            "authenticated"
+          ]
+        },
+        "requires": [],
+        "provides": [
+          "authenticated order history page HTML",
+          "typed page-fetch facts for the signed-in customer's My Orders page"
+        ],
+        "supported_patterns": [
+          "UI login form submission followed by authenticated My Orders page retrieval"
+        ],
+        "guarantees": {
+          "collection_scope": "page",
+          "completeness": "conditional",
+          "supports_absence_proof": false,
+          "configuration": {
+            "kind": "none",
+            "supported_values": [],
+            "coupled_site_parameters_hidden": true
+          }
+        },
+        "acceptance_checks": [
+          "Returned HTML is from a request made after login form submission using retained cookies",
+          "Returned final_url targets /sales/order/history/ for the fetched orders page request",
+          "HTML indicates the orders page was reached rather than an unauthenticated login page, such as containing the My Orders title or equivalent page marker"
+        ],
+        "source_evidence": [
+          {
+            "workflow_id": "task47_t197",
+            "template_id": "197",
+            "code_quote": "fetch(normal_opener, BASE + '/customer/account/login/') ... re.search(r'name=\"form_key\" type=\"hidden\" value=\"([^\"]+)\"', login_html) ... fetch(no_redirect_opener, BASE + '/customer/account/loginPost/', data={'form_key': form_key, 'login[username]': USERNAME, 'login[password]': PASSWORD} ... ) ... fetch(normal_opener, BASE + '/sales/order/history/')",
+            "explanation": "The workflow demonstrates a reusable site-local authentication sequence coupled to fetching the authenticated order history page. Hard-coded credentials and base URL were lifted into inputs. The primitive stops at delivering the authenticated page HTML and metadata."
+          }
+        ]
+      }
+    },
+    {
+      "op": "ADD",
+      "replacement": {
+        "primitive_id": "shopping/extract_order_history_records_from_orders_page",
+        "method": "extract_order_history_records_from_orders_page",
+        "capability": "parse the shopping site's My Orders page HTML into typed order-history records",
+        "method_code": "def extract_order_history_records_from_orders_page(self, html):\n    import re\n    from datetime import datetime\n\n    def _strip_tags(text):\n        return re.sub(r'<[^>]+>', ' ', text or '')\n\n    row_pattern = re.compile(\n        r'<tr>\\s*<td[^>]*class=\"col id\"[^>]*>(.*?)</td>\\s*<td[^>]*class=\"col date\"[^>]*>(.*?)</td>.*?<td[^>]*class=\"col total\"[^>]*>.*?<span class=\"price\">(.*?)</span>.*?</td>\\s*<td[^>]*class=\"col status\"[^>]*>(.*?)</td>',\n        re.S,\n    )\n\n    orders = []\n    for order_id, date_text, total_text, status_text in row_pattern.findall(html or ''):\n        oid = re.sub(r'\\s+', ' ', _strip_tags(order_id)).strip()\n        dtx = re.sub(r'\\s+', ' ', _strip_tags(date_text)).strip()\n        ttx = re.sub(r'\\s+', ' ', _strip_tags(total_text)).strip()\n        stx = re.sub(r'\\s+', ' ', _strip_tags(status_text)).strip()\n        try:\n            parsed_date = datetime.strptime(dtx, '%m/%d/%y').date().isoformat()\n        except Exception:\n            continue\n        try:\n            amount = float(ttx.replace('$', '').replace(',', ''))\n        except Exception:\n            continue\n        orders.append({\n            'order_id': oid,\n            'date_text': dtx,\n            'date': parsed_date,\n            'total_text': ttx,\n            'amount': amount,\n            'status': stx,\n        })\n\n    return {'orders': orders}\n",
+        "owns": [
+          "Parsing order table rows from the My Orders page HTML",
+          "Extracting stable order fields shown on the page",
+          "Normalizing text content from HTML cells",
+          "Converting displayed order date into a machine-readable ISO date",
+          "Converting displayed currency total into a numeric amount"
+        ],
+        "does_not_own": [
+          "Authenticating or navigating to the orders page",
+          "Choosing a date window",
+          "Defining which statuses should be counted for a particular task",
+          "Aggregating counts or spend totals across records",
+          "Proving that the entire account history is complete beyond the retrieved page content"
+        ],
+        "input_contract": {
+          "type": "object",
+          "properties": {
+            "html": {
+              "type": "string",
+              "description": "HTML of the shopping site's My Orders page"
+            }
+          },
+          "required": [
+            "html"
+          ]
+        },
+        "output_contract": {
+          "type": "object",
+          "properties": {
+            "orders": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "order_id": {
+                    "type": "string"
+                  },
+                  "date_text": {
+                    "type": "string",
+                    "description": "Displayed order date text from the page"
+                  },
+                  "date": {
+                    "type": "string",
+                    "description": "ISO date parsed from the displayed order date"
+                  },
+                  "total_text": {
+                    "type": "string",
+                    "description": "Displayed total including currency symbol"
+                  },
+                  "amount": {
+                    "type": "number",
+                    "description": "Parsed numeric order total"
+                  },
+                  "status": {
+                    "type": "string",
+                    "description": "Displayed order status text"
+                  }
+                },
+                "required": [
+                  "order_id",
+                  "date_text",
+                  "date",
+                  "total_text",
+                  "amount",
+                  "status"
+                ]
+              }
+            }
+          },
+          "required": [
+            "orders"
+          ]
+        },
+        "requires": [],
+        "provides": [
+          "typed order-history records from supplied My Orders page HTML"
+        ],
+        "supported_patterns": [
+          "Page-local parsing of previously acquired My Orders HTML"
+        ],
+        "guarantees": {
+          "collection_scope": "page",
+          "completeness": "conditional",
+          "supports_absence_proof": false,
+          "configuration": {
+            "kind": "none",
+            "supported_values": [],
+            "coupled_site_parameters_hidden": true
+          }
+        },
+        "acceptance_checks": [
+          "Each returned record contains non-empty order_id, date_text, total_text, and status fields sourced from a single table row",
+          "For every returned record, date is a valid ISO date parsed from the page's displayed date",
+          "For every returned record, amount is a numeric parse of total_text",
+          "If no matching order rows are present in the supplied HTML, the method returns an empty orders array rather than failing"
+        ],
+        "source_evidence": [
+          {
+            "workflow_id": "task47_t197",
+            "template_id": "197",
+            "code_quote": "row_pattern = re.compile(r'<tr>\\s*<td[^>]*class=\"col id\"[^>]*>(.*?)</td>\\s*<td[^>]*class=\"col date\"[^>]*>(.*?)</td>.*?<td[^>]*class=\"col total\"[^>]*>.*?<span class=\"price\">(.*?)</span>.*?</td>\\s*<td[^>]*class=\"col status\"[^>]*>(.*?)</td>', re.S) ... rows.append({'order_id': oid, 'date': dtx, 'date_obj': d.isoformat(), 'total': ttx, 'amount': amt, 'status': stx})",
+            "explanation": "The workflow demonstrates DOM/text acquisition immediately parsed into typed order records. The generalized primitive preserves all stable fields actually exposed at this acquisition boundary."
+          }
+        ]
+      }
+    },
+    {
+      "op": "ADD",
+      "replacement": {
+        "primitive_id": "shopping/list_customer_orders_by_number_graphql",
+        "method": "list_customer_orders_by_number_graphql",
+        "capability": "retrieve the authenticated customer's order records from the shopping site's GraphQL API filtered by order number match",
+        "method_code": "def list_customer_orders_by_number_graphql(self, base_url, email, password, order_number_match):\n    root = base_url.rstrip('/')\n    graphql_url = root + '/graphql'\n\n    token_query = (\n        'mutation GenerateCustomerToken($email: String!, $password: String!) {'\n        ' generateCustomerToken(email: $email, password: $password) { token }'\n        '}'\n    )\n    token_resp = self.page.request.post(\n        graphql_url,\n        json={\n            'query': token_query,\n            'variables': {'email': email, 'password': password},\n        },\n        fail_on_status_code=False,\n    )\n    token_payload = token_resp.json()\n    token = (((token_payload.get('data') or {}).get('generateCustomerToken') or {}).get('token'))\n    if not token:\n        raise RuntimeError('Customer GraphQL authentication failed')\n\n    orders_query = (\n        'query GetOrdersByNumber($match: String!) {'\n        ' customer {'\n        '   orders(filter: { number: { match: $match } }) {'\n        '     items {'\n        '       number'\n        '       order_date'\n        '       status'\n        '       total { grand_total { value currency } }'\n        '     }'\n        '     total_count'\n        '   }'\n        ' }'\n        '}'\n    )\n    orders_resp = self.page.request.post(\n        graphql_url,\n        json={\n            'query': orders_query,\n            'variables': {'match': order_number_match},\n        },\n        headers={'Authorization': f'Bearer {token}'},\n        fail_on_status_code=False,\n    )\n    payload = orders_resp.json()\n    orders_block = ((((payload.get('data') or {}).get('customer')) or {}).get('orders')) or {}\n\n    orders = []\n    for item in orders_block.get('items') or []:\n        grand_total = (((item.get('total') or {}).get('grand_total')) or {})\n        orders.append({\n            'number': item.get('number'),\n            'order_date': item.get('order_date'),\n            'status': item.get('status'),\n            'grand_total_value': grand_total.get('value'),\n            'grand_total_currency': grand_total.get('currency'),\n        })\n\n    return {\n        'orders': orders,\n        'total_count': orders_block.get('total_count'),\n    }\n",
+        "owns": [
+          "Issuing an authenticated GraphQL customer orders query against the shopping site",
+          "Applying the site's order-number filter parameter in the GraphQL query",
+          "Authenticating via the site's GraphQL generateCustomerToken mutation as an internal prerequisite",
+          "Parsing returned order items into typed order records including identity, date, status, totals, and result count metadata"
+        ],
+        "does_not_own": [
+          "Deciding which order number to search for",
+          "Selecting only the first result for a task answer",
+          "Formatting the retrieved order date for the user",
+          "Exposing the raw bearer token as a public output"
+        ],
+        "input_contract": {
+          "type": "object",
+          "properties": {
+            "base_url": {
+              "type": "string",
+              "description": "Base URL of the shopping site deployment"
+            },
+            "email": {
+              "type": "string",
+              "description": "Customer account email address"
+            },
+            "password": {
+              "type": "string",
+              "description": "Customer account password"
+            },
+            "order_number_match": {
+              "type": "string",
+              "description": "Order number match string supplied to orders(filter:{number:{match:...}})"
+            }
+          },
+          "required": [
+            "base_url",
+            "email",
+            "password",
+            "order_number_match"
+          ]
+        },
+        "output_contract": {
+          "type": "object",
+          "properties": {
+            "orders": {
+              "type": "array",
+              "description": "Order records returned in customer.orders.items for the authenticated customer and query",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "number": {
+                    "type": "string",
+                    "description": "Order number"
+                  },
+                  "order_date": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "Order creation timestamp as returned by the site"
+                  },
+                  "status": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "Order status label"
+                  },
+                  "grand_total_value": {
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "description": "Grand total numeric value"
+                  },
+                  "grand_total_currency": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "Grand total currency code"
+                  }
+                },
+                "required": [
+                  "number",
+                  "order_date",
+                  "status",
+                  "grand_total_value",
+                  "grand_total_currency"
+                ]
+              }
+            },
+            "total_count": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "description": "Total count reported by customer.orders.total_count for this filtered query"
+            }
+          },
+          "required": [
+            "orders",
+            "total_count"
+          ]
+        },
+        "requires": [],
+        "provides": [
+          "authenticated order-number-filtered customer order records from GraphQL"
+        ],
+        "supported_patterns": [
+          "Authenticate with generateCustomerToken and query customer.orders filtered by order number match"
+        ],
+        "guarantees": {
+          "collection_scope": "query",
+          "completeness": "conditional",
+          "supports_absence_proof": false,
+          "configuration": {
+            "kind": "none",
+            "supported_values": [],
+            "coupled_site_parameters_hidden": true
+          }
+        },
+        "acceptance_checks": [
+          "Response parses successfully from data.customer.orders",
+          "Every returned order record includes number, order_date, status, grand_total_value, and grand_total_currency fields",
+          "total_count is present and is consistent with the returned filtered query scope",
+          "If no orders match, returns an empty orders array rather than failing"
+        ],
+        "source_evidence": [
+          {
+            "workflow_id": "task359_t206",
+            "template_id": "206",
+            "code_quote": "token_query = 'mutation{generateCustomerToken(email:\"%s\", password:\"%s\"){token}}' % (EMAIL, PASSWORD) ... orders_query = '{customer{firstname lastname email orders(filter:{number:{match:\"148\"}}){items{number order_date status total{grand_total{value currency}}} total_count}}}' ... order = orders_json['data']['customer']['orders']['items'][0]",
+            "explanation": "The workflow demonstrates authenticated customer.orders retrieval with a GraphQL number-match filter. The generalized primitive lifts the order number into input and preserves the demonstrated typed fields number, order_date, status, nested grand total value/currency, and total_count without exposing the private token."
+          }
+        ]
+      }
+    },
+    {
+      "op": "ADD",
+      "replacement": {
+        "primitive_id": "shopping/list_authenticated_customer_orders_graphql",
+        "method": "list_authenticated_customer_orders_graphql",
+        "capability": "retrieve an authenticated customer's order records from the shopping site's GraphQL API with pagination metadata and stable order fields",
+        "method_code": "def list_authenticated_customer_orders_graphql(self, base_url, email, password, page_size, page_number):\n    root = base_url.rstrip('/')\n    graphql_url = root + '/graphql'\n\n    token_query = (\n        'mutation GenerateCustomerToken($email: String!, $password: String!) {'\n        ' generateCustomerToken(email: $email, password: $password) { token }'\n        '}'\n    )\n    token_resp = self.page.request.post(\n        graphql_url,\n        json={\n            'query': token_query,\n            'variables': {'email': email, 'password': password},\n        },\n        fail_on_status_code=False,\n    )\n    token_payload = token_resp.json()\n    token = (((token_payload.get('data') or {}).get('generateCustomerToken') or {}).get('token'))\n    if not token:\n        raise RuntimeError('Customer GraphQL authentication failed')\n\n    orders_query = (\n        'query GetOrders($pageSize: Int!, $currentPage: Int!) {'\n        ' customer {'\n        '   firstname lastname email'\n        '   orders(pageSize: $pageSize, currentPage: $currentPage) {'\n        '     total_count'\n        '     page_info { current_page page_size total_pages }'\n        '     items {'\n        '       id number order_date created_at status grand_total'\n        '       total { grand_total { value currency } }'\n        '     }'\n        '   }'\n        ' }'\n        '}'\n    )\n    resp = self.page.request.post(\n        graphql_url,\n        json={\n            'query': orders_query,\n            'variables': {'pageSize': page_size, 'currentPage': page_number},\n        },\n        headers={'Authorization': f'Bearer {token}'},\n        fail_on_status_code=False,\n    )\n    payload = resp.json()\n    customer = ((payload.get('data') or {}).get('customer')) or {}\n    orders_block = customer.get('orders') or {}\n\n    items = []\n    for item in orders_block.get('items') or []:\n        nested_grand_total = (((item.get('total') or {}).get('grand_total')) or {})\n        items.append({\n            'id': item.get('id'),\n            'number': item.get('number'),\n            'order_date': item.get('order_date'),\n            'created_at': item.get('created_at'),\n            'status': item.get('status'),\n            'grand_total': item.get('grand_total'),\n            'total': {\n                'grand_total': {\n                    'value': nested_grand_total.get('value'),\n                    'currency': nested_grand_total.get('currency'),\n                }\n            },\n        })\n\n    page_info = orders_block.get('page_info') or {}\n    return {\n        'customer': {\n            'firstname': customer.get('firstname'),\n            'lastname': customer.get('lastname'),\n            'email': customer.get('email'),\n        },\n        'orders': {\n            'total_count': orders_block.get('total_count'),\n            'page_info': {\n                'current_page': page_info.get('current_page'),\n                'page_size': page_info.get('page_size'),\n                'total_pages': page_info.get('total_pages'),\n            },\n            'items': items,\n        },\n    }\n",
+        "owns": [
+          "Issuing the authenticated site-local GraphQL customer orders query to /graphql",
+          "Applying caller-supplied pagination inputs to orders(pageSize, currentPage)",
+          "Authenticating via the site's GraphQL generateCustomerToken mutation as an internal prerequisite",
+          "Including Bearer authorization in the request header",
+          "Parsing customer identity and order collection payloads into typed records",
+          "Returning pagination metadata exposed by the site response",
+          "Preserving the union of demonstrated stable order fields across workflows"
+        ],
+        "does_not_own": [
+          "Filtering orders by task-specific status such as pending or canceled",
+          "Selecting the latest order",
+          "Comparing timestamps across records for a task-specific answer",
+          "Formatting totals into a final natural-language response",
+          "Exposing the raw bearer token as a public output"
+        ],
+        "input_contract": {
+          "type": "object",
+          "properties": {
+            "base_url": {
+              "type": "string",
+              "description": "Base URL of the shopping site deployment"
+            },
+            "email": {
+              "type": "string",
+              "description": "Customer account email address"
+            },
+            "password": {
+              "type": "string",
+              "description": "Customer account password"
+            },
+            "page_size": {
+              "type": "integer",
+              "description": "Requested number of orders per page",
+              "minimum": 1
+            },
+            "page_number": {
+              "type": "integer",
+              "description": "Requested orders page number, mapped to GraphQL currentPage",
+              "minimum": 1
+            }
+          },
+          "required": [
+            "base_url",
+            "email",
+            "password",
+            "page_size",
+            "page_number"
+          ]
+        },
+        "output_contract": {
+          "type": "object",
+          "properties": {
+            "customer": {
+              "type": "object",
+              "properties": {
+                "firstname": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "lastname": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "email": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "firstname",
+                "lastname",
+                "email"
+              ]
+            },
+            "orders": {
+              "type": "object",
+              "properties": {
+                "total_count": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "description": "Total number of orders reported by the site for the customer"
+                },
+                "page_info": {
+                  "type": "object",
+                  "properties": {
+                    "current_page": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    },
+                    "page_size": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    },
+                    "total_pages": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "current_page",
+                    "page_size",
+                    "total_pages"
+                  ]
+                },
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": [
+                          "string",
+                          "integer",
+                          "null"
+                        ],
+                        "description": "Site order id when present in this deployment"
+                      },
+                      "number": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "Site order number"
+                      },
+                      "order_date": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "Order timestamp field returned as order_date when present"
+                      },
+                      "created_at": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "Order timestamp field returned as created_at when present"
+                      },
+                      "status": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "Order status label returned by the site"
+                      },
+                      "grand_total": {
+                        "type": [
+                          "number",
+                          "string",
+                          "null"
+                        ],
+                        "description": "Top-level grand_total field if present in this deployment"
+                      },
+                      "total": {
+                        "type": "object",
+                        "properties": {
+                          "grand_total": {
+                            "type": "object",
+                            "properties": {
+                              "value": {
+                                "type": [
+                                  "number",
+                                  "null"
+                                ]
+                              },
+                              "currency": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "value",
+                              "currency"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "grand_total"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "number",
+                      "order_date",
+                      "created_at",
+                      "status",
+                      "grand_total",
+                      "total"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "total_count",
+                "page_info",
+                "items"
+              ]
+            }
+          },
+          "required": [
+            "customer",
+            "orders"
+          ]
+        },
+        "requires": [],
+        "provides": [
+          "authenticated paginated customer order records with customer identity and pagination metadata"
+        ],
+        "supported_patterns": [
+          "Authenticated paginated customer order listing via GraphQL"
+        ],
+        "guarantees": {
+          "collection_scope": "page",
+          "completeness": "partial",
+          "supports_absence_proof": false,
+          "configuration": {
+            "kind": "none",
+            "supported_values": [],
+            "coupled_site_parameters_hidden": true
+          }
+        },
+        "acceptance_checks": [
+          "Response includes a parsed customer object and an orders object",
+          "Returned orders.page_info.current_page matches the requested page_number when the request succeeds",
+          "Each returned order item preserves the demonstrated stable fields number, status, and at least one of order_date or created_at when provided by the site response",
+          "Empty items on a successful response is treated as a valid empty page, not acquisition failure"
+        ],
+        "source_evidence": [
+          {
+            "workflow_id": "task189_t214",
+            "template_id": "214",
+            "code_quote": "q_orders = 'query { customer { firstname lastname email orders(pageSize: 200, currentPage: 1) { total_count page_info { current_page page_size total_pages } items { number status created_at grand_total total { grand_total { value currency } } } } } }'",
+            "explanation": "This workflow demonstrates authenticated paginated customer.orders retrieval with customer identity, page_info, total_count, created_at, top-level grand_total, and nested total.grand_total value/currency."
+          },
+          {
+            "workflow_id": "task188_t214",
+            "template_id": "214",
+            "code_quote": "query GetOrders($pageSize: Int!, $currentPage: Int!) { customer { orders(pageSize: $pageSize, currentPage: $currentPage) { items { id number order_date status grand_total } page_info { current_page page_size total_pages } total_count } } } ... while current_page <= total_pages: ... all_items.extend(orders['items'])",
+            "explanation": "This workflow demonstrates the same GraphQL customer.orders acquisition family with id and order_date fields. The generalized primitive preserves the union of stable objective fields for one requested page; workflow-owned iteration across pages remains outside this page-scoped primitive in parallel-initial mode."
+          }
+        ]
+      }
+    }
+  ],
+  "workflow_attribution": [
+    {
+      "workflow_id": "task47_t197",
+      "decision": "CONTRIBUTED",
+      "operation_indices": [
+        0,
+        1
+      ]
+    },
+    {
+      "workflow_id": "task359_t206",
+      "decision": "CONTRIBUTED",
+      "operation_indices": [
+        2
+      ]
+    },
+    {
+      "workflow_id": "task189_t214",
+      "decision": "CONTRIBUTED",
+      "operation_indices": [
+        3
+      ]
+    },
+    {
+      "workflow_id": "task188_t214",
+      "decision": "CONTRIBUTED",
+      "operation_indices": [
+        3
+      ]
+    }
+  ],
+  "candidate_attribution": [
+    {
+      "candidate_id": "task47_t197::login_and_fetch_order_history",
+      "decision": "ADD",
+      "operation_index": 0
+    },
+    {
+      "candidate_id": "task47_t197::extract_order_history_records_from_orders_page",
+      "decision": "ADD",
+      "operation_index": 1
+    },
+    {
+      "candidate_id": "task359_t206::authenticate_customer_via_graphql",
+      "decision": "REJECT",
+      "target_id": null,
+      "reason": "Boundary defect: candidate exposes the raw bearer token as a public output, which is a private authentication artifact rather than a stable public typed fact."
+    },
+    {
+      "candidate_id": "task359_t206::list_customer_orders_by_number",
+      "decision": "ADD",
+      "operation_index": 2
+    },
+    {
+      "candidate_id": "task189_t214::authenticate_customer_graphql",
+      "decision": "REJECT",
+      "target_id": null,
+      "reason": "Boundary defect: candidate exposes the raw bearer token as a public output, which is a private authentication artifact rather than a stable public typed fact."
+    },
+    {
+      "candidate_id": "task189_t214::list_authenticated_customer_orders_graphql",
+      "decision": "ADD",
+      "operation_index": 3
+    },
+    {
+      "candidate_id": "task188_t214::list_customer_orders",
+      "decision": "ADD",
+      "operation_index": 3
+    }
+  ]
+}

@@ -1,0 +1,1360 @@
+[
+  {
+    "attempt": 1,
+    "proposal": {
+      "op": "ADD",
+      "replacement": {
+        "primitive_id": "shopping_admin/get_review_grid_record_count_by_status",
+        "method": "get_review_grid_record_count_by_status",
+        "capability": "Retrieve the site-reported record count from the Magento admin product reviews grid after applying a caller-supplied review status filter.",
+        "method_code": "def get_review_grid_record_count_by_status(self, status: str) -> dict:\n    import re\n\n    if not isinstance(status, str) or not status.strip():\n        raise ValueError(\"status must be a non-empty string\")\n    status = status.strip()\n\n    review_url = \"http://GCRSANDBOX410.redmond.corp.microsoft.com:7780/admin/review/product/index/\"\n    self.page.goto(review_url, wait_until=\"domcontentloaded\")\n    self.page.wait_for_load_state(\"networkidle\")\n\n    self.page.select_option(\"#reviewGrid_filter_status\", label=status)\n    search_button = self.page.get_by_role(\"button\", name=\"Search\")\n    search_button.click()\n    self.page.wait_for_load_state(\"networkidle\")\n\n    summary_texts = self.page.locator(\".admin__data-grid-header .admin__control-support-text\").all_inner_texts()\n    summary_text = \" | \".join(t.strip() for t in summary_texts if t and t.strip())\n    body_text = self.page.locator(\"body\").inner_text()\n\n    match = re.search(r\"(\\d+)\\s+records\\s+found\", summary_text, re.I)\n    if not match:\n        match = re.search(r\"(\\d+)\\s+records\\s+found\", body_text, re.I)\n    if not match:\n        raise RuntimeError(\"Could not parse filtered review grid record count\")\n\n    return {\n        \"status\": status,\n        \"record_count\": int(match.group(1)),\n        \"summary_text\": summary_text,\n        \"grid_url\": self.page.url,\n    }\n",
+        "owns": [
+          "navigate to the Magento admin reviews grid page",
+          "apply the reviews-grid status dropdown filter using a caller-supplied review status value",
+          "submit the grid search/filter action",
+          "read the grid header/body summary text and parse the site-reported '<n> records found' count into a typed integer"
+        ],
+        "does_not_own": [
+          "logging into the admin site",
+          "choosing which review status is relevant to the caller's task",
+          "computing aggregates beyond the single site-reported filtered count",
+          "returning raw page text or DOM instead of the parsed count"
+        ],
+        "input_contract": {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "description": "Review status label to select in the reviews grid filter, e.g. 'Approved'."
+            }
+          },
+          "required": [
+            "status"
+          ],
+          "additionalProperties": false
+        },
+        "output_contract": {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string"
+            },
+            "record_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "summary_text": {
+              "type": "string",
+              "description": "Grid summary text from which the count was parsed."
+            },
+            "grid_url": {
+              "type": "string",
+              "description": "Final reviews grid URL used for acquisition."
+            }
+          },
+          "required": [
+            "status",
+            "record_count",
+            "summary_text",
+            "grid_url"
+          ],
+          "additionalProperties": false
+        },
+        "requires": [
+          "authenticated shopping_admin admin session in self.page"
+        ],
+        "provides": [
+          "filtered review-grid record count for a requested status label"
+        ],
+        "supported_patterns": [
+          "apply a single review-status filter on the All Reviews grid and read the site's reported total",
+          "obtain counts for statuses such as Approved using the same grid workflow"
+        ],
+        "guarantees": {
+          "collection_scope": "query",
+          "completeness": "conditional",
+          "supports_absence_proof": false,
+          "configuration": {
+            "kind": "none",
+            "supported_values": [],
+            "coupled_site_parameters_hidden": true
+          }
+        },
+        "acceptance_checks": [
+          "After applying the requested status filter and submitting search, the reviews grid page remains loaded and exposes summary text or body text containing a parseable '<number> records found' pattern.",
+          "Returned record_count is a non-negative integer parsed from site-rendered grid summary text, and returned status echoes the caller-supplied filter value.",
+          "If the filtered grid has zero results and the site renders '0 records found', the primitive returns record_count = 0 rather than treating the result as a failure."
+        ],
+        "source_evidence": [
+          {
+            "workflow_id": "task78_t277",
+            "template_id": "277",
+            "code_quote": "await page.goto('http://gcrsandbox410.redmond.corp.microsoft.com:7780/admin/review/product/index/', { waitUntil: 'domcontentloaded' }); ... await page.selectOption('#reviewGrid_filter_status', { label: 'Approved' }); ... const summaryTexts = await page.locator('.admin__data-grid-header .admin__control-support-text').allInnerTexts(); ... let m = summary.match(/(\\d+) records found/i); if (!m) m = bodyText.match(/(\\d+) records found/i);",
+            "explanation": "Generalized the hard-coded 'Approved' selection into a caller-supplied status while preserving the demonstrated grid navigation, filter submission, and count parsing behavior."
+          },
+          {
+            "workflow_id": "task77_t277",
+            "template_id": "277",
+            "code_quote": "pending_url = base + '/admin/review/product/pending/' ... m = re.search(r'id=\"reviewGrid-total-count\"[^>]*>\\s*(\\d+)\\s*<', pending_html)",
+            "explanation": "Additional evidence from a status-specific reviews page supports the same stable typed output concept: a site-reported review count for a review status, but this primitive keeps the more reusable All Reviews grid filter mechanism."
+          }
+        ]
+      }
+    },
+    "quality_verdicts": null,
+    "errors": [
+      "workflow_attribution must cover every batch workflow exactly once",
+      "candidate_attribution must cover every extracted candidate exactly once"
+    ]
+  },
+  {
+    "attempt": 2,
+    "proposal": {
+      "operations": [
+        {
+          "op": "ADD",
+          "replacement": {
+            "primitive_id": "shopping_admin/get_review_grid_record_count_by_status",
+            "method": "get_review_grid_record_count_by_status",
+            "capability": "retrieve the site-reported record count from the Magento admin product reviews grid after applying a review status filter",
+            "method_code": "def get_review_grid_record_count_by_status(self, status: str) -> dict:\n    import re\n\n    if not isinstance(status, str) or not status.strip():\n        raise ValueError(\"status must be a non-empty string\")\n    status = status.strip()\n\n    review_url = \"http://GCRSANDBOX410.redmond.corp.microsoft.com:7780/admin/review/product/index/\"\n    self.page.goto(review_url, wait_until=\"domcontentloaded\")\n    self.page.wait_for_load_state(\"networkidle\")\n\n    self.page.select_option(\"#reviewGrid_filter_status\", label=status)\n    search_button = self.page.get_by_role(\"button\", name=\"Search\")\n    search_button.click()\n    self.page.wait_for_load_state(\"networkidle\")\n\n    summary_texts = self.page.locator(\".admin__data-grid-header .admin__control-support-text\").all_inner_texts()\n    summary_text = \" | \".join(t.strip() for t in summary_texts if t and t.strip())\n    body_text = self.page.locator(\"body\").inner_text()\n\n    match = re.search(r\"(\\d+)\\s+records\\s+found\", summary_text, re.I)\n    if not match:\n        match = re.search(r\"(\\d+)\\s+records\\s+found\", body_text, re.I)\n    if not match:\n        raise RuntimeError(\"Could not parse filtered review grid record count\")\n\n    return {\n        \"status\": status,\n        \"record_count\": int(match.group(1)),\n        \"summary_text\": summary_text,\n        \"grid_url\": self.page.url,\n    }\n",
+            "owns": [
+              "navigate to the Magento admin reviews grid page",
+              "apply the reviews-grid status dropdown filter using a caller-supplied review status value",
+              "submit the grid search/filter action",
+              "read the grid header/body summary text and parse the site-reported '<n> records found' count into a typed integer"
+            ],
+            "does_not_own": [
+              "logging into the admin site",
+              "choosing which review status is relevant to the caller's task",
+              "computing aggregates beyond the single site-reported filtered count",
+              "returning raw page text or DOM instead of the parsed count"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "type": "string",
+                  "description": "Review status label to select in the reviews grid filter, e.g. 'Approved'."
+                }
+              },
+              "required": [
+                "status"
+              ],
+              "additionalProperties": false
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "type": "string"
+                },
+                "record_count": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "summary_text": {
+                  "type": "string",
+                  "description": "Grid summary text from which the count was parsed."
+                },
+                "grid_url": {
+                  "type": "string",
+                  "description": "Final reviews grid URL used for acquisition."
+                }
+              },
+              "required": [
+                "status",
+                "record_count",
+                "summary_text",
+                "grid_url"
+              ],
+              "additionalProperties": false
+            },
+            "requires": [
+              "authenticated shopping_admin admin session in self.page"
+            ],
+            "provides": [
+              "filtered review-grid record count for a requested status label"
+            ],
+            "supported_patterns": [
+              "apply a single review-status filter on the All Reviews grid and read the site's reported total",
+              "obtain counts for statuses such as Approved using the same grid workflow"
+            ],
+            "guarantees": {
+              "collection_scope": "query",
+              "completeness": "conditional",
+              "supports_absence_proof": false,
+              "configuration": {
+                "kind": "none",
+                "supported_values": [],
+                "coupled_site_parameters_hidden": true
+              }
+            },
+            "acceptance_checks": [
+              "After applying the requested status filter and submitting search, the reviews grid page remains loaded and exposes summary text or body text containing a parseable '<number> records found' pattern.",
+              "Returned record_count is a non-negative integer parsed from site-rendered grid summary text, and returned status echoes the caller-supplied filter value.",
+              "If the filtered grid has zero results and the site renders '0 records found', the primitive returns record_count = 0 rather than treating the result as a failure."
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task78_t277",
+                "template_id": "277",
+                "code_quote": "await page.goto('http://gcrsandbox410.redmond.corp.microsoft.com:7780/admin/review/product/index/', { waitUntil: 'domcontentloaded' }); ... await page.selectOption('#reviewGrid_filter_status', { label: 'Approved' }); ... const summaryTexts = await page.locator('.admin__data-grid-header .admin__control-support-text').allInnerTexts(); ... let m = summary.match(/(\\d+) records found/i); if (!m) m = bodyText.match(/(\\d+) records found/i);",
+                "explanation": "Generalized the hard-coded 'Approved' selection into a caller-supplied status while preserving the demonstrated grid navigation, filter submission, and count parsing behavior."
+              }
+            ]
+          }
+        },
+        {
+          "op": "ADD",
+          "replacement": {
+            "primitive_id": "shopping_admin/extract_dashboard_top_search_terms",
+            "method": "extract_dashboard_top_search_terms",
+            "capability": "extract typed top-search-term records from the shopping admin dashboard widget/table",
+            "method_code": "def extract_dashboard_top_search_terms(self, max_rows: int | None = None) -> dict:\n    if max_rows is not None:\n        if not isinstance(max_rows, int) or max_rows < 1:\n            raise ValueError(\"max_rows must be a positive integer when provided\")\n\n    heading = self.page.get_by_text(\"Top Search Terms\", exact=True)\n    if heading.count() == 0:\n        raise RuntimeError(\"Could not locate Top Search Terms heading\")\n    heading.scroll_into_view_if_needed()\n\n    tables = self.page.locator(\"table\")\n    target_rows = None\n    for i in range(tables.count()):\n        table = tables.nth(i)\n        text = table.inner_text()\n        if \"Search Term\" in text and \"Uses\" in text:\n            rows = table.locator(\"tbody tr\")\n            if rows.count() >= 1:\n                target_rows = rows\n                break\n\n    if target_rows is None:\n        raise RuntimeError(\"Could not locate Top Search Terms table\")\n\n    row_count = target_rows.count()\n    limit = row_count if max_rows is None else min(max_rows, row_count)\n    records = []\n    for i in range(limit):\n        row = target_rows.nth(i)\n        cells = [c.strip() for c in row.locator(\"td\").all_inner_texts()]\n        if len(cells) < 3:\n            raise RuntimeError(\"Unexpected Top Search Terms row shape\")\n        records.append({\n            \"term\": cells[0],\n            \"results\": cells[1],\n            \"uses\": cells[2],\n        })\n\n    return {\"records\": records}\n",
+            "owns": [
+              "locate the dashboard table/widget representing Top Search Terms by displayed dashboard semantics",
+              "parse the table rows into typed search-term records with term, results, and uses fields",
+              "return records in dashboard display order, optionally limited to a caller-supplied maximum row count"
+            ],
+            "does_not_own": [
+              "logging into the admin site",
+              "choosing that only the top 2 rows are needed for the task",
+              "reducing records to only term strings for final answer formatting",
+              "ranking or reordering beyond the site's displayed order",
+              "inferring site-wide search analytics beyond what is shown in the dashboard widget"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "max_rows": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "Maximum number of displayed Top Search Terms rows to return."
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "records": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "term": {
+                        "type": "string"
+                      },
+                      "results": {
+                        "type": "string",
+                        "description": "Displayed result count/value as shown in the dashboard table."
+                      },
+                      "uses": {
+                        "type": "string",
+                        "description": "Displayed uses count/value as shown in the dashboard table."
+                      }
+                    },
+                    "required": [
+                      "term",
+                      "results",
+                      "uses"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "records"
+              ],
+              "additionalProperties": false
+            },
+            "requires": [
+              "authenticated shopping_admin admin dashboard page loaded in self.page"
+            ],
+            "provides": [
+              "typed records from the dashboard Top Search Terms widget in display order"
+            ],
+            "supported_patterns": [
+              "read the full displayed Top Search Terms widget",
+              "read only the first N displayed Top Search Terms rows by supplying max_rows"
+            ],
+            "guarantees": {
+              "collection_scope": "page",
+              "completeness": "partial",
+              "supports_absence_proof": false,
+              "configuration": {
+                "kind": "none",
+                "supported_values": [],
+                "coupled_site_parameters_hidden": true
+              }
+            },
+            "acceptance_checks": [
+              "If the dashboard Top Search Terms widget/table is present, each returned record is parsed from one displayed table row and contains non-empty term, results, and uses fields.",
+              "If max_rows is provided, the number of returned records is less than or equal to max_rows and preserves page display order.",
+              "An empty records array is valid only when the Top Search Terms table is located but has no data rows; failure to locate the widget/table must raise an acquisition error rather than silently returning empty."
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task42_t285",
+                "template_id": "285",
+                "code_quote": "heading = page.get_by_text('Top Search Terms', exact=True) ... for i in range(await tables.count()): table = tables.nth(i); text = await table.inner_text(); if 'Search Term' in text and 'Uses' in text and 'hollister' in text: rows = table.locator('tbody tr') ... for i in range(min(2, await target_rows.count())): ... extracted.append({'term': cells[0], 'results': cells[1], 'uses': cells[2]})",
+                "explanation": "Generalized the workflow's dashboard-table extraction into a reusable page-level primitive that identifies the Top Search Terms widget by stable displayed semantics and returns typed row records. The task-specific limit of 2 becomes optional max_rows, and the literal 'hollister' content check is treated as a brittle locator aid rather than a public contract."
+              }
+            ]
+          }
+        },
+        {
+          "op": "ADD",
+          "replacement": {
+            "primitive_id": "shopping_admin/get_admin_reviews_total_count",
+            "method": "get_admin_reviews_total_count",
+            "capability": "retrieve the total number of review records shown by the shopping admin All Reviews page after authenticated admin login",
+            "method_code": "def get_admin_reviews_total_count(self, base_url: str, username: str, password: str) -> dict:\n    import re\n\n    if not isinstance(base_url, str) or not base_url.strip():\n        raise ValueError(\"base_url must be a non-empty string\")\n    if not isinstance(username, str) or not username:\n        raise ValueError(\"username must be a non-empty string\")\n    if not isinstance(password, str) or not password:\n        raise ValueError(\"password must be a non-empty string\")\n\n    base_url = base_url.rstrip(\"/\")\n    login_url = base_url + \"/admin\"\n    reviews_url = base_url + \"/admin/review/product/index/\"\n\n    self.page.goto(login_url, wait_until=\"domcontentloaded\")\n    username_locator = self.page.locator('input[name=\"login[username]\"]')\n    password_locator = self.page.locator('input[name=\"login[password]\"]')\n    if username_locator.count() == 0 or password_locator.count() == 0:\n        raise RuntimeError(\"Admin login form was not found\")\n\n    username_locator.fill(username)\n    password_locator.fill(password)\n    self.page.get_by_role(\"button\", name=re.compile(\"Sign in|Login\", re.I)).click()\n    self.page.wait_for_load_state(\"networkidle\")\n\n    self.page.goto(reviews_url, wait_until=\"domcontentloaded\")\n    self.page.wait_for_load_state(\"networkidle\")\n\n    body_text = self.page.locator(\"body\").inner_text()\n    match = re.search(r\"(\\d+)\\s+records\\s+found\", body_text, re.I)\n    if not match:\n        raise RuntimeError(\"Could not find total review record count on All Reviews page\")\n\n    title = self.page.title()\n    return {\n        \"reviews_total_count\": int(match.group(1)),\n        \"reviews_url\": self.page.url,\n        \"reviews_status\": None,\n        \"page_title\": title,\n    }\n",
+            "owns": [
+              "establishing an authenticated admin browser session using the site's login form",
+              "submitting site-specific admin credentials to the /admin login page",
+              "requesting the site-local All Reviews admin page at /admin/review/product/index/",
+              "parsing the rendered page text to extract the typed total review record count from the pager phrase '<n> records found'",
+              "returning the resolved reviews page URL and page title alongside the typed count"
+            ],
+            "does_not_own": [
+              "deciding that the business question should be answered using review records rather than some other admin metric",
+              "formatting screenshots or final answer artifacts",
+              "returning raw HTML/page text as the primary product",
+              "proving that no reviews exist beyond what the page's displayed total states"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "base_url": {
+                  "type": "string",
+                  "description": "Base URL of the shopping admin deployment, e.g. http://host:port"
+                },
+                "username": {
+                  "type": "string",
+                  "description": "Admin username"
+                },
+                "password": {
+                  "type": "string",
+                  "description": "Admin password"
+                }
+              },
+              "required": [
+                "base_url",
+                "username",
+                "password"
+              ],
+              "additionalProperties": false
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "reviews_total_count": {
+                  "type": "integer",
+                  "description": "Integer parsed from the All Reviews page pager text '<n> records found'"
+                },
+                "reviews_url": {
+                  "type": "string",
+                  "description": "Resolved URL of the All Reviews page after request"
+                },
+                "reviews_status": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "description": "HTTP status observed for the All Reviews page response when available"
+                },
+                "page_title": {
+                  "type": "string",
+                  "description": "HTML title of the reviews page when available"
+                }
+              },
+              "required": [
+                "reviews_total_count",
+                "reviews_url",
+                "reviews_status",
+                "page_title"
+              ],
+              "additionalProperties": false
+            },
+            "requires": [],
+            "provides": [
+              "authenticated acquisition of the All Reviews page total record count"
+            ],
+            "supported_patterns": [
+              "log into a shopping_admin deployment and read the overall All Reviews count",
+              "return page metadata alongside the typed total count"
+            ],
+            "guarantees": {
+              "collection_scope": "page",
+              "completeness": "conditional",
+              "supports_absence_proof": false,
+              "configuration": {
+                "kind": "none",
+                "supported_values": [],
+                "coupled_site_parameters_hidden": true
+              }
+            },
+            "acceptance_checks": [
+              "Authenticated request sequence reaches an admin dashboard context before requesting the reviews page.",
+              "Returned reviews page contains a pager phrase matching '<integer> records found'.",
+              "Output reviews_total_count equals the integer parsed from that pager phrase on the All Reviews page.",
+              "Returned reviews_url points to the site's admin reviews listing page rather than the login page."
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task347_t248",
+                "template_id": "248",
+                "code_quote": "REVIEWS_URL = BASE + \"/admin/review/product/index/\" ... reviews_resp = opener.open(REVIEWS_URL) ... reviews_html = reviews_resp.read().decode(\"utf-8\", \"ignore\") ... m = re.search(r'(\\d+)\\s+records\\s+found', reviews_text, re.I) ... total_reviews = int(m.group(1))",
+                "explanation": "Generalized the workflow's hard-coded base URL and credentials into inputs while preserving the evidenced site-specific capability: authenticate, open the All Reviews page, and parse the page's total record count from the pager text."
+              }
+            ]
+          }
+        },
+        {
+          "op": "ADD",
+          "replacement": {
+            "primitive_id": "shopping_admin/get_pending_review_grid_summary",
+            "method": "get_pending_review_grid_summary",
+            "capability": "retrieve the Magento admin Pending Reviews grid total count from the shopping admin site after authenticating",
+            "method_code": "def get_pending_review_grid_summary(self, username: str, password: str) -> dict:\n    import re\n\n    if not isinstance(username, str) or not username:\n        raise ValueError(\"username must be a non-empty string\")\n    if not isinstance(password, str) or not password:\n        raise ValueError(\"password must be a non-empty string\")\n\n    login_url = \"http://GCRSANDBOX410.redmond.corp.microsoft.com:7780/admin\"\n    pending_url = \"http://GCRSANDBOX410.redmond.corp.microsoft.com:7780/admin/review/product/pending/\"\n\n    self.page.goto(login_url, wait_until=\"domcontentloaded\")\n    username_locator = self.page.locator('input[name=\"login[username]\"]')\n    password_locator = self.page.locator('input[name=\"login[password]\"]')\n    if username_locator.count() == 0 or password_locator.count() == 0:\n        raise RuntimeError(\"Admin login form was not found\")\n\n    username_locator.fill(username)\n    password_locator.fill(password)\n    self.page.get_by_role(\"button\", name=re.compile(\"Sign in|Login\", re.I)).click()\n    self.page.wait_for_load_state(\"networkidle\")\n\n    self.page.goto(pending_url, wait_until=\"domcontentloaded\")\n    self.page.wait_for_load_state(\"networkidle\")\n\n    pending_html = self.page.content()\n    match = re.search(r'id=\"reviewGrid-total-count\"[^>]*>\\s*(\\d+)\\s*<', pending_html)\n    if not match:\n        raise RuntimeError(\"Could not find reviewGrid-total-count on Pending Reviews page\")\n\n    return {\n        \"review_status\": \"pending\",\n        \"total_count\": int(match.group(1)),\n        \"page_url\": self.page.url,\n        \"authenticated\": True,\n    }\n",
+            "owns": [
+              "Magento admin login session establishment using the site's login form",
+              "navigation to the site's Pending Reviews admin page",
+              "parsing the Pending Reviews page HTML to extract the typed grid total count from the reviewGrid-total-count element"
+            ],
+            "does_not_own": [
+              "choosing that only Pending reviews are relevant to the user task beyond using the demonstrated Pending Reviews page URL",
+              "formatting the count as the final answer payload",
+              "general raw HTML export or arbitrary page scraping outside this page's demonstrated summary element"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "username": {
+                  "type": "string"
+                },
+                "password": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "username",
+                "password"
+              ],
+              "additionalProperties": false
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "review_status": {
+                  "type": "string",
+                  "enum": [
+                    "pending"
+                  ]
+                },
+                "total_count": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "page_url": {
+                  "type": "string"
+                },
+                "authenticated": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "review_status",
+                "total_count",
+                "page_url",
+                "authenticated"
+              ],
+              "additionalProperties": false
+            },
+            "requires": [],
+            "provides": [
+              "authenticated acquisition of the Pending Reviews page total count"
+            ],
+            "supported_patterns": [
+              "log into the admin site and read the Pending Reviews page count",
+              "return a typed pending-review count from the page's dedicated summary element"
+            ],
+            "guarantees": {
+              "collection_scope": "page",
+              "completeness": "complete",
+              "supports_absence_proof": true,
+              "configuration": {
+                "kind": "none",
+                "supported_values": [],
+                "coupled_site_parameters_hidden": true
+              }
+            },
+            "acceptance_checks": [
+              "Returns an authenticated result with review_status = 'pending' and page_url ending at the site's Pending Reviews admin page.",
+              "Parses a non-negative integer total_count from the page element with id 'reviewGrid-total-count'.",
+              "If the Pending Reviews page is reachable and contains zero records, returns total_count = 0 rather than failing.",
+              "Fails when authentication does not succeed or when the expected reviewGrid-total-count element cannot be found on the page."
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task77_t277",
+                "template_id": "277",
+                "code_quote": "pending_url = base + '/admin/review/product/pending/' ... resp = opener.open(login_url) ... form_key = re.search(r'name=\"form_key\" type=\"hidden\" value=\"([^\"]+)\"', login_html).group(1) ... post = urllib.parse.urlencode({'form_key': form_key, 'login[username]': 'admin', 'login[password]': 'admin1234'}).encode() ... resp = opener.open(pending_url) ... m = re.search(r'id=\"reviewGrid-total-count\"[^>]*>\\s*(\\d+)\\s*<', pending_html)",
+                "explanation": "Preserved the evidenced site-local capability of authenticating to Magento admin, opening the Pending Reviews page, and parsing its displayed total count. The public contract keeps only typed authentication success and count results, not raw form_key/session internals."
+              }
+            ]
+          }
+        }
+      ],
+      "workflow_attribution": [
+        {
+          "workflow_id": "task78_t277",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0
+          ]
+        },
+        {
+          "workflow_id": "task42_t285",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            1
+          ]
+        },
+        {
+          "workflow_id": "task347_t248",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            2
+          ]
+        },
+        {
+          "workflow_id": "task77_t277",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            3
+          ]
+        }
+      ],
+      "candidate_attribution": [
+        {
+          "candidate_id": "task78_t277::get_review_grid_record_count_by_status",
+          "decision": "ADD",
+          "operation_index": 0
+        },
+        {
+          "candidate_id": "task42_t285::extract_dashboard_top_search_terms",
+          "decision": "ADD",
+          "operation_index": 1
+        },
+        {
+          "candidate_id": "task347_t248::get_admin_reviews_total_count",
+          "decision": "ADD",
+          "operation_index": 2
+        },
+        {
+          "candidate_id": "task77_t277::get_pending_review_grid_summary",
+          "decision": "ADD",
+          "operation_index": 3
+        }
+      ]
+    },
+    "quality_verdicts": {
+      "verdicts": [
+        {
+          "operation_index": 0,
+          "verdict": "PASS",
+          "reason": "Source evidence directly shows navigating to the reviews grid, selecting a status by label, submitting search, and parsing '<n> records found'. The operation keeps the status caller-supplied rather than hard-coding a task choice, returns typed fields, and its owns/does_not_own boundary is consistent with site-specific acquisition/parsing rather than task filtering."
+        },
+        {
+          "operation_index": 1,
+          "verdict": "PASS",
+          "reason": "Source evidence supports locating the Top Search Terms area, iterating table rows, and extracting term/results/uses cells. The proposed primitive appropriately removes the task-specific top-2 restriction into an optional max_rows control, returns typed records, and does not claim unsupported aggregation or ranking beyond display order."
+        },
+        {
+          "operation_index": 2,
+          "verdict": "FAIL",
+          "reason": "The declared typed output includes reviews_status as an HTTP status, but the method code never captures any response status and always returns None. This violates code/contract agreement and the rule against declared typed output whose source data is not requested or parsed by the method code. It also weakens acceptance checks that refer to successful page response semantics without an implemented guarantee."
+        },
+        {
+          "operation_index": 3,
+          "verdict": "FAIL",
+          "reason": "This is a lossy, overly specialized duplicate of the richer review-grid count acquisition already covered by operation 0. The evidence supports a reusable reviews-grid count primitive parameterized by status/filter mechanics; hard-wiring the Pending Reviews page plus fixed review_status='pending' duplicates overlapping site acquisition in a narrower form. It also overstates guarantees with completeness/supports_absence_proof not directly evidenced by a single page-summary parse."
+        }
+      ],
+      "rejection_verdicts": []
+    },
+    "errors": [
+      "quality gate rejected operation 2: The declared typed output includes reviews_status as an HTTP status, but the method code never captures any response status and always returns None. This violates code/contract agreement and the rule against declared typed output whose source data is not requested or parsed by the method code. It also weakens acceptance checks that refer to successful page response semantics without an implemented guarantee.",
+      "quality gate rejected operation 3: This is a lossy, overly specialized duplicate of the richer review-grid count acquisition already covered by operation 0. The evidence supports a reusable reviews-grid count primitive parameterized by status/filter mechanics; hard-wiring the Pending Reviews page plus fixed review_status='pending' duplicates overlapping site acquisition in a narrower form. It also overstates guarantees with completeness/supports_absence_proof not directly evidenced by a single page-summary parse."
+    ]
+  },
+  {
+    "attempt": 3,
+    "proposal": {
+      "operations": [
+        {
+          "op": "ADD",
+          "replacement": {
+            "primitive_id": "shopping_admin/get_review_grid_record_count_by_status",
+            "method": "get_review_grid_record_count_by_status",
+            "capability": "retrieve the site-reported record count from the Magento admin product reviews grid after applying a review status filter",
+            "method_code": "def get_review_grid_record_count_by_status(self, status: str) -> dict:\n    import re\n\n    if not isinstance(status, str) or not status.strip():\n        raise ValueError(\"status must be a non-empty string\")\n    status = status.strip()\n\n    review_url = \"http://GCRSANDBOX410.redmond.corp.microsoft.com:7780/admin/review/product/index/\"\n    self.page.goto(review_url, wait_until=\"domcontentloaded\")\n    self.page.wait_for_load_state(\"networkidle\")\n\n    self.page.select_option(\"#reviewGrid_filter_status\", label=status)\n    search_button = self.page.get_by_role(\"button\", name=\"Search\")\n    search_button.click()\n    self.page.wait_for_load_state(\"networkidle\")\n\n    summary_texts = self.page.locator(\".admin__data-grid-header .admin__control-support-text\").all_inner_texts()\n    summary_text = \" | \".join(t.strip() for t in summary_texts if t and t.strip())\n    body_text = self.page.locator(\"body\").inner_text()\n\n    match = re.search(r\"(\\d+)\\s+records\\s+found\", summary_text, re.I)\n    if not match:\n        match = re.search(r\"(\\d+)\\s+records\\s+found\", body_text, re.I)\n    if not match:\n        raise RuntimeError(\"Could not parse filtered review grid record count\")\n\n    return {\n        \"status\": status,\n        \"record_count\": int(match.group(1)),\n        \"summary_text\": summary_text,\n        \"grid_url\": self.page.url,\n    }\n",
+            "owns": [
+              "navigate to the Magento admin reviews grid page",
+              "apply the reviews-grid status dropdown filter using a caller-supplied review status value",
+              "submit the grid search/filter action",
+              "read the grid header/body summary text and parse the site-reported '<n> records found' count into a typed integer"
+            ],
+            "does_not_own": [
+              "logging into the admin site",
+              "choosing which review status is relevant to the caller's task",
+              "computing aggregates beyond the single site-reported filtered count",
+              "returning raw page text or DOM instead of the parsed count"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "type": "string",
+                  "description": "Review status label to select in the reviews grid filter, e.g. 'Approved'."
+                }
+              },
+              "required": [
+                "status"
+              ],
+              "additionalProperties": false
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "type": "string"
+                },
+                "record_count": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "summary_text": {
+                  "type": "string",
+                  "description": "Grid summary text from which the count was parsed."
+                },
+                "grid_url": {
+                  "type": "string",
+                  "description": "Final reviews grid URL used for acquisition."
+                }
+              },
+              "required": [
+                "status",
+                "record_count",
+                "summary_text",
+                "grid_url"
+              ],
+              "additionalProperties": false
+            },
+            "requires": [
+              "authenticated shopping_admin admin session in self.page"
+            ],
+            "provides": [
+              "filtered review-grid record count for a requested status label"
+            ],
+            "supported_patterns": [
+              "apply a single review-status filter on the All Reviews grid and read the site's reported total",
+              "obtain counts for statuses such as Approved or Pending using the same grid workflow"
+            ],
+            "guarantees": {
+              "collection_scope": "query",
+              "completeness": "conditional",
+              "supports_absence_proof": false,
+              "configuration": {
+                "kind": "none",
+                "supported_values": [],
+                "coupled_site_parameters_hidden": true
+              }
+            },
+            "acceptance_checks": [
+              "After applying the requested status filter and submitting search, the reviews grid page remains loaded and exposes summary text or body text containing a parseable '<number> records found' pattern.",
+              "Returned record_count is a non-negative integer parsed from site-rendered grid summary text, and returned status echoes the caller-supplied filter value.",
+              "If the filtered grid has zero results and the site renders '0 records found', the primitive returns record_count = 0 rather than treating the result as a failure."
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task78_t277",
+                "template_id": "277",
+                "code_quote": "await page.goto('http://gcrsandbox410.redmond.corp.microsoft.com:7780/admin/review/product/index/', { waitUntil: 'domcontentloaded' }); ... await page.selectOption('#reviewGrid_filter_status', { label: 'Approved' }); ... const summaryTexts = await page.locator('.admin__data-grid-header .admin__control-support-text').allInnerTexts(); ... let m = summary.match(/(\\d+) records found/i); if (!m) m = bodyText.match(/(\\d+) records found/i);",
+                "explanation": "Generalized the hard-coded 'Approved' selection into a caller-supplied status while preserving the demonstrated grid navigation, filter submission, and count parsing behavior."
+              },
+              {
+                "workflow_id": "task77_t277",
+                "template_id": "277",
+                "code_quote": "pending_url = base + '/admin/review/product/pending/' ... m = re.search(r'id=\"reviewGrid-total-count\"[^>]*>\\s*(\\d+)\\s*<', pending_html)",
+                "explanation": "This workflow evidences the same underlying site domain concept of status-specific review counts. Rather than keeping a narrower pending-only page primitive, the batch preserves the richer reusable status-parameterized grid count capability."
+              }
+            ]
+          }
+        },
+        {
+          "op": "ADD",
+          "replacement": {
+            "primitive_id": "shopping_admin/extract_dashboard_top_search_terms",
+            "method": "extract_dashboard_top_search_terms",
+            "capability": "extract typed top-search-term records from the shopping admin dashboard widget/table",
+            "method_code": "def extract_dashboard_top_search_terms(self, max_rows: int | None = None) -> dict:\n    if max_rows is not None:\n        if not isinstance(max_rows, int) or max_rows < 1:\n            raise ValueError(\"max_rows must be a positive integer when provided\")\n\n    heading = self.page.get_by_text(\"Top Search Terms\", exact=True)\n    if heading.count() == 0:\n        raise RuntimeError(\"Could not locate Top Search Terms heading\")\n    heading.scroll_into_view_if_needed()\n\n    tables = self.page.locator(\"table\")\n    target_rows = None\n    for i in range(tables.count()):\n        table = tables.nth(i)\n        text = table.inner_text()\n        if \"Search Term\" in text and \"Uses\" in text:\n            rows = table.locator(\"tbody tr\")\n            if rows.count() >= 0:\n                target_rows = rows\n                break\n\n    if target_rows is None:\n        raise RuntimeError(\"Could not locate Top Search Terms table\")\n\n    row_count = target_rows.count()\n    limit = row_count if max_rows is None else min(max_rows, row_count)\n    records = []\n    for i in range(limit):\n        row = target_rows.nth(i)\n        cells = [c.strip() for c in row.locator(\"td\").all_inner_texts()]\n        if len(cells) < 3:\n            raise RuntimeError(\"Unexpected Top Search Terms row shape\")\n        records.append({\n            \"term\": cells[0],\n            \"results\": cells[1],\n            \"uses\": cells[2],\n        })\n\n    return {\"records\": records}\n",
+            "owns": [
+              "locate the dashboard table/widget representing Top Search Terms by displayed dashboard semantics",
+              "parse the table rows into typed search-term records with term, results, and uses fields",
+              "return records in dashboard display order, optionally limited to a caller-supplied maximum row count"
+            ],
+            "does_not_own": [
+              "logging into the admin site",
+              "choosing that only the top 2 rows are needed for the task",
+              "reducing records to only term strings for final answer formatting",
+              "ranking or reordering beyond the site's displayed order",
+              "inferring site-wide search analytics beyond what is shown in the dashboard widget"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "max_rows": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "Maximum number of displayed Top Search Terms rows to return."
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "records": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "term": {
+                        "type": "string"
+                      },
+                      "results": {
+                        "type": "string",
+                        "description": "Displayed result count/value as shown in the dashboard table."
+                      },
+                      "uses": {
+                        "type": "string",
+                        "description": "Displayed uses count/value as shown in the dashboard table."
+                      }
+                    },
+                    "required": [
+                      "term",
+                      "results",
+                      "uses"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "records"
+              ],
+              "additionalProperties": false
+            },
+            "requires": [
+              "authenticated shopping_admin admin dashboard page loaded in self.page"
+            ],
+            "provides": [
+              "typed records from the dashboard Top Search Terms widget in display order"
+            ],
+            "supported_patterns": [
+              "read the full displayed Top Search Terms widget",
+              "read only the first N displayed Top Search Terms rows by supplying max_rows"
+            ],
+            "guarantees": {
+              "collection_scope": "page",
+              "completeness": "partial",
+              "supports_absence_proof": false,
+              "configuration": {
+                "kind": "none",
+                "supported_values": [],
+                "coupled_site_parameters_hidden": true
+              }
+            },
+            "acceptance_checks": [
+              "If the dashboard Top Search Terms widget/table is present, each returned record is parsed from one displayed table row and contains non-empty term, results, and uses fields.",
+              "If max_rows is provided, the number of returned records is less than or equal to max_rows and preserves page display order.",
+              "An empty records array is valid only when the Top Search Terms table is located but has no data rows; failure to locate the widget/table must raise an acquisition error rather than silently returning empty."
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task42_t285",
+                "template_id": "285",
+                "code_quote": "heading = page.get_by_text('Top Search Terms', exact=True) ... for i in range(await tables.count()): table = tables.nth(i); text = await table.inner_text(); if 'Search Term' in text and 'Uses' in text and 'hollister' in text: rows = table.locator('tbody tr') ... for i in range(min(2, await target_rows.count())): ... extracted.append({'term': cells[0], 'results': cells[1], 'uses': cells[2]})",
+                "explanation": "Generalized the workflow's dashboard-table extraction into a reusable page-level primitive that identifies the Top Search Terms widget by stable displayed semantics and returns typed row records. The task-specific limit of 2 becomes optional max_rows, and the literal 'hollister' content check is treated as a brittle locator aid rather than a public contract."
+              }
+            ]
+          }
+        },
+        {
+          "op": "ADD",
+          "replacement": {
+            "primitive_id": "shopping_admin/get_admin_reviews_total_count",
+            "method": "get_admin_reviews_total_count",
+            "capability": "retrieve the total number of review records shown by the shopping admin All Reviews page after authenticated admin login",
+            "method_code": "def get_admin_reviews_total_count(self, base_url: str, username: str, password: str) -> dict:\n    import re\n\n    if not isinstance(base_url, str) or not base_url.strip():\n        raise ValueError(\"base_url must be a non-empty string\")\n    if not isinstance(username, str) or not username:\n        raise ValueError(\"username must be a non-empty string\")\n    if not isinstance(password, str) or not password:\n        raise ValueError(\"password must be a non-empty string\")\n\n    base_url = base_url.rstrip(\"/\")\n    login_url = base_url + \"/admin\"\n    reviews_url = base_url + \"/admin/review/product/index/\"\n\n    self.page.goto(login_url, wait_until=\"domcontentloaded\")\n    username_locator = self.page.locator('input[name=\"login[username]\"]')\n    password_locator = self.page.locator('input[name=\"login[password]\"]')\n    if username_locator.count() == 0 or password_locator.count() == 0:\n        raise RuntimeError(\"Admin login form was not found\")\n\n    username_locator.fill(username)\n    password_locator.fill(password)\n    self.page.get_by_role(\"button\", name=\"Sign in\").click()\n    self.page.wait_for_load_state(\"networkidle\")\n\n    self.page.goto(reviews_url, wait_until=\"domcontentloaded\")\n    self.page.wait_for_load_state(\"networkidle\")\n\n    body_text = self.page.locator(\"body\").inner_text()\n    match = re.search(r\"(\\d+)\\s+records\\s+found\", body_text, re.I)\n    if not match:\n        raise RuntimeError(\"Could not find total review record count on All Reviews page\")\n\n    title = self.page.title()\n    return {\n        \"reviews_total_count\": int(match.group(1)),\n        \"reviews_url\": self.page.url,\n        \"page_title\": title,\n    }\n",
+            "owns": [
+              "establishing an authenticated admin browser session using the site's login form",
+              "submitting site-specific admin credentials to the /admin login page",
+              "requesting the site-local All Reviews admin page at /admin/review/product/index/",
+              "parsing the rendered page text to extract the typed total review record count from the pager phrase '<n> records found'",
+              "returning the resolved reviews page URL and page title alongside the typed count"
+            ],
+            "does_not_own": [
+              "deciding that the business question should be answered using review records rather than some other admin metric",
+              "formatting screenshots or final answer artifacts",
+              "returning raw HTML/page text as the primary product",
+              "proving that no reviews exist beyond what the page's displayed total states"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "base_url": {
+                  "type": "string",
+                  "description": "Base URL of the shopping admin deployment, e.g. http://host:port"
+                },
+                "username": {
+                  "type": "string",
+                  "description": "Admin username"
+                },
+                "password": {
+                  "type": "string",
+                  "description": "Admin password"
+                }
+              },
+              "required": [
+                "base_url",
+                "username",
+                "password"
+              ],
+              "additionalProperties": false
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "reviews_total_count": {
+                  "type": "integer",
+                  "description": "Integer parsed from the All Reviews page pager text '<n> records found'"
+                },
+                "reviews_url": {
+                  "type": "string",
+                  "description": "Resolved URL of the All Reviews page after request"
+                },
+                "page_title": {
+                  "type": "string",
+                  "description": "HTML title of the reviews page when available"
+                }
+              },
+              "required": [
+                "reviews_total_count",
+                "reviews_url",
+                "page_title"
+              ],
+              "additionalProperties": false
+            },
+            "requires": [],
+            "provides": [
+              "authenticated acquisition of the All Reviews page total record count"
+            ],
+            "supported_patterns": [
+              "log into a shopping_admin deployment and read the overall All Reviews count",
+              "return page metadata alongside the typed total count"
+            ],
+            "guarantees": {
+              "collection_scope": "page",
+              "completeness": "conditional",
+              "supports_absence_proof": false,
+              "configuration": {
+                "kind": "none",
+                "supported_values": [],
+                "coupled_site_parameters_hidden": true
+              }
+            },
+            "acceptance_checks": [
+              "Authenticated browser sequence reaches an admin context before requesting the reviews page.",
+              "Returned reviews page contains a pager phrase matching '<integer> records found'.",
+              "Output reviews_total_count equals the integer parsed from that pager phrase on the All Reviews page.",
+              "Returned reviews_url points to the site's admin reviews listing page rather than the login page."
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task347_t248",
+                "template_id": "248",
+                "code_quote": "REVIEWS_URL = BASE + \"/admin/review/product/index/\" ... reviews_resp = opener.open(REVIEWS_URL) ... reviews_html = reviews_resp.read().decode(\"utf-8\", \"ignore\") ... m = re.search(r'(\\d+)\\s+records\\s+found', reviews_text, re.I) ... total_reviews = int(m.group(1))",
+                "explanation": "Generalized the workflow's hard-coded base URL and credentials into inputs while preserving the evidenced site-specific capability: authenticate, open the All Reviews page, and parse the page's total record count from the pager text."
+              }
+            ]
+          }
+        }
+      ],
+      "workflow_attribution": [
+        {
+          "workflow_id": "task78_t277",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0
+          ]
+        },
+        {
+          "workflow_id": "task42_t285",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            1
+          ]
+        },
+        {
+          "workflow_id": "task347_t248",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            2
+          ]
+        },
+        {
+          "workflow_id": "task77_t277",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0
+          ]
+        }
+      ],
+      "candidate_attribution": [
+        {
+          "candidate_id": "task78_t277::get_review_grid_record_count_by_status",
+          "decision": "ADD",
+          "operation_index": 0
+        },
+        {
+          "candidate_id": "task42_t285::extract_dashboard_top_search_terms",
+          "decision": "ADD",
+          "operation_index": 1
+        },
+        {
+          "candidate_id": "task347_t248::get_admin_reviews_total_count",
+          "decision": "ADD",
+          "operation_index": 2
+        },
+        {
+          "candidate_id": "task77_t277::get_pending_review_grid_summary",
+          "decision": "ADD",
+          "operation_index": 0
+        }
+      ]
+    },
+    "quality_verdicts": {
+      "verdicts": [
+        {
+          "operation_index": 0,
+          "verdict": "PASS",
+          "reason": "Source evidence directly supports navigating to the Magento admin reviews grid, selecting a status in #reviewGrid_filter_status, submitting Search, and parsing '<n> records found' from grid/header or body text. The output is typed. The method keeps site-specific acquisition/parsing and leaves status choice to the caller. Mapping task77's pending-only evidence into this richer parameterized status-count primitive is consistent with the demonstrated same-site review-count concept and is not overly task-specific."
+        },
+        {
+          "operation_index": 1,
+          "verdict": "FAIL",
+          "reason": "The proposed primitive is a lossy, partially unsupported abstraction. Evidence shows row parsing from a specific table identified in part by literal content ('hollister') and only demonstrates extracting at least two rows, but the method claims a general Top Search Terms widget extraction with valid empty-array behavior. More importantly, code and contract disagree: acceptance checks require empty records only when the table is located but has no rows, yet the code's 'if rows.count() >= 0' always accepts any tbody rows locator, making empty and malformed acquisition states indistinguishable from a valid empty table. This violates the requirement that valid empty output be distinguishable from acquisition/filter/parser failure and leaves missing/internal guarantees inconsistent."
+        },
+        {
+          "operation_index": 2,
+          "verdict": "FAIL",
+          "reason": "The operation overclaims supported login mechanics beyond the cited evidence. Source evidence directly supports opening /admin/review/product/index/ and parsing '<n> records found', but does not directly evidence the specific browser-form flow used here: locating input[name='login[username]'], input[name='login[password]'], clicking a 'Sign in' button, and detecting authenticated state via subsequent navigation. The candidate evidence only quotes HTTP opener-based access to REVIEWS_URL and parsing the count; it does not substantiate these exact selectors/submit behavior required for a site-auth primitive. Code and contract also diverge from the richer candidate: this version drops HTTP-status-related evidence while still asserting authenticated acquisition after login."
+        }
+      ],
+      "rejection_verdicts": []
+    },
+    "errors": [
+      "quality gate rejected operation 1: The proposed primitive is a lossy, partially unsupported abstraction. Evidence shows row parsing from a specific table identified in part by literal content ('hollister') and only demonstrates extracting at least two rows, but the method claims a general Top Search Terms widget extraction with valid empty-array behavior. More importantly, code and contract disagree: acceptance checks require empty records only when the table is located but has no rows, yet the code's 'if rows.count() >= 0' always accepts any tbody rows locator, making empty and malformed acquisition states indistinguishable from a valid empty table. This violates the requirement that valid empty output be distinguishable from acquisition/filter/parser failure and leaves missing/internal guarantees inconsistent.",
+      "quality gate rejected operation 2: The operation overclaims supported login mechanics beyond the cited evidence. Source evidence directly supports opening /admin/review/product/index/ and parsing '<n> records found', but does not directly evidence the specific browser-form flow used here: locating input[name='login[username]'], input[name='login[password]'], clicking a 'Sign in' button, and detecting authenticated state via subsequent navigation. The candidate evidence only quotes HTTP opener-based access to REVIEWS_URL and parsing the count; it does not substantiate these exact selectors/submit behavior required for a site-auth primitive. Code and contract also diverge from the richer candidate: this version drops HTTP-status-related evidence while still asserting authenticated acquisition after login."
+    ]
+  },
+  {
+    "attempt": 4,
+    "proposal": {
+      "operations": [
+        {
+          "op": "ADD",
+          "replacement": {
+            "primitive_id": "shopping_admin/get_review_grid_record_count_by_status",
+            "method": "get_review_grid_record_count_by_status",
+            "capability": "retrieve the site-reported record count from the Magento admin product reviews grid after applying a review status filter",
+            "method_code": "def get_review_grid_record_count_by_status(self, status: str) -> dict:\n    import re\n\n    if not isinstance(status, str) or not status.strip():\n        raise ValueError(\"status must be a non-empty string\")\n    status = status.strip()\n\n    review_url = \"http://GCRSANDBOX410.redmond.corp.microsoft.com:7780/admin/review/product/index/\"\n    self.page.goto(review_url, wait_until=\"domcontentloaded\")\n    self.page.wait_for_load_state(\"networkidle\")\n\n    self.page.select_option(\"#reviewGrid_filter_status\", label=status)\n    self.page.get_by_role(\"button\", name=\"Search\").click()\n    self.page.wait_for_load_state(\"networkidle\")\n\n    summary_texts = self.page.locator(\".admin__data-grid-header .admin__control-support-text\").all_inner_texts()\n    summary_text = \" | \".join(t.strip() for t in summary_texts if t and t.strip())\n    body_text = self.page.locator(\"body\").inner_text()\n\n    match = re.search(r\"(\\d+)\\s+records\\s+found\", summary_text, re.I)\n    if not match:\n        match = re.search(r\"(\\d+)\\s+records\\s+found\", body_text, re.I)\n    if not match:\n        raise RuntimeError(\"Could not parse filtered review grid record count\")\n\n    return {\n        \"status\": status,\n        \"record_count\": int(match.group(1)),\n        \"summary_text\": summary_text,\n        \"grid_url\": self.page.url,\n    }\n",
+            "owns": [
+              "navigate to the Magento admin reviews grid page",
+              "apply the reviews-grid status dropdown filter using a caller-supplied review status value",
+              "submit the grid search/filter action",
+              "read the grid header/body summary text and parse the site-reported '<n> records found' count into a typed integer"
+            ],
+            "does_not_own": [
+              "logging into the admin site",
+              "choosing which review status is relevant to the caller's task",
+              "computing aggregates beyond the single site-reported filtered count",
+              "returning raw page text or DOM instead of the parsed count"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "type": "string",
+                  "description": "Review status label to select in the reviews grid filter, e.g. 'Approved'."
+                }
+              },
+              "required": [
+                "status"
+              ],
+              "additionalProperties": false
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "type": "string"
+                },
+                "record_count": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "summary_text": {
+                  "type": "string",
+                  "description": "Grid summary text from which the count was parsed."
+                },
+                "grid_url": {
+                  "type": "string",
+                  "description": "Final reviews grid URL used for acquisition."
+                }
+              },
+              "required": [
+                "status",
+                "record_count",
+                "summary_text",
+                "grid_url"
+              ],
+              "additionalProperties": false
+            },
+            "requires": [
+              "authenticated shopping_admin admin session in self.page"
+            ],
+            "provides": [
+              "filtered review-grid record count for a requested status label"
+            ],
+            "supported_patterns": [
+              "apply a single review-status filter on the All Reviews grid and read the site's reported total",
+              "obtain counts for statuses such as Approved using the same grid workflow"
+            ],
+            "guarantees": {
+              "collection_scope": "query",
+              "completeness": "conditional",
+              "supports_absence_proof": false,
+              "configuration": {
+                "kind": "none",
+                "supported_values": [],
+                "coupled_site_parameters_hidden": true
+              }
+            },
+            "acceptance_checks": [
+              "After applying the requested status filter and submitting search, the reviews grid page remains loaded and exposes summary text or body text containing a parseable '<number> records found' pattern.",
+              "Returned record_count is a non-negative integer parsed from site-rendered grid summary text, and returned status echoes the caller-supplied filter value.",
+              "If the filtered grid has zero results and the site renders '0 records found', the primitive returns record_count = 0 rather than treating the result as a failure."
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task78_t277",
+                "template_id": "277",
+                "code_quote": "await page.goto('http://gcrsandbox410.redmond.corp.microsoft.com:7780/admin/review/product/index/', { waitUntil: 'domcontentloaded' }); ... await page.selectOption('#reviewGrid_filter_status', { label: 'Approved' }); ... const summaryTexts = await page.locator('.admin__data-grid-header .admin__control-support-text').allInnerTexts(); ... let m = summary.match(/(\\d+) records found/i); if (!m) m = bodyText.match(/(\\d+) records found/i);",
+                "explanation": "Generalized the hard-coded 'Approved' selection into a caller-supplied status while preserving the demonstrated grid navigation, filter submission, and count parsing behavior."
+              }
+            ]
+          }
+        },
+        {
+          "op": "ADD",
+          "replacement": {
+            "primitive_id": "shopping_admin/get_admin_reviews_total_count_via_http_session",
+            "method": "get_admin_reviews_total_count_via_http_session",
+            "capability": "retrieve the total number of review records shown by the shopping admin All Reviews page using an authenticated admin HTTP session",
+            "method_code": "def get_admin_reviews_total_count_via_http_session(self, base_url: str, username: str, password: str) -> dict:\n    import html\n    import http.cookiejar\n    import re\n    import urllib.parse\n    import urllib.request\n\n    if not isinstance(base_url, str) or not base_url.strip():\n        raise ValueError(\"base_url must be a non-empty string\")\n    if not isinstance(username, str) or not username:\n        raise ValueError(\"username must be a non-empty string\")\n    if not isinstance(password, str) or not password:\n        raise ValueError(\"password must be a non-empty string\")\n\n    base_url = base_url.rstrip(\"/\")\n    start_url = base_url + \"/admin\"\n    reviews_url = base_url + \"/admin/review/product/index/\"\n\n    jar = http.cookiejar.CookieJar()\n    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))\n\n    login_resp = opener.open(start_url)\n    login_html = login_resp.read().decode(\"utf-8\", \"ignore\")\n    form_inputs = dict(\n        re.findall(\n            r'<input[^>]+name=[\"\\']([^\"\\']+)[\"\\'][^>]*value=[\"\\']([^\"\\']*)[\"\\']',\n            login_html,\n            re.I,\n        )\n    )\n    form_inputs[\"login[username]\"] = username\n    form_inputs[\"login[password]\"] = password\n\n    dashboard_req = urllib.request.Request(\n        start_url,\n        data=urllib.parse.urlencode(form_inputs).encode(),\n    )\n    dashboard_resp = opener.open(dashboard_req)\n    dashboard_html = dashboard_resp.read().decode(\"utf-8\", \"ignore\")\n    dashboard_text = re.sub(r\"<script.*?</script>|<style.*?</style>\", \" \", dashboard_html, flags=re.I | re.S)\n    dashboard_text = re.sub(r\"<[^>]+>\", \" \", dashboard_text)\n    dashboard_text = re.sub(r\"\\s+\", \" \", html.unescape(dashboard_text)).strip()\n    if \"Dashboard / Magento Admin\" not in dashboard_html and \"Dashboard\" not in dashboard_text:\n        raise RuntimeError(\"Login did not reach dashboard\")\n\n    reviews_resp = opener.open(reviews_url)\n    reviews_html = reviews_resp.read().decode(\"utf-8\", \"ignore\")\n    reviews_text = re.sub(r\"<script.*?</script>|<style.*?</style>\", \" \", reviews_html, flags=re.I | re.S)\n    reviews_text = re.sub(r\"<[^>]+>\", \" \", reviews_text)\n    reviews_text = re.sub(r\"\\s+\", \" \", html.unescape(reviews_text)).strip()\n\n    match = re.search(r\"(\\d+)\\s+records\\s+found\", reviews_text, re.I)\n    if not match:\n        raise RuntimeError(\"Could not find total review record count on All Reviews page\")\n\n    title_match = re.search(r\"<title>(.*?)</title>\", reviews_html, re.I | re.S)\n    page_title = html.unescape(title_match.group(1).strip()) if title_match else \"\"\n\n    return {\n        \"reviews_total_count\": int(match.group(1)),\n        \"reviews_url\": reviews_resp.geturl(),\n        \"reviews_status\": getattr(reviews_resp, \"status\", None),\n        \"page_title\": page_title,\n    }\n",
+            "owns": [
+              "establishing an authenticated admin HTTP session using the site's login form and cookies",
+              "submitting site-specific admin credentials to the /admin login endpoint",
+              "requesting the site-local All Reviews admin page at /admin/review/product/index/",
+              "parsing the returned HTML page text to extract the typed total review record count from the pager phrase '<n> records found'",
+              "returning the resolved reviews page URL and HTTP status alongside the typed count"
+            ],
+            "does_not_own": [
+              "deciding that the business question should be answered using review records rather than some other admin metric",
+              "formatting screenshots or final answer artifacts",
+              "returning raw HTML/page text as the primary product",
+              "proving that no reviews exist beyond what the page's displayed total states"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "base_url": {
+                  "type": "string",
+                  "description": "Base URL of the shopping admin deployment, e.g. http://host:port"
+                },
+                "username": {
+                  "type": "string",
+                  "description": "Admin username"
+                },
+                "password": {
+                  "type": "string",
+                  "description": "Admin password"
+                }
+              },
+              "required": [
+                "base_url",
+                "username",
+                "password"
+              ],
+              "additionalProperties": false
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "reviews_total_count": {
+                  "type": "integer",
+                  "description": "Integer parsed from the All Reviews page pager text '<n> records found'"
+                },
+                "reviews_url": {
+                  "type": "string",
+                  "description": "Resolved URL of the All Reviews page after request"
+                },
+                "reviews_status": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "description": "HTTP status observed for the All Reviews page response"
+                },
+                "page_title": {
+                  "type": "string",
+                  "description": "HTML title of the reviews page when available"
+                }
+              },
+              "required": [
+                "reviews_total_count",
+                "reviews_url",
+                "reviews_status",
+                "page_title"
+              ],
+              "additionalProperties": false
+            },
+            "requires": [],
+            "provides": [
+              "authenticated acquisition of the All Reviews page total record count via site HTTP session"
+            ],
+            "supported_patterns": [
+              "log into a shopping_admin deployment and read the overall All Reviews count using the site's HTTP login flow",
+              "return page metadata alongside the typed total count"
+            ],
+            "guarantees": {
+              "collection_scope": "page",
+              "completeness": "conditional",
+              "supports_absence_proof": false,
+              "configuration": {
+                "kind": "none",
+                "supported_values": [],
+                "coupled_site_parameters_hidden": true
+              }
+            },
+            "acceptance_checks": [
+              "Authenticated request sequence reaches an admin dashboard page before requesting the reviews page.",
+              "Returned reviews page response is successful enough to parse and contains a pager phrase matching '<integer> records found'.",
+              "Output reviews_total_count equals the integer parsed from that pager phrase on the All Reviews page.",
+              "Returned reviews_url points to the site's admin reviews listing page rather than the login page."
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task347_t248",
+                "template_id": "248",
+                "code_quote": "jar = http.cookiejar.CookieJar(); opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar)) ... resp = opener.open(START_URL) ... form_inputs[\"login[username]\"] = \"admin\"; form_inputs[\"login[password]\"] = \"admin1234\" ... dashboard_resp = opener.open(req) ... reviews_resp = opener.open(REVIEWS_URL) ... m = re.search(r'(\\d+)\\s+records\\s+found', reviews_text, re.I)",
+                "explanation": "Preserved the evidenced HTTP-session login and page-fetching mechanics instead of inventing a browser-form login flow, while generalizing hard-coded base URL and credentials into inputs and keeping the demonstrated All Reviews count parsing."
+              }
+            ]
+          }
+        },
+        {
+          "op": "ADD",
+          "replacement": {
+            "primitive_id": "shopping_admin/get_pending_review_grid_summary",
+            "method": "get_pending_review_grid_summary",
+            "capability": "retrieve the Magento admin Pending Reviews grid total count from the shopping admin site after authenticating",
+            "method_code": "def get_pending_review_grid_summary(self, username: str, password: str) -> dict:\n    import http.cookiejar\n    import re\n    import urllib.parse\n    import urllib.request\n\n    if not isinstance(username, str) or not username:\n        raise ValueError(\"username must be a non-empty string\")\n    if not isinstance(password, str) or not password:\n        raise ValueError(\"password must be a non-empty string\")\n\n    base = \"http://GCRSANDBOX410.redmond.corp.microsoft.com:7780\"\n    login_url = base + \"/admin\"\n    pending_url = base + \"/admin/review/product/pending/\"\n\n    cj = http.cookiejar.CookieJar()\n    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))\n\n    resp = opener.open(login_url)\n    login_html = resp.read().decode(\"utf-8\", \"ignore\")\n    form_key_match = re.search(r'name=\"form_key\" type=\"hidden\" value=\"([^\"]+)\"', login_html)\n    if not form_key_match:\n        raise RuntimeError(\"Could not extract login form_key\")\n    form_key = form_key_match.group(1)\n\n    post = urllib.parse.urlencode(\n        {\n            \"form_key\": form_key,\n            \"login[username]\": username,\n            \"login[password]\": password,\n        }\n    ).encode()\n    login_resp = opener.open(login_url, post)\n    login_resp.read().decode(\"utf-8\", \"ignore\")\n\n    resp = opener.open(pending_url)\n    final_url = resp.geturl()\n    pending_html = resp.read().decode(\"utf-8\", \"ignore\")\n\n    m = re.search(r'id=\"reviewGrid-total-count\"[^>]*>\\s*(\\d+)\\s*<', pending_html)\n    if not m:\n        raise RuntimeError(\"Could not find reviewGrid-total-count on Pending Reviews page\")\n\n    return {\n        \"review_status\": \"pending\",\n        \"total_count\": int(m.group(1)),\n        \"page_url\": final_url,\n        \"authenticated\": True,\n    }\n",
+            "owns": [
+              "Magento admin login session establishment using the site's login form and hidden form_key",
+              "navigation to the site's Pending Reviews admin page",
+              "parsing the Pending Reviews page HTML to extract the typed grid total count from the reviewGrid-total-count element"
+            ],
+            "does_not_own": [
+              "choosing that only Pending reviews are relevant to the user task beyond using the demonstrated Pending Reviews page URL",
+              "formatting the count as the final answer payload",
+              "general raw HTML export or arbitrary page scraping outside this page's demonstrated summary element"
+            ],
+            "input_contract": {
+              "type": "object",
+              "properties": {
+                "username": {
+                  "type": "string"
+                },
+                "password": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "username",
+                "password"
+              ],
+              "additionalProperties": false
+            },
+            "output_contract": {
+              "type": "object",
+              "properties": {
+                "review_status": {
+                  "type": "string",
+                  "enum": [
+                    "pending"
+                  ]
+                },
+                "total_count": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "page_url": {
+                  "type": "string"
+                },
+                "authenticated": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "review_status",
+                "total_count",
+                "page_url",
+                "authenticated"
+              ],
+              "additionalProperties": false
+            },
+            "requires": [],
+            "provides": [
+              "authenticated acquisition of the Pending Reviews page total count"
+            ],
+            "supported_patterns": [
+              "log into the shopping_admin site and read the Pending Reviews page total",
+              "use the page-specific Pending Reviews endpoint rather than the filterable All Reviews grid"
+            ],
+            "guarantees": {
+              "collection_scope": "page",
+              "completeness": "conditional",
+              "supports_absence_proof": false,
+              "configuration": {
+                "kind": "none",
+                "supported_values": [],
+                "coupled_site_parameters_hidden": true
+              }
+            },
+            "acceptance_checks": [
+              "Returns an authenticated result with review_status = 'pending' and page_url ending at the site's Pending Reviews admin page.",
+              "Parses a non-negative integer total_count from the page element with id 'reviewGrid-total-count'.",
+              "If the Pending Reviews page is reachable but contains zero records, returns total_count = 0 rather than failing.",
+              "Fails when authentication does not succeed or when the expected reviewGrid-total-count element cannot be found on the page."
+            ],
+            "source_evidence": [
+              {
+                "workflow_id": "task77_t277",
+                "template_id": "277",
+                "code_quote": "pending_url = base + '/admin/review/product/pending/' ... form_key = re.search(r'name=\"form_key\" type=\"hidden\" value=\"([^\"]+)\"', login_html).group(1) ... post = urllib.parse.urlencode({'form_key': form_key, 'login[username]': 'admin', 'login[password]': 'admin1234'}).encode() ... resp = opener.open(pending_url) ... m = re.search(r'id=\"reviewGrid-total-count\"[^>]*>\\s*(\\d+)\\s*<', pending_html)",
+                "explanation": "Preserved the narrower, directly evidenced page-specific Pending Reviews acquisition rather than folding it into a broader abstraction that would rely on unsupported equivalence claims across different review pages."
+              }
+            ]
+          }
+        }
+      ],
+      "workflow_attribution": [
+        {
+          "workflow_id": "task78_t277",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            0
+          ]
+        },
+        {
+          "workflow_id": "task42_t285",
+          "decision": "SKIP",
+          "reason": "Candidate extraction overclaims a general Top Search Terms widget primitive beyond the evidence. The workflow identifies the table partly by literal content ('hollister') and does not support the proposed empty-table semantics without ambiguity, so no safe typed primitive is emitted from this evidence alone."
+        },
+        {
+          "workflow_id": "task347_t248",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            1
+          ]
+        },
+        {
+          "workflow_id": "task77_t277",
+          "decision": "CONTRIBUTED",
+          "operation_indices": [
+            2
+          ]
+        }
+      ],
+      "candidate_attribution": [
+        {
+          "candidate_id": "task78_t277::get_review_grid_record_count_by_status",
+          "decision": "ADD",
+          "operation_index": 0
+        },
+        {
+          "candidate_id": "task42_t285::extract_dashboard_top_search_terms",
+          "decision": "REJECT",
+          "target_id": null,
+          "reason": "Boundary/evidence defect: the extracted candidate claims a general Top Search Terms widget/table primitive with valid empty-table behavior, but the only evidence locates the table using brittle literal row content ('hollister') and does not distinguish valid empty output from acquisition/parser failure."
+        },
+        {
+          "candidate_id": "task347_t248::get_admin_reviews_total_count",
+          "decision": "ADD",
+          "operation_index": 1
+        },
+        {
+          "candidate_id": "task77_t277::get_pending_review_grid_summary",
+          "decision": "ADD",
+          "operation_index": 2
+        }
+      ]
+    },
+    "quality_verdicts": {
+      "verdicts": [
+        {
+          "operation_index": 0,
+          "verdict": "PASS",
+          "reason": "Source evidence directly supports navigating to /admin/review/product/index/, selecting the review status dropdown by label, submitting Search, and parsing '<n> records found' from grid/header or body text. The output is typed and matches what the code returns. The method stays within site-specific acquisition/parsing mechanics and uses a caller-supplied status rather than hard-coding the task's chosen status. owns/does_not_own are consistent, and acceptance checks align with the implementation, including zero-count handling when the site renders '0 records found'."
+        },
+        {
+          "operation_index": 1,
+          "verdict": "PASS",
+          "reason": "The evidence supports the authenticated HTTP-session login flow, requesting the All Reviews page at /admin/review/product/index/, and parsing '<n> records found' from returned page text. The method returns typed facts only. Authentication mechanics are site-specific and evidenced, not generic browser setup. The primitive owns acquisition/parsing without adding task filtering or subjective logic, and the contracts are consistent with the code."
+        },
+        {
+          "operation_index": 2,
+          "verdict": "PASS",
+          "reason": "The evidence directly supports extracting form_key from the Magento admin login page, posting credentials, opening /admin/review/product/pending/, and parsing the integer count from the reviewGrid-total-count element. The output is typed and code/contract agree. Although page-specific to Pending Reviews, that page URL is directly evidenced, so this is a valid narrower site acquisition primitive rather than unsupported task filtering."
+        }
+      ],
+      "rejection_verdicts": [
+        {
+          "candidate_id": "task42_t285::extract_dashboard_top_search_terms",
+          "verdict": "PASS",
+          "reason": "Rejecting this candidate is justified because the cited workflow does not demonstrate a reliable reusable acquisition/parsing core independent of task logic: table identification depends on brittle literal row content ('hollister'), and the generalized candidate adds an unsupported guarantee that valid empty output can be distinguished from failure. The evidence does not robustly support a site-stable primitive as proposed."
+        }
+      ]
+    },
+    "errors": []
+  }
+]

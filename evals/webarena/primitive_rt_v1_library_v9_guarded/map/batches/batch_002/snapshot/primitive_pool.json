@@ -1,0 +1,479 @@
+[
+  {
+    "primitive_id": "map/search_places_by_query",
+    "method": "search_places_by_query",
+    "capability": "search the map site for places matching a text query and return typed result records from the results page",
+    "method_code": "def search_places_by_query(self, query: str):\n    from urllib.parse import quote_plus, urljoin\n\n    base_url = \"http://ec2-18-223-172-69.us-east-2.compute.amazonaws.com:3000\"\n    if not isinstance(query, str) or not query.strip():\n        raise ValueError(\"query must be a non-empty string\")\n    query = query.strip()\n\n    self.page.goto(f\"{base_url}/search?query={quote_plus(query)}\", wait_until=\"domcontentloaded\")\n    self.page.wait_for_timeout(3000)\n\n    records = []\n    anchors = self.page.locator(\"a.set_position\")\n    count = anchors.count()\n    for i in range(count):\n        a = anchors.nth(i)\n        name = a.get_attribute(\"data-name\")\n        href = a.get_attribute(\"href\")\n        lat_raw = a.get_attribute(\"data-lat\")\n        lon_raw = a.get_attribute(\"data-lon\")\n        display_text = (a.inner_text() or \"\").strip()\n\n        try:\n            latitude = float(lat_raw) if lat_raw not in (None, \"\") else None\n        except Exception:\n            latitude = None\n        try:\n            longitude = float(lon_raw) if lon_raw not in (None, \"\") else None\n        except Exception:\n            longitude = None\n\n        title = name.strip() if isinstance(name, str) and name.strip() else (display_text or None)\n        subtitle = display_text if display_text and title and display_text != title else None\n\n        records.append({\n            \"title\": title,\n            \"subtitle\": subtitle,\n            \"display_text\": display_text,\n            \"name\": title,\n            \"latitude\": latitude,\n            \"longitude\": longitude,\n            \"href\": urljoin(base_url, href) if href else None,\n        })\n\n    return {\n        \"query\": query,\n        \"records\": records,\n    }\n",
+    "owns": [
+      "Constructing the site-local /search URL with a caller-supplied query string",
+      "Fetching the map site's search results page for that query",
+      "Reading returned result anchors from `a.set_position` elements",
+      "Extracting typed place result records including visible label text, stable href, and coordinates when exposed in site attributes",
+      "Preserving query echo as typed output"
+    ],
+    "does_not_own": [
+      "Choosing which query text to issue for the user's task",
+      "Ranking, filtering, or selecting the correct result for a task-specific intent",
+      "Opening a result detail page and interpreting task-specific success",
+      "Inferring address facts not objectively present in parsed site results",
+      "Using unrelated third-party map providers as fallback capability"
+    ],
+    "input_contract": {
+      "query": {
+        "type": "string",
+        "description": "Free-text place search query submitted to the map site's search page."
+      }
+    },
+    "output_contract": {
+      "query": {
+        "type": "string",
+        "description": "Echo of the submitted query."
+      },
+      "records": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Primary visible place/result label when available."
+            },
+            "subtitle": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Additional visible text associated with the result when distinct from the primary label."
+            },
+            "display_text": {
+              "type": "string",
+              "description": "Rendered text content of the result anchor."
+            },
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Normalized visible result name, aligned with the primary label when available."
+            },
+            "latitude": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "description": "Latitude parsed from `data-lat` when exposed by the site."
+            },
+            "longitude": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "description": "Longitude parsed from `data-lon` when exposed by the site."
+            },
+            "href": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Absolute result link when exposed by the site."
+            }
+          },
+          "required": [
+            "title",
+            "subtitle",
+            "display_text",
+            "name",
+            "latitude",
+            "longitude",
+            "href"
+          ]
+        }
+      }
+    },
+    "requires": [],
+    "provides": [
+      "query_scoped_place_search_results"
+    ],
+    "supported_patterns": [
+      "Search for a caller-supplied place or venue name and enumerate visible site results",
+      "Capture visible result text together with stable coordinates and hrefs when exposed by the site",
+      "Fetch the site-local search results state for a query without relying on third-party services"
+    ],
+    "guarantees": {
+      "collection_scope": "query",
+      "completeness": "partial",
+      "supports_absence_proof": false,
+      "configuration": {
+        "kind": "none",
+        "supported_values": [],
+        "coupled_site_parameters_hidden": true
+      }
+    },
+    "acceptance_checks": [
+      "Returns a `query` echo equal to the submitted query string.",
+      "Parses result records from `a.set_position` elements when present on the search results page.",
+      "Each returned record preserves `display_text` and includes `href`, while `latitude` and `longitude` are numeric when the site exposes parseable coordinate attributes and null otherwise.",
+      "If no matching result anchors are present, returns an empty `records` array rather than fabricating results."
+    ],
+    "source_evidence": [
+      {
+        "workflow_id": "task100_t66",
+        "template_id": "66",
+        "code_quote": "await q.fill(\"Starbucks\")\nawait page.locator('input[name=\"commit\"]:visible').first.click()\n...\nstars = page.locator(\"a.set_position\")\ncount = await stars.count()\nfor i in range(count):\n    a = stars.nth(i)\n    candidates.append({\n        \"name\": await a.get_attribute(\"data-name\"),\n        \"lat\": await a.get_attribute(\"data-lat\"),\n        \"lon\": await a.get_attribute(\"data-lon\"),\n        \"href\": await a.get_attribute(\"href\"),\n    })",
+        "explanation": "Generalized the hard-coded query into a caller input and preserved typed extraction from `a.set_position` search-result anchors, including coordinates and hrefs when exposed.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      },
+      {
+        "workflow_id": "task369_t52",
+        "template_id": "52",
+        "code_quote": "search = page.locator('input[placeholder=\"Search\"]').nth(1)\nawait search.fill('Carnegie Music Hall')\nawait search.press('Enter')\n...\nresult = page.locator('a.set_position', has_text='Carnegie Music Hall').first",
+        "explanation": "Confirms the same site UI search pattern and result-anchor surface for caller-supplied text queries.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      },
+      {
+        "workflow_id": "task70_t70",
+        "template_id": "70",
+        "code_quote": "search_url = f\"{base}/search?query={quote_plus(query)}\"\nwith urlopen(req, timeout=30) as r:\n    local_html = r.read().decode('utf-8', 'ignore')\n...\nassert 'Carnegie Mellon University' in local_html",
+        "explanation": "Supports preserving the site-local `/search` retrieval path and query echo as part of the same query-scoped search capability, without incorporating third-party corroboration into the primitive.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    ]
+  },
+  {
+    "primitive_id": "map/get_route_summary",
+    "method": "get_route_summary",
+    "capability": "compute a route on the site's directions page and parse the displayed route summary into typed fields",
+    "method_code": "def get_route_summary(self, origin: str, destination: str, routing_mode: str):\n    import re\n\n    if not isinstance(origin, str) or not origin.strip():\n        raise ValueError(\"origin must be a non-empty string\")\n    if not isinstance(destination, str) or not destination.strip():\n        raise ValueError(\"destination must be a non-empty string\")\n    if routing_mode not in {\"foot\", \"car\"}:\n        raise ValueError(\"routing_mode must be one of: foot, car\")\n\n    base_url = \"http://ec2-18-223-172-69.us-east-2.compute.amazonaws.com:3000\"\n    directions_url = f\"{base_url}/directions\"\n    mode_to_label = {\n        \"foot\": \"Foot (OSRM)\",\n        \"car\": \"Car (OSRM)\",\n    }\n\n    self.page.goto(directions_url, wait_until=\"domcontentloaded\")\n    self.page.wait_for_load_state(\"networkidle\")\n\n    from_input = self.page.locator('input[name=\"route_from\"]').nth(1)\n    to_input = self.page.locator('input[name=\"route_to\"]').nth(1)\n    engine_select = self.page.locator('select.routing_engines').nth(1)\n    go_button = self.page.locator('input.routing_go').nth(1)\n\n    from_input.wait_for(state=\"visible\", timeout=15000)\n    to_input.wait_for(state=\"visible\", timeout=15000)\n    engine_select.wait_for(state=\"visible\", timeout=15000)\n    go_button.wait_for(state=\"visible\", timeout=15000)\n\n    from_input.fill(\"\")\n    from_input.fill(origin.strip())\n    to_input.fill(\"\")\n    to_input.fill(destination.strip())\n    engine_select.select_option(label=mode_to_label[routing_mode])\n    go_button.click()\n\n    self.page.wait_for_function(\n        \"\"\"() => {\n            const t = document.body ? document.body.innerText : '';\n            return t.includes('Distance:') && t.includes('Time:');\n        }\"\"\",\n        timeout=25000,\n    )\n\n    body = self.page.locator(\"body\").inner_text()\n    duration_match = re.search(r\"Distance:\\s*[^\\n]*?Time:\\s*([0-9]+:[0-9]{2})\", body)\n    if not duration_match:\n        duration_match = re.search(r\"Time:\\s*([0-9]+:[0-9]{2})\", body)\n    distance_match = re.search(r\"Distance:\\s*([^\\.\\n]+)\", body)\n    if not duration_match:\n        raise RuntimeError(\"Route summary rendered but duration could not be parsed\")\n\n    return {\n        \"origin_query\": origin.strip(),\n        \"destination_query\": destination.strip(),\n        \"routing_mode\": routing_mode,\n        \"duration_text\": duration_match.group(1),\n        \"distance_text\": distance_match.group(1).strip() if distance_match else None,\n        \"raw_summary_text\": body,\n        \"result_url\": self.page.url,\n    }\n",
+    "owns": [
+      "Navigating to the site's `/directions` page",
+      "Filling the route origin and destination inputs",
+      "Selecting the routing engine by semantic mode mapped internally to the site's visible label",
+      "Submitting the directions form",
+      "Waiting for route results to render on the page",
+      "Parsing displayed route summary text into typed route fields such as duration and distance text"
+    ],
+    "does_not_own": [
+      "Choosing task-specific origin or destination values",
+      "Chaining multiple route legs into a larger itinerary",
+      "Ranking among multiple unrelated destinations",
+      "Formatting the final answer for the user"
+    ],
+    "input_contract": {
+      "origin": {
+        "type": "string",
+        "description": "Origin place text entered into the site's directions form."
+      },
+      "destination": {
+        "type": "string",
+        "description": "Destination place text entered into the site's directions form."
+      },
+      "routing_mode": {
+        "type": "string",
+        "enum": [
+          "foot",
+          "car"
+        ],
+        "description": "Semantic routing mode internally mapped to the site's engine label."
+      }
+    },
+    "output_contract": {
+      "origin_query": {
+        "type": "string"
+      },
+      "destination_query": {
+        "type": "string"
+      },
+      "routing_mode": {
+        "type": "string",
+        "enum": [
+          "foot",
+          "car"
+        ]
+      },
+      "duration_text": {
+        "type": "string",
+        "description": "Route duration as displayed by the site, e.g. HH:MM or M:SS."
+      },
+      "distance_text": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Displayed route distance text when parseable from the rendered summary."
+      },
+      "raw_summary_text": {
+        "type": "string",
+        "description": "Body text containing the rendered route summary, including Time:/Distance: markers when present."
+      },
+      "result_url": {
+        "type": "string"
+      }
+    },
+    "requires": [],
+    "provides": [
+      "single_route_summary"
+    ],
+    "supported_patterns": [
+      "Get one walking route summary between two place queries",
+      "Get one driving route summary between two place queries"
+    ],
+    "guarantees": {
+      "collection_scope": "single",
+      "completeness": "not_applicable",
+      "supports_absence_proof": false,
+      "configuration": {
+        "kind": "semantic_enum",
+        "supported_values": [
+          "foot",
+          "car"
+        ],
+        "coupled_site_parameters_hidden": true
+      }
+    },
+    "acceptance_checks": [
+      "After submission, the page body contains `Time:` and the parsed `duration_text` is non-empty.",
+      "The returned `routing_mode` matches the caller-selected semantic mode and is internally resolved to the site's engine label via an internal mapping.",
+      "The returned `raw_summary_text` contains the rendered route summary text acquired from the page.",
+      "The returned `result_url` is the page URL after successful route computation."
+    ],
+    "source_evidence": [
+      {
+        "workflow_id": "task83_t72",
+        "template_id": "72",
+        "code_quote": "await from_input.fill(origin)\nawait to_input.fill(candidate)\nawait engine_select.select_option(label=engine_label)\nawait go_button.click()\nawait page.wait_for_function(\"\"\"() => {\n    const t = document.body ? document.body.innerText : '';\n    return t.includes('Distance:') && t.includes('Time:');\n}\"\"\", timeout=25000)\nbody = await page.locator(\"body\").inner_text()\n...\nm = re.search(r\"Distance:\\s*[^\\n]*?Time:\\s*([0-9]+:[0-9]{2})\", body_text)",
+        "explanation": "Generalized the hard-coded engine labels into a semantic `routing_mode` enum while preserving the demonstrated directions submission and rendered-summary parsing flow.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    ]
+  },
+  {
+    "primitive_id": "map/get_route_summary_with_destination_fallbacks",
+    "method": "get_route_summary_with_destination_fallbacks",
+    "capability": "attempt several caller-supplied destination queries for the same origin and routing mode until the site returns a parseable route summary, preserving which destination succeeded",
+    "method_code": "def get_route_summary_with_destination_fallbacks(self, origin: str, destination_queries, routing_mode: str):\n    import re\n\n    if not isinstance(origin, str) or not origin.strip():\n        raise ValueError(\"origin must be a non-empty string\")\n    if not isinstance(destination_queries, list) or not destination_queries:\n        raise ValueError(\"destination_queries must be a non-empty list of strings\")\n    cleaned_queries = []\n    for q in destination_queries:\n        if not isinstance(q, str) or not q.strip():\n            raise ValueError(\"each destination query must be a non-empty string\")\n        cleaned_queries.append(q.strip())\n    if routing_mode not in {\"foot\", \"car\"}:\n        raise ValueError(\"routing_mode must be one of: foot, car\")\n\n    base_url = \"http://ec2-18-223-172-69.us-east-2.compute.amazonaws.com:3000\"\n    directions_url = f\"{base_url}/directions\"\n    mode_to_label = {\n        \"foot\": \"Foot (OSRM)\",\n        \"car\": \"Car (OSRM)\",\n    }\n    attempted = []\n\n    for candidate in cleaned_queries:\n        self.page.goto(directions_url, wait_until=\"domcontentloaded\")\n        self.page.wait_for_load_state(\"networkidle\")\n\n        from_input = self.page.locator('input[name=\"route_from\"]').nth(1)\n        to_input = self.page.locator('input[name=\"route_to\"]').nth(1)\n        engine_select = self.page.locator('select.routing_engines').nth(1)\n        go_button = self.page.locator('input.routing_go').nth(1)\n\n        from_input.wait_for(state=\"visible\", timeout=15000)\n        to_input.wait_for(state=\"visible\", timeout=15000)\n        engine_select.wait_for(state=\"visible\", timeout=15000)\n        go_button.wait_for(state=\"visible\", timeout=15000)\n\n        from_input.fill(\"\")\n        from_input.fill(origin.strip())\n        to_input.fill(\"\")\n        to_input.fill(candidate)\n        engine_select.select_option(label=mode_to_label[routing_mode])\n        attempted.append(candidate)\n        go_button.click()\n\n        try:\n            self.page.wait_for_function(\n                \"\"\"() => {\n                    const t = document.body ? document.body.innerText : '';\n                    return t.includes('Distance:') && t.includes('Time:');\n                }\"\"\",\n                timeout=25000,\n            )\n            body = self.page.locator(\"body\").inner_text()\n            duration_match = re.search(r\"Distance:\\s*[^\\n]*?Time:\\s*([0-9]+:[0-9]{2})\", body)\n            if not duration_match:\n                duration_match = re.search(r\"Time:\\s*([0-9]+:[0-9]{2})\", body)\n            distance_match = re.search(r\"Distance:\\s*([^\\.\\n]+)\", body)\n            if duration_match:\n                return {\n                    \"origin_query\": origin.strip(),\n                    \"successful_destination_query\": candidate,\n                    \"attempted_destination_queries\": attempted,\n                    \"routing_mode\": routing_mode,\n                    \"duration_text\": duration_match.group(1),\n                    \"distance_text\": distance_match.group(1).strip() if distance_match else None,\n                    \"raw_summary_text\": body,\n                    \"result_url\": self.page.url,\n                }\n        except Exception:\n            pass\n\n    raise RuntimeError(f\"Could not obtain route result after attempts: {attempted}\")\n",
+    "owns": [
+      "Looping over multiple caller-supplied destination queries on the site's directions page",
+      "Re-submitting the same route request pattern for each candidate destination",
+      "Resetting by reopening the site's `/directions` page between failed attempts",
+      "Detecting a successful route result from rendered page content",
+      "Returning the successful destination query together with the parsed route summary"
+    ],
+    "does_not_own": [
+      "Deciding which fallback destination strings to try for a particular task",
+      "Generating synonyms or alternate place names automatically",
+      "Combining multiple successful routes into one answer",
+      "Any non-site heuristic ranking beyond first successful site-rendered result"
+    ],
+    "input_contract": {
+      "origin": {
+        "type": "string"
+      },
+      "destination_queries": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "minItems": 1
+      },
+      "routing_mode": {
+        "type": "string",
+        "enum": [
+          "foot",
+          "car"
+        ]
+      }
+    },
+    "output_contract": {
+      "origin_query": {
+        "type": "string"
+      },
+      "successful_destination_query": {
+        "type": "string"
+      },
+      "attempted_destination_queries": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "routing_mode": {
+        "type": "string",
+        "enum": [
+          "foot",
+          "car"
+        ]
+      },
+      "duration_text": {
+        "type": "string"
+      },
+      "distance_text": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "raw_summary_text": {
+        "type": "string"
+      },
+      "result_url": {
+        "type": "string"
+      }
+    },
+    "requires": [],
+    "provides": [
+      "single_route_summary_with_caller_supplied_destination_fallbacks"
+    ],
+    "supported_patterns": [
+      "Try several destination query variants for the same origin until one yields a route summary",
+      "Preserve which destination string succeeded and which were attempted"
+    ],
+    "guarantees": {
+      "collection_scope": "query",
+      "completeness": "conditional",
+      "supports_absence_proof": false,
+      "configuration": {
+        "kind": "semantic_enum",
+        "supported_values": [
+          "foot",
+          "car"
+        ],
+        "coupled_site_parameters_hidden": true
+      }
+    },
+    "acceptance_checks": [
+      "The `attempted_destination_queries` field records the tried queries in order.",
+      "On success, `successful_destination_query` is one of the provided `destination_queries`.",
+      "The primitive returns only after the page renders a route summary containing `Time:` and a duration can be parsed.",
+      "If an earlier destination attempt fails, the primitive reopens the site's directions page before trying the next query."
+    ],
+    "source_evidence": [
+      {
+        "workflow_id": "task83_t72",
+        "template_id": "72",
+        "code_quote": "async def submit_route(page, origin: str, dest: str, engine_label: str, shot_prefix: str, fallbacks=None):\n    if fallbacks is None:\n        fallbacks = [dest]\n    attempted = []\n    for candidate in fallbacks:\n        ...\n        attempted.append(candidate)\n        ...\n        await go_button.click()\n        try:\n            await page.wait_for_function(... t.includes('Distance:') && t.includes('Time:') ...)\n            body = await page.locator(\"body\").inner_text()\n            if candidate.lower() in body.lower() or \"Distance:\" in body:\n                return candidate, body\n        except Exception:\n            ...\n        await page.goto(DIRECTIONS_URL, wait_until=\"domcontentloaded\")\n        await page.wait_for_load_state(\"networkidle\")",
+        "explanation": "Preserves the distinct multi-attempt acquisition pattern demonstrated in the workflow: caller-supplied destination variants are tried in order until the site renders a parseable route summary.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    ]
+  },
+  {
+    "primitive_id": "map/get_walking_route_summary_between_coordinates",
+    "method": "get_walking_route_summary_between_coordinates",
+    "capability": "retrieve a walking directions summary between two coordinates from the site's directions page",
+    "method_code": "def get_walking_route_summary_between_coordinates(self, origin, destination):\n    import re\n    from urllib.parse import quote\n\n    def _validate_point(name, value):\n        if not isinstance(value, dict):\n            raise ValueError(f\"{name} must be an object with latitude and longitude\")\n        if \"latitude\" not in value or \"longitude\" not in value:\n            raise ValueError(f\"{name} must include latitude and longitude\")\n        latitude = float(value[\"latitude\"])\n        longitude = float(value[\"longitude\"])\n        if latitude < -90 or latitude > 90:\n            raise ValueError(f\"{name}.latitude must be between -90 and 90\")\n        if longitude < -180 or longitude > 180:\n            raise ValueError(f\"{name}.longitude must be between -180 and 180\")\n        return latitude, longitude\n\n    def _parse_distance_meters(distance_text):\n        if not distance_text:\n            return None\n        s = distance_text.strip().lower().replace(\" \", \"\")\n        if s.endswith(\"km\"):\n            return float(s[:-2]) * 1000\n        if s.endswith(\"m\"):\n            return float(s[:-1])\n        return None\n\n    origin_lat, origin_lon = _validate_point(\"origin\", origin)\n    destination_lat, destination_lon = _validate_point(\"destination\", destination)\n\n    engine_by_mode = {\n        \"walking\": \"fossgis_osrm_foot\",\n    }\n    route_value = f\"{origin_lat},{origin_lon};{destination_lat},{destination_lon}\"\n    route_url = (\n        \"http://ec2-18-223-172-69.us-east-2.compute.amazonaws.com:3000/\"\n        f\"directions?engine={engine_by_mode['walking']}&route={quote(route_value, safe='')}\"\n    )\n\n    self.page.goto(route_url, wait_until=\"domcontentloaded\")\n    self.page.wait_for_timeout(3000)\n\n    body = self.page.locator(\"body\").inner_text()\n    match = re.search(r\"Distance:\\s*([^\\.]+)\\.\\s*Time:\\s*([^\\.]+)\\.\", body)\n    if not match:\n        raise RuntimeError(\"The directions page did not contain a parseable walking route summary\")\n\n    distance_text = match.group(1).strip()\n    duration_text = match.group(2).strip()\n    return {\n        \"route\": {\n            \"distance_text\": distance_text,\n            \"duration_text\": duration_text,\n            \"distance_meters\": _parse_distance_meters(distance_text),\n            \"route_url\": self.page.url,\n        }\n    }\n",
+    "owns": [
+      "Constructing the site directions URL for walking mode from coordinate pairs",
+      "Validating coordinate numeric ranges before constructing the site request",
+      "Requesting the site's directions page for a coordinate pair",
+      "Parsing the displayed route summary into typed distance and time fields",
+      "Returning the final resolved route URL and parsed numeric distance when recognizable"
+    ],
+    "does_not_own": [
+      "Selecting origin and destination for the user's task",
+      "Comparing multiple routes to choose the nearest destination",
+      "Proving that no route exists anywhere beyond the requested coordinate pair",
+      "General text search over page body unrelated to the route summary pattern"
+    ],
+    "input_contract": {
+      "origin": {
+        "type": "object",
+        "properties": {
+          "latitude": {
+            "type": "number"
+          },
+          "longitude": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "latitude",
+          "longitude"
+        ]
+      },
+      "destination": {
+        "type": "object",
+        "properties": {
+          "latitude": {
+            "type": "number"
+          },
+          "longitude": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "latitude",
+          "longitude"
+        ]
+      }
+    },
+    "output_contract": {
+      "route": {
+        "type": "object",
+        "properties": {
+          "distance_text": {
+            "type": "string",
+            "description": "Displayed route distance string, e.g. '1.2 km'."
+          },
+          "duration_text": {
+            "type": "string",
+            "description": "Displayed route time string."
+          },
+          "distance_meters": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Parsed numeric distance in meters when the site's displayed units are recognized."
+          },
+          "route_url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "distance_text",
+          "duration_text",
+          "distance_meters",
+          "route_url"
+        ]
+      }
+    },
+    "requires": [],
+    "provides": [
+      "single_walking_route_summary_between_coordinates"
+    ],
+    "supported_patterns": [
+      "Get one walking route summary for a known origin/destination coordinate pair",
+      "Use the site's displayed distance string while also exposing parsed meters when units are recognized"
+    ],
+    "guarantees": {
+      "collection_scope": "single",
+      "completeness": "conditional",
+      "supports_absence_proof": false,
+      "configuration": {
+        "kind": "semantic_enum",
+        "supported_values": [
+          "walking"
+        ],
+        "coupled_site_parameters_hidden": true
+      }
+    },
+    "acceptance_checks": [
+      "Rejects coordinates outside valid latitude/longitude numeric ranges before issuing the site request.",
+      "For a valid route page with the displayed summary pattern, returns non-empty `distance_text` and `duration_text`.",
+      "`distance_meters` is populated when the displayed distance uses meters or kilometers; otherwise it may be null while preserving the raw distance text.",
+      "The semantic walking configuration is internally mapped to the site's coupled engine value rather than exposed directly."
+    ],
+    "source_evidence": [
+      {
+        "workflow_id": "task100_t66",
+        "template_id": "66",
+        "code_quote": "route_url = f\"{BASE_URL}/directions?engine=fossgis_osrm_foot&route={cmu_lat}%2C{cmu_lon}%3B{cand['lat']}%2C{cand['lon']}\"\nawait page.goto(route_url, wait_until=\"domcontentloaded\")\n...\nm = re.search(r\"Distance:\\s*([^\\.]+)\\.\\s*Time:\\s*([^\\.]+)\\.\", body)\n...\ncand[\"distance\"] = distance\ncand[\"time\"] = time_str\ncand[\"distance_m\"] = parse_distance_meters(distance)",
+        "explanation": "Generalized the coordinate-pair walking-route acquisition into a reusable primitive while hiding the coupled low-level engine parameter behind an internal semantic walking mapping and adding input validation before request construction.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    ]
+  }
+]

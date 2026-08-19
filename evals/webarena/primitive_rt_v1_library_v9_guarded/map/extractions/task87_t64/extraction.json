@@ -1,0 +1,185 @@
+{
+  "decision": "CANDIDATES",
+  "candidates": [
+    {
+      "candidate_id": "task87_t64::search_places_by_text_query",
+      "proposed_method": "search_places_by_text_query",
+      "capability": "search the site's place index by a caller-supplied text query and return typed place result records from the search results page",
+      "owns": [
+        "Submitting a text query through the site's search UI",
+        "Waiting for the site's search results to load",
+        "Reading typed place result records from result links shown by the site",
+        "Returning stable displayed identity/location fields carried in the result text"
+      ],
+      "does_not_own": [
+        "Choosing which query terms to issue for the task",
+        "Selecting the correct result for a user's intent beyond returning the site's results",
+        "Computing routes or travel times",
+        "Cross-query deduplication or merging"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Free-text place query to submit in the site's Search box"
+          }
+        },
+        "required": [
+          "query"
+        ]
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "display_name": {
+                  "type": "string",
+                  "description": "Full place label as displayed in the result link"
+                },
+                "href": {
+                  "type": "string",
+                  "description": "Result link target URL if available from the DOM"
+                },
+                "raw_result_text": {
+                  "type": "string",
+                  "description": "Unmodified text of the result entry as displayed"
+                }
+              },
+              "required": [
+                "display_name",
+                "raw_result_text"
+              ]
+            }
+          }
+        },
+        "required": [
+          "results"
+        ]
+      },
+      "guarantees": {
+        "collection_scope": "query",
+        "completeness": "partial",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "none",
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "After submitting the query, the page reaches a loaded state and a results collection is inspectable.",
+        "Each returned record contains non-empty displayed result text from a site result link.",
+        "An empty results array is allowed when the loaded results view shows no matching result entries for that query."
+      ],
+      "source_evidence": {
+        "workflow_id": "task87_t64",
+        "template_id": "64",
+        "code_quote": "await page.get_by_role(\"textbox\", name=\"Search\").fill(query)\nawait page.get_by_role(\"button\", name=\"Go\").click()\nawait page.wait_for_load_state(\"networkidle\")\nresult = page.get_by_role(\"link\", name=result_name)\ntext = await result.inner_text()",
+        "explanation": "The workflow demonstrates a reusable site search operation on the map site's Search UI. Although the task hard-codes two specific place names and then inspects one expected result each time, the reusable capability is a parameterized text search that returns typed result records from the site's displayed result links.",
+        "evidence_match_mode": "exact"
+      }
+    },
+    {
+      "candidate_id": "task87_t64::get_driving_directions_summary",
+      "proposed_method": "get_driving_directions_summary",
+      "capability": "request car directions between caller-supplied origin and destination on the site's directions workflow and extract the route summary displayed by the site",
+      "owns": [
+        "Opening the site's directions page or route URL",
+        "Filling the site's origin and destination controls when available",
+        "Requesting directions using the site's car routing engine deployment",
+        "Detecting whether a route summary is present",
+        "Extracting objective route-summary fields displayed by the site",
+        "Returning the final route page URL and observed engine value when exposed by the page"
+      ],
+      "does_not_own": [
+        "Choosing the transport mode for a broader task beyond the demonstrated driving mode",
+        "Geocoding arbitrary origins/destinations outside what the site accepts in its own controls",
+        "Ranking among multiple routes unless explicitly exposed by the site and parsed",
+        "Answer formatting such as reducing the summary to only '20 minutes'"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "origin": {
+            "type": "string",
+            "description": "Origin place/address text to enter into the site's From control"
+          },
+          "destination": {
+            "type": "string",
+            "description": "Destination place/address text to enter into the site's To control"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "driving"
+            ],
+            "description": "Semantic routing mode demonstrated by the workflow"
+          }
+        },
+        "required": [
+          "origin",
+          "destination"
+        ]
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "summary_text": {
+            "type": "string",
+            "description": "Route summary text block containing at least the displayed Distance information and typically duration"
+          },
+          "final_url": {
+            "type": "string",
+            "description": "Final route page URL after the site computes or displays the route"
+          },
+          "engine": {
+            "type": "string",
+            "description": "Observed engine selector value when exposed by the page"
+          },
+          "origin_value": {
+            "type": "string",
+            "description": "Value observed in the site's From input after route acquisition when available"
+          },
+          "destination_value": {
+            "type": "string",
+            "description": "Value observed in the site's To input after route acquisition when available"
+          }
+        },
+        "required": [
+          "summary_text",
+          "final_url"
+        ]
+      },
+      "guarantees": {
+        "collection_scope": "single",
+        "completeness": "conditional",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "semantic_enum",
+          "supported_values": [
+            "driving"
+          ],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "The resulting page contains visible route-summary text anchored by 'Distance:'.",
+        "Returned final_url is non-empty and corresponds to the displayed route state.",
+        "Returned summary_text is non-empty and comes from the route summary region, not arbitrary page text.",
+        "If the route summary is absent after the site's directions flow is attempted, the primitive must fail rather than silently return empty data."
+      ],
+      "source_evidence": {
+        "workflow_id": "task87_t64",
+        "template_id": "64",
+        "code_quote": "resp = await page.goto(f\"{START_URL}/directions\", wait_until=\"domcontentloaded\")\n...\nfrom_box = page.get_by_role(\"textbox\", name=\"From\")\nto_box = page.get_by_role(\"textbox\", name=\"To\")\n...\nawait from_box.first.fill(FROM_FULL)\nawait to_box.first.fill(TO_FULL)\nawait page.get_by_role(\"button\", name=\"Go\").click()\n...\nif not await page.get_by_text(\"Distance:\").count():\n    await page.goto(ROUTE_URL, wait_until=\"domcontentloaded\")\n...\nsummary_text = await summary_locator.first.inner_text()\nevidence[\"final_url\"] = page.url\n...\nevidence[\"engine\"] = await page.locator(\"select\").first.input_value(timeout=1000)",
+        "explanation": "The workflow clearly demonstrates the site's directions capability for a car route between two caller-supplied endpoints, with extraction of the site's displayed route summary. The hard-coded route URL and fallback DOM strategies are implementation details of reaching the same site-local directions mechanism, while the reusable boundary is route acquisition plus typed summary extraction.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    }
+  ]
+}

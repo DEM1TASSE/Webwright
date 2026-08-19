@@ -1,0 +1,532 @@
+[
+  {
+    "attempt": 1,
+    "proposal": {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task331_t147::list_authenticated_customer_orders",
+          "proposed_method": "list_authenticated_customer_orders",
+          "capability": "Retrieve the authenticated customer's order history from the shopping site's GraphQL API across all available result pages with typed order and pagination metadata.",
+          "owns": [
+            "Authenticate a customer against the site's customer token endpoint using email and password",
+            "Call the site's GraphQL customer.orders query with page-based pagination",
+            "Iterate through all pages exposed by page_info.total_pages",
+            "Return typed order records including stable order number, order date, status, and grand total value/currency",
+            "Return collection pagination metadata derived from the site response"
+          ],
+          "does_not_own": [
+            "Filtering orders by a task-specific month such as July 2022",
+            "Filtering by order status such as complete",
+            "Summing or aggregating order totals",
+            "Inferring spend at a specific merchant/store from workflow context when the site records returned here do not expose store identity",
+            "Formatting a natural-language answer"
+          ],
+          "input_contract": {
+            "type": "object",
+            "properties": {
+              "base_url": {
+                "type": "string",
+                "description": "Base URL of the shopping site deployment."
+              },
+              "email": {
+                "type": "string",
+                "description": "Customer login email."
+              },
+              "password": {
+                "type": "string",
+                "description": "Customer login password."
+              },
+              "page_size": {
+                "type": "integer",
+                "description": "Requested GraphQL page size for orders.",
+                "default": 20,
+                "minimum": 1
+              }
+            },
+            "required": [
+              "base_url",
+              "email",
+              "password"
+            ]
+          },
+          "output_contract": {
+            "type": "object",
+            "properties": {
+              "customer": {
+                "type": "object",
+                "properties": {
+                  "firstname": {
+                    "type": "string"
+                  },
+                  "lastname": {
+                    "type": "string"
+                  },
+                  "email": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "firstname",
+                  "lastname",
+                  "email"
+                ]
+              },
+              "orders": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "number": {
+                      "type": "string",
+                      "description": "Stable order identifier displayed by the site."
+                    },
+                    "order_date": {
+                      "type": "string",
+                      "description": "Order timestamp/date string returned by the site."
+                    },
+                    "status": {
+                      "type": "string",
+                      "description": "Order status returned by the site."
+                    },
+                    "grand_total": {
+                      "type": "object",
+                      "properties": {
+                        "value": {
+                          "type": "number"
+                        },
+                        "currency": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "value",
+                        "currency"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "number",
+                    "order_date",
+                    "status",
+                    "grand_total"
+                  ]
+                },
+                "page_info": {
+                  "type": "object",
+                  "properties": {
+                    "total_count": {
+                      "type": "integer"
+                    },
+                    "total_pages": {
+                      "type": "integer"
+                    },
+                    "pages_fetched": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "total_count",
+                    "total_pages",
+                    "pages_fetched"
+                  ]
+                }
+              },
+              "required": [
+                "customer",
+                "orders",
+                "page_info"
+              ]
+            },
+            "guarantees": {
+              "collection_scope": "scope",
+              "completeness": "complete",
+              "supports_absence_proof": true,
+              "configuration": {
+                "kind": "internal",
+                "supported_values": [],
+                "coupled_site_parameters_hidden": true
+              }
+            },
+            "acceptance_checks": [
+              "Returns customer identity fields from the authenticated account together with an orders array.",
+              "pages_fetched equals total_pages from the final observed page_info.",
+              "If total_count is 0, returns an empty orders array rather than failing.",
+              "Every returned order includes number, order_date, status, and grand_total.value/currency."
+            ],
+            "source_evidence": {
+              "workflow_id": "task331_t147",
+              "template_id": "147",
+              "code_quote": "token = client.post(f\"{BASE}/rest/V1/integration/customer/token\", json={\"username\": EMAIL, \"password\": PASSWORD}).json()\nheaders = {\"Authorization\": f\"Bearer {token}\", \"Content-Type\": \"application/json\"}\nquery = 'query($page:Int!){ customer { firstname lastname email orders(pageSize: 20, currentPage: $page) { items { number order_date status total { grand_total { value currency } } } total_count page_info { current_page total_pages } } } }'\nall_items = []\npage_num = 1\ntotal_pages = 1\nwhile page_num <= total_pages:\n    r = client.post(f\"{BASE}/graphql\", headers=headers, json={\"query\": query, \"variables\": {\"page\": page_num}})\n    payload = r.json()\n    orders = payload[\"data\"][\"customer\"][\"orders\"]\n    total_pages = orders[\"page_info\"][\"total_pages\"]\n    all_items.extend(orders[\"items\"])\n    page_num += 1",
+              "explanation": "The workflow demonstrates a site-local capability consisting of customer authentication plus exhaustive retrieval of the authenticated user's orders through paginated GraphQL calls. The month filtering, status filtering, and spend summation are workflow logic layered on top, so the reusable primitive is the richer acquisition boundary that returns all fetched order records and pagination facts."
+            }
+          }
+        }
+      ]
+    },
+    "errors": [
+      "candidates[0].guarantees must be non-empty",
+      "candidates[0].acceptance_checks must be non-empty",
+      "candidates[0].source_evidence must be non-empty",
+      "candidates[0] evidence workflow mismatch",
+      "candidates[0] evidence template mismatch",
+      "candidates[0] evidence needs a source reference and explanation"
+    ]
+  },
+  {
+    "attempt": 2,
+    "proposal": {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task331_t147::list_authenticated_customer_orders",
+          "proposed_method": "list_authenticated_customer_orders",
+          "capability": "Retrieve the authenticated customer's order history from the shopping site's customer GraphQL endpoint across all available pages, returning typed order and pagination data.",
+          "owns": [
+            "Authenticate a customer against the site's customer token endpoint using email and password",
+            "Call the site's GraphQL customer.orders query with page-based pagination",
+            "Iterate pages until the site-reported last page is reached",
+            "Collect typed order records returned by the site including order number, order date, status, and grand total value/currency",
+            "Return customer identity fields exposed by the same query",
+            "Return pagination facts observed from the site response such as current_page, total_pages, and total_count"
+          ],
+          "does_not_own": [
+            "Filtering orders to a specific month such as July 2022",
+            "Filtering orders by business criteria such as complete status",
+            "Summing order totals or computing spend",
+            "Attributing spend to a merchant/store when that field is not present in the acquired records",
+            "Formatting the final natural-language answer"
+          ],
+          "input_contract": {
+            "type": "object",
+            "properties": {
+              "base_url": {
+                "type": "string",
+                "description": "Base URL of the shopping site deployment."
+              },
+              "email": {
+                "type": "string",
+                "description": "Customer login email."
+              },
+              "password": {
+                "type": "string",
+                "description": "Customer login password."
+              }
+            },
+            "required": [
+              "base_url",
+              "email",
+              "password"
+            ]
+          },
+          "output_contract": {
+            "type": "object",
+            "properties": {
+              "customer": {
+                "type": "object",
+                "properties": {
+                  "firstname": {
+                    "type": "string"
+                  },
+                  "lastname": {
+                    "type": "string"
+                  },
+                  "email": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "firstname",
+                  "lastname",
+                  "email"
+                ]
+              },
+              "orders": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "number": {
+                      "type": "string",
+                      "description": "Stable order identifier returned by the site."
+                    },
+                    "order_date": {
+                      "type": "string",
+                      "description": "Order date or timestamp string returned by the site."
+                    },
+                    "status": {
+                      "type": "string",
+                      "description": "Order status returned by the site."
+                    },
+                    "total": {
+                      "type": "object",
+                      "properties": {
+                        "grand_total": {
+                          "type": "object",
+                          "properties": {
+                            "value": {
+                              "type": "number"
+                            },
+                            "currency": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "value",
+                            "currency"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "grand_total"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "number",
+                    "order_date",
+                    "status",
+                    "total"
+                  ]
+                },
+                "page_info": {
+                  "type": "object",
+                  "properties": {
+                    "total_count": {
+                      "type": "integer"
+                    },
+                    "current_page": {
+                      "type": "integer"
+                    },
+                    "total_pages": {
+                      "type": "integer"
+                    },
+                    "pages_fetched": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "total_count",
+                    "total_pages",
+                    "pages_fetched"
+                  ]
+                }
+              },
+              "required": [
+                "customer",
+                "orders",
+                "page_info"
+              ]
+            },
+            "guarantees": {
+              "collection_scope": "scope",
+              "completeness": "complete",
+              "supports_absence_proof": true,
+              "configuration": {
+                "kind": "none",
+                "supported_values": [],
+                "coupled_site_parameters_hidden": true
+              }
+            },
+            "acceptance_checks": [
+              "Returns customer.firstname, customer.lastname, and customer.email from the authenticated account.",
+              "Returns pages_fetched equal to the final page_info.total_pages when retrieval succeeds.",
+              "Every returned order contains number, order_date, status, and total.grand_total.value/currency.",
+              "If the authenticated customer has no orders, returns an empty orders array with page_info metadata rather than treating that as failure."
+            ],
+            "source_evidence": {
+              "workflow_id": "task331_t147",
+              "template_id": "147",
+              "code_quote": "token = client.post(f\"{BASE}/rest/V1/integration/customer/token\", json={\"username\": EMAIL, \"password\": PASSWORD}).json()\nheaders = {\"Authorization\": f\"Bearer {token}\", \"Content-Type\": \"application/json\"}\nquery = 'query($page:Int!){ customer { firstname lastname email orders(pageSize: 20, currentPage: $page) { items { number order_date status total { grand_total { value currency } } } total_count page_info { current_page total_pages } } } }'\nall_items = []\npage_num = 1\ntotal_pages = 1\nwhile page_num <= total_pages:\n    r = client.post(f\"{BASE}/graphql\", headers=headers, json={\"query\": query, \"variables\": {\"page\": page_num}})\n    payload = r.json()\n    orders = payload[\"data\"][\"customer\"][\"orders\"]\n    total_pages = orders[\"page_info\"][\"total_pages\"]\n    all_items.extend(orders[\"items\"])\n    page_num += 1",
+              "explanation": "This workflow demonstrates a site-local reusable acquisition boundary: obtain a customer bearer token, query the authenticated customer's orders from the site's GraphQL API, and follow site-reported pagination until all pages are collected. The later month filtering, status filtering, and spend aggregation are task-specific workflow logic and are therefore excluded from the primitive."
+            }
+          }
+        }
+      ]
+    },
+    "errors": [
+      "candidates[0].guarantees must be non-empty",
+      "candidates[0].acceptance_checks must be non-empty",
+      "candidates[0].source_evidence must be non-empty",
+      "candidates[0] evidence workflow mismatch",
+      "candidates[0] evidence template mismatch",
+      "candidates[0] evidence needs a source reference and explanation"
+    ]
+  },
+  {
+    "attempt": 3,
+    "proposal": {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task331_t147::list_authenticated_customer_orders",
+          "proposed_method": "list_authenticated_customer_orders",
+          "capability": "List the authenticated customer's order history from the shopping site's customer GraphQL endpoint across all site-reported pages, returning customer identity, typed order records, and pagination metadata.",
+          "owns": [
+            "Authenticate the customer against the site's customer token endpoint using email and password",
+            "Issue the site-local GraphQL customer.orders query with caller-independent pagination traversal",
+            "Follow site-reported page_info.total_pages until all available order pages have been fetched",
+            "Collect customer identity fields exposed by the same query: firstname, lastname, email",
+            "Collect typed order records returned by the site including order number, order_date, status, and grand_total value/currency",
+            "Return pagination metadata exposed by the site including total_count and page_info current_page/total_pages, plus the observed number of fetched pages"
+          ],
+          "does_not_own": [
+            "Filtering orders to a specific month or date range",
+            "Filtering orders by business logic such as only complete orders",
+            "Summing or aggregating totals into spend",
+            "Inferring or attributing a store/merchant from the returned orders when that field is not exposed here",
+            "Formatting a final user-facing answer"
+          ],
+          "input_contract": {
+            "type": "object",
+            "properties": {
+              "base_url": {
+                "type": "string",
+                "description": "Base URL of the shopping site deployment."
+              },
+              "email": {
+                "type": "string",
+                "description": "Customer login email."
+              },
+              "password": {
+                "type": "string",
+                "description": "Customer login password."
+              }
+            },
+            "required": [
+              "base_url",
+              "email",
+              "password"
+            ]
+          },
+          "output_contract": {
+            "type": "object",
+            "properties": {
+              "customer": {
+                "type": "object",
+                "properties": {
+                  "firstname": {
+                    "type": "string"
+                  },
+                  "lastname": {
+                    "type": "string"
+                  },
+                  "email": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "firstname",
+                  "lastname",
+                  "email"
+                ]
+              },
+              "orders": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "number": {
+                      "type": "string",
+                      "description": "Order identifier returned by the site."
+                    },
+                    "order_date": {
+                      "type": "string",
+                      "description": "Order date string returned by the site."
+                    },
+                    "status": {
+                      "type": "string",
+                      "description": "Order status returned by the site."
+                    },
+                    "total": {
+                      "type": "object",
+                      "properties": {
+                        "grand_total": {
+                          "type": "object",
+                          "properties": {
+                            "value": {
+                              "type": "number"
+                            },
+                            "currency": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "value",
+                            "currency"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "grand_total"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "number",
+                    "order_date",
+                    "status",
+                    "total"
+                  ]
+                },
+                "description": "All order items collected across all fetched pages."
+              },
+              "page_info": {
+                "type": "object",
+                "properties": {
+                  "total_count": {
+                    "type": "integer"
+                  },
+                  "current_page": {
+                    "type": "integer"
+                  },
+                  "total_pages": {
+                    "type": "integer"
+                  },
+                  "pages_fetched": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "total_count",
+                  "current_page",
+                  "total_pages",
+                  "pages_fetched"
+                ]
+              }
+            },
+            "required": [
+              "customer",
+              "orders",
+              "page_info"
+            ]
+          },
+          "guarantees": {
+            "collection_scope": "scope",
+            "completeness": "complete",
+            "supports_absence_proof": true,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "On success, returns customer.firstname, customer.lastname, and customer.email for the authenticated account.",
+            "Traversal continues until pages_fetched equals the final returned page_info.total_pages.",
+            "Every returned order includes number, order_date, status, and total.grand_total with value and currency.",
+            "If the authenticated customer has no orders, returns an empty orders array with pagination metadata instead of treating empty results as acquisition failure."
+          ],
+          "source_evidence": {
+            "workflow_id": "task331_t147",
+            "template_id": "147",
+            "code_quote": "token = client.post(f\"{BASE}/rest/V1/integration/customer/token\", json={\"username\": EMAIL, \"password\": PASSWORD}).json()\nheaders = {\"Authorization\": f\"Bearer {token}\", \"Content-Type\": \"application/json\"}\nquery = 'query($page:Int!){ customer { firstname lastname email orders(pageSize: 20, currentPage: $page) { items { number order_date status total { grand_total { value currency } } } total_count page_info { current_page total_pages } } } }'\nall_items = []\npage_num = 1\ntotal_pages = 1\nwhile page_num <= total_pages:\n    r = client.post(f\"{BASE}/graphql\", headers=headers, json={\"query\": query, \"variables\": {\"page\": page_num}})\n    payload = r.json()\n    orders = payload[\"data\"][\"customer\"][\"orders\"]\n    total_pages = orders[\"page_info\"][\"total_pages\"]\n    all_items.extend(orders[\"items\"])\n    page_num += 1",
+            "explanation": "The workflow demonstrates a reusable site capability: authenticate with the shopping site's customer token API, query the authenticated customer's orders through the site's GraphQL endpoint, and iterate page-based results until the site-reported last page. The workflow's later month filtering, status filtering, and spend summation are task-specific logic and are excluded. The primitive preserves all objective fields actually exposed at this acquisition boundary: customer identity, order identifiers, dates, status, monetary value/currency, and pagination facts.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        }
+      ]
+    },
+    "errors": []
+  }
+]

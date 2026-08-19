@@ -1,0 +1,288 @@
+{
+  "decision": "CANDIDATES",
+  "candidates": [
+    {
+      "candidate_id": "task134_t322::search_projects",
+      "proposed_method": "search_projects",
+      "capability": "search GitLab projects and return matching project records",
+      "owns": [
+        "Calling the GitLab projects search endpoint with a caller-supplied search string",
+        "Returning typed project records from the site response including stable identity and canonical web URL",
+        "Preserving page-scoped search results as returned by the endpoint"
+      ],
+      "does_not_own": [
+        "Choosing which project among search results is the task-relevant repository",
+        "Inferring exact namespace/path match rules for a specific task",
+        "Any commit retrieval or counting logic"
+      ],
+      "input_contract": {
+        "search_query": {
+          "type": "string",
+          "description": "Free-text project search query submitted to GitLab project search"
+        }
+      },
+      "output_contract": {
+        "projects": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "fields": {
+              "id": {
+                "type": "integer"
+              },
+              "path_with_namespace": {
+                "type": "string"
+              },
+              "web_url": {
+                "type": "string"
+              }
+            }
+          },
+          "description": "Projects returned on this search results page"
+        }
+      },
+      "guarantees": {
+        "collection_scope": "query",
+        "completeness": "partial",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "none",
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "Returns an array of project records parsed from /api/v4/projects search results",
+        "Each returned record includes at least GitLab project id, path_with_namespace, and web_url when present in the response",
+        "An empty array is treated as a valid no-results search response, not a failure"
+      ],
+      "source_evidence": {
+        "workflow_id": "task134_t322",
+        "template_id": "322",
+        "code_quote": "search = s.get(BASE + '/api/v4/projects', params={'search': 'a11yproject'}, timeout=20)\nprojects = search.json()\nproject = next(p for p in projects if p.get('path_with_namespace') == 'a11yproject/a11yproject.com')",
+        "explanation": "The workflow demonstrates a reusable site-local project search via GitLab's projects API. The hard-coded query and subsequent exact-match selection are task logic, but the underlying capability is searching projects and returning typed project records.",
+        "evidence_match_mode": "exact"
+      }
+    },
+    {
+      "candidate_id": "task134_t322::list_repository_commits",
+      "proposed_method": "list_repository_commits",
+      "capability": "list repository commits for a GitLab project and branch with pagination",
+      "owns": [
+        "Calling the GitLab repository commits endpoint for a specified project",
+        "Passing branch/ref selection to the site endpoint",
+        "Handling explicit page-number pagination and per-page sizing",
+        "Returning typed commit records from each fetched page including identity, author/committer metadata, timestamps, and web URL"
+      ],
+      "does_not_own": [
+        "Filtering commits to a specific date",
+        "Searching author identities for a name substring",
+        "Counting or aggregating commits across returned records",
+        "Claiming repository-wide completeness without exhausting pagination"
+      ],
+      "input_contract": {
+        "project_id": {
+          "type": "integer",
+          "description": "GitLab project id"
+        },
+        "ref_name": {
+          "type": "string",
+          "description": "Branch or ref name to query commits from"
+        },
+        "page_number": {
+          "type": "integer",
+          "description": "1-based result page number",
+          "minimum": 1
+        },
+        "per_page": {
+          "type": "integer",
+          "description": "Requested page size",
+          "minimum": 1
+        }
+      },
+      "output_contract": {
+        "commits": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "fields": {
+              "id": {
+                "type": "string",
+                "description": "Commit SHA when present in API response"
+              },
+              "short_id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "author_name": {
+                "type": "string"
+              },
+              "author_email": {
+                "type": "string"
+              },
+              "committer_name": {
+                "type": "string"
+              },
+              "committer_email": {
+                "type": "string"
+              },
+              "committed_date": {
+                "type": "string",
+                "description": "Commit timestamp string from GitLab"
+              },
+              "web_url": {
+                "type": "string"
+              }
+            }
+          },
+          "description": "Commits returned on the requested page for the given project/ref"
+        },
+        "pagination": {
+          "type": "object",
+          "fields": {
+            "page_number": {
+              "type": "integer"
+            },
+            "per_page": {
+              "type": "integer"
+            },
+            "returned_count": {
+              "type": "integer"
+            }
+          }
+        }
+      },
+      "guarantees": {
+        "collection_scope": "page",
+        "completeness": "partial",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "none",
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "Returns a parsed array of commit objects for the requested project/ref/page",
+        "Each returned commit record preserves available commit identity, author/committer identity, committed_date, and web_url fields from the API response",
+        "An empty commits array is a valid indication that this page has no results for the given project/ref/page"
+      ],
+      "source_evidence": {
+        "workflow_id": "task134_t322",
+        "template_id": "322",
+        "code_quote": "rr = s.get(BASE + f'/api/v4/projects/{project_id}/repository/commits', params={'ref_name': 'main', 'per_page': 100, 'page': page_num}, timeout=30)\nbatch = rr.json()",
+        "explanation": "The workflow directly uses GitLab's commits API with branch and pagination parameters. Although the task later filters by date and person, the demonstrated reusable capability is page-scoped commit listing with typed commit metadata.",
+        "evidence_match_mode": "exact"
+      }
+    },
+    {
+      "candidate_id": "task134_t322::collect_all_repository_commits",
+      "proposed_method": "collect_all_repository_commits",
+      "capability": "collect all commits for a GitLab project and branch by traversing paginated commit results",
+      "owns": [
+        "Iterating through GitLab commit result pages for a specified project and ref until exhaustion",
+        "Combining paginated site records into one collection",
+        "Preserving typed commit records across pages including stable commit identity, author/committer metadata, timestamps, and web URL",
+        "Using the endpoint's empty final page or short page as pagination termination evidence"
+      ],
+      "does_not_own": [
+        "Filtering collected commits by date or contributor",
+        "Counting matches for a task-specific predicate",
+        "Claiming completeness beyond the specified project and ref"
+      ],
+      "input_contract": {
+        "project_id": {
+          "type": "integer",
+          "description": "GitLab project id"
+        },
+        "ref_name": {
+          "type": "string",
+          "description": "Branch or ref name to query commits from"
+        },
+        "per_page": {
+          "type": "integer",
+          "description": "Requested page size for paginated traversal",
+          "minimum": 1
+        }
+      },
+      "output_contract": {
+        "commits": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "fields": {
+              "id": {
+                "type": "string",
+                "description": "Commit SHA when present in API response"
+              },
+              "short_id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "author_name": {
+                "type": "string"
+              },
+              "author_email": {
+                "type": "string"
+              },
+              "committer_name": {
+                "type": "string"
+              },
+              "committer_email": {
+                "type": "string"
+              },
+              "committed_date": {
+                "type": "string"
+              },
+              "web_url": {
+                "type": "string"
+              }
+            }
+          },
+          "description": "Aggregated commit records collected across fetched pages for the specified project/ref"
+        },
+        "pagination_summary": {
+          "type": "object",
+          "fields": {
+            "pages_fetched": {
+              "type": "integer"
+            },
+            "per_page": {
+              "type": "integer"
+            },
+            "termination_condition": {
+              "type": "string",
+              "description": "Observed stop condition such as empty page or short final page"
+            }
+          }
+        }
+      },
+      "guarantees": {
+        "collection_scope": "scope",
+        "completeness": "complete",
+        "supports_absence_proof": true,
+        "configuration": {
+          "kind": "none",
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "Fetches successive commit pages until the site indicates no further results by returning an empty page or a page shorter than per_page",
+        "Returns a single combined commit array containing records from all fetched pages for the specified project/ref",
+        "If the final combined array is empty after exhaustive traversal, that is valid evidence that the specified project/ref currently has no commits visible through this endpoint"
+      ],
+      "source_evidence": {
+        "workflow_id": "task134_t322",
+        "template_id": "322",
+        "code_quote": "all_commits = []\npage_num = 1\nwhile True:\n    rr = s.get(BASE + f'/api/v4/projects/{project_id}/repository/commits', params={'ref_name': 'main', 'per_page': 100, 'page': page_num}, timeout=30)\n    batch = rr.json()\n    if not batch:\n        break\n    all_commits.extend(batch)\n    if len(batch) < 100:\n        break\n    page_num += 1",
+        "explanation": "The workflow demonstrates a full pagination traversal pattern over GitLab's commits endpoint for one repository and branch, aggregating all returned commit records before task-specific filtering. This is a separate reusable acquisition capability from single-page listing because the code explicitly loops and merges pages to exhaustion.",
+        "evidence_match_mode": "exact"
+      }
+    }
+  ]
+}

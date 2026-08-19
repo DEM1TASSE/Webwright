@@ -1,0 +1,148 @@
+{
+  "decision": "CANDIDATES",
+  "candidates": [
+    {
+      "candidate_id": "task67_t17::list_forum_posts",
+      "proposed_method": "list_forum_posts",
+      "capability": "retrieve the visible top posts from a Reddit-style forum listing page as typed post records in page order",
+      "owns": [
+        "Fetching a specific forum page URL on the site",
+        "Parsing forum-listing HTML anchors that point to forum post detail pages",
+        "Normalizing anchor inner HTML into plain-text post titles",
+        "Deduplicating repeated post links by post href",
+        "Returning posts in the same order they appear on the forum page",
+        "Resolving relative post URLs to absolute site URLs"
+      ],
+      "does_not_own": [
+        "Choosing which forum/community to inspect for a task",
+        "Interpreting whether a post is a recommendation",
+        "Extracting book names from post content",
+        "Cross-page aggregation beyond the fetched listing page",
+        "Claiming site-wide completeness beyond the inspected listing slice"
+      ],
+      "input_contract": {
+        "forum_path": {
+          "type": "string",
+          "description": "Site-local forum path such as /f/books"
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Maximum number of posts to return from the listing page in display order",
+          "minimum": 1
+        }
+      },
+      "output_contract": {
+        "posts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string",
+                "description": "Absolute URL of the post detail page"
+              },
+              "forum_path": {
+                "type": "string",
+                "description": "Forum path used to acquire this record, if preserved by implementation"
+              },
+              "rank_on_page": {
+                "type": "integer",
+                "description": "1-based position on the fetched listing page"
+              }
+            }
+          }
+        }
+      },
+      "guarantees": {
+        "collection_scope": "page",
+        "completeness": "partial",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "none",
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "Returns at most `limit` post records in the same order they were displayed on the fetched forum page",
+        "Each returned record has a non-empty title and an absolute post URL on the same site",
+        "No two returned records share the same post URL",
+        "An empty list is allowed when the fetched forum page contains no matching post links, distinct from fetch/parsing failure"
+      ],
+      "source_evidence": {
+        "workflow_id": "task67_t17",
+        "template_id": "17",
+        "code_quote": "for href, inner in re.findall(r'<a[^>]+href=[\"\\'](/f/books/\\d+/[^\"\\']+)[\"\\'][^>]*>(.*?)</a>', forum_html, re.I|re.S): ... title=' '.join(html.unescape(re.sub(r'<[^>]+>',' ',inner)).split()) ... if href in seen: continue ... posts.append({'title': title, 'url': urljoin(BASE, href)}) ... if len(posts) >= 10: break",
+        "explanation": "The workflow demonstrates a reusable site operation over a forum listing page: fetch the forum HTML, identify post links by stable path shape, normalize visible anchor text into titles, deduplicate by href, and preserve page order up to a caller-supplied limit. The hard-coded /f/books path and limit 10 can be parameterized without carrying over the task-specific recommendation logic.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    },
+    {
+      "candidate_id": "task67_t17::get_post_plain_text",
+      "proposed_method": "get_post_plain_text",
+      "capability": "retrieve a forum post detail page and convert its HTML into normalized plain text for downstream typed extraction",
+      "owns": [
+        "Fetching a specific post detail URL on the site",
+        "Removing script and style blocks from post HTML",
+        "Stripping HTML tags and HTML entities",
+        "Normalizing whitespace into plain text content"
+      ],
+      "does_not_own": [
+        "Classifying the meaning of the post text",
+        "Extracting subjective recommendations",
+        "Deriving book names from arbitrary prose",
+        "Returning raw DOM/HTML as the primitive output"
+      ],
+      "input_contract": {
+        "post_url": {
+          "type": "string",
+          "description": "Absolute URL of a forum post detail page on the site"
+        }
+      },
+      "output_contract": {
+        "post": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string"
+            },
+            "plain_text": {
+              "type": "string",
+              "description": "Normalized visible text from the fetched post page"
+            },
+            "http_status": {
+              "type": "integer",
+              "description": "HTTP status from the successful fetch, if preserved by implementation"
+            }
+          }
+        }
+      },
+      "guarantees": {
+        "collection_scope": "single",
+        "completeness": "conditional",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "none",
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "On success, returns one record whose `url` equals the requested post URL",
+        "`plain_text` contains no HTML tags and has normalized whitespace",
+        "Script/style content is excluded from `plain_text`",
+        "A fetch or parse failure is surfaced distinctly from a successful but short/empty visible-text extraction"
+      ],
+      "source_evidence": {
+        "workflow_id": "task67_t17",
+        "template_id": "17",
+        "code_quote": "resp = session.get(post['url'], timeout=30) ... plain = to_plain(resp.text)\n\ndef to_plain(text: str) -> str:\n    text = re.sub(r'<script.*?</script>|<style.*?</style>', ' ', text, flags=re.I|re.S)\n    text = re.sub(r'<[^>]+>', ' ', text)\n    return ' '.join(html.unescape(text).split())",
+        "explanation": "The workflow repeatedly fetches each post detail page and transforms its HTML into normalized plain text before task-specific interpretation. Although the current workflow only uses a snippet, the demonstrated reusable boundary is acquisition of the full normalized page text from a single post URL.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    }
+  ]
+}

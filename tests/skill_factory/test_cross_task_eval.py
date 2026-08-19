@@ -31,6 +31,12 @@ def test_prepare_routed_hint_uses_primitive_only_cross_template_policy(tmp_path)
     assert "agent_fn" not in seen["kwargs"]
 
 
+def test_empty_primitive_hint_is_byte_exact_noop():
+    prompt = "Complete this web task.\nGoal: demo"
+    assert E.prepend_nonempty_hint(prompt, "") == prompt
+    assert E.prepend_nonempty_hint(prompt, "material") == "material\n" + prompt
+
+
 def test_configure_router_model_uses_explicit_yaml_backend(tmp_path, monkeypatch):
     config = tmp_path / "model.yaml"
     config.write_text(
@@ -65,6 +71,107 @@ def test_missing_response_is_not_complete(tmp_path):
     run.mkdir()
     (run / "task.json").write_text("{}")
     assert E.has_complete_agent_response(tmp_path, "task8_scratch") is False
+
+
+def test_navigate_completion_requires_saved_url_and_dom(tmp_path):
+    run = tmp_path / "task44_scratch_001"
+    run.mkdir()
+    (run / "agent_response.json").write_text(
+        '{"task_type":"NAVIGATE","status":"SUCCESS",'
+        '"retrieved_data":null,"error_details":null}'
+    )
+    assert E.has_complete_agent_response(tmp_path, "task44_scratch", "navigate") is False
+    (run / "final_state.json").write_text(json.dumps({
+        "final_url": "https://example.test/dashboard/todos",
+        "html_path": "final_state.html",
+        "document_status": 200,
+        "answer": "",
+    }))
+    (run / "final_state.html").write_text("<html><body>Todos</body></html>")
+    assert E.has_complete_final_state(tmp_path, "task44_scratch") is True
+    assert E.has_complete_agent_response(tmp_path, "task44_scratch", "navigate") is True
+
+
+def test_vanilla_final_state_interface_does_not_reveal_task_type():
+    assert "NAVIGATE" not in E.VANILLA_FINAL_STATE_SPEC
+    assert "task_type" not in E.VANILLA_FINAL_STATE_SPEC
+    assert "agent_response" not in E.VANILLA_FINAL_STATE_SPEC
+    assert "final_state.json" in E.VANILLA_FINAL_STATE_SPEC
+
+
+def test_validate_split_accepts_navigate_with_network_evaluators():
+    split = {
+        "site": "gitlab", "task_type": "navigate",
+        "source": {"intent_template_ids": []},
+        "heldout": [{"intent_template_id": 9, "task_ids": [44]}],
+    }
+    dataset = [{
+        "task_id": 44, "intent_template_id": 9, "sites": ["gitlab"],
+        "eval": [
+            {"evaluator": "AgentResponseEvaluator", "expected": {"task_type": "navigate"}},
+            {"evaluator": "NetworkEventEvaluator"},
+        ],
+    }]
+    assert E.validate_split(split, dataset) == []
+
+
+def test_validate_split_accepts_official_webarena_navigate_task():
+    split = {
+        "site": "gitlab", "task_type": "navigate",
+        "source": {"intent_template_ids": []},
+        "heldout": [{"intent_template_id": 303, "task_ids": [44]}],
+    }
+    dataset = [{
+        "task_id": 44, "intent_template_id": 303, "sites": ["gitlab"],
+        "intent": "Check out my todos", "start_url": "__GITLAB__",
+        "eval": {"eval_types": ["url_match"]},
+    }]
+    assert E.is_official_webarena_task(dataset[0]) is True
+    assert E.expected_task_type(dataset[0], default="navigate") == "navigate"
+    assert E.validate_split(split, dataset) == []
+
+
+def test_official_execution_task_keeps_verified_template_metadata_only(tmp_path):
+    official = [{
+        "task_id": 44,
+        "intent_template_id": 303,
+        "sites": ["gitlab"],
+        "intent": "Check out my todos",
+        "start_url": "__GITLAB__",
+        "eval": {"eval_types": ["url_match"]},
+    }]
+    path = tmp_path / "test.raw.json"
+    path.write_text(json.dumps(official))
+    verified = {
+        "task_id": 44,
+        "intent_template_id": 303,
+        "sites": ["gitlab"],
+        "intent": "Open my todos page",
+    }
+    task = E.load_official_execution_task(verified, path)
+    assert task["intent"] == "Check out my todos"
+    assert task["start_url"] == "__GITLAB__"
+
+
+def test_official_execution_task_rejects_template_mismatch(tmp_path):
+    path = tmp_path / "test.raw.json"
+    path.write_text(json.dumps([{
+        "task_id": 44, "intent_template_id": 999, "sites": ["gitlab"],
+    }]))
+    try:
+        E.load_official_execution_task(
+            {"task_id": 44, "intent_template_id": 303, "sites": ["gitlab"]}, path,
+        )
+    except ValueError as error:
+        assert "metadata mismatch" in str(error)
+    else:
+        raise AssertionError("expected mismatched template IDs to be rejected")
+
+
+def test_resolve_url_accepts_official_singular_start_url():
+    task = {"start_url": "__GITLAB__/dashboard/todos"}
+    config = {"environments": {"__GITLAB__": {"urls": ["https://gitlab.test"]}}}
+    assert E.resolve_url(task, config) == "https://gitlab.test/dashboard/todos"
 
 
 def test_terminate_process_group_escalates_after_grace_period(monkeypatch):
@@ -156,7 +263,12 @@ def test_direct_primitive_router_does_not_require_scratch_plan(tmp_path):
         if system.startswith("Route site primitives"):
             seen.update(system=system, user=user)
             return {"decision": "adapt", "primitive_ids": ["map/search"],
-                    "reason": "useful acquisition", "remaining_gap": ["filter"]}
+                    "reason": "useful acquisition", "remaining_gap": ["filter"],
+                    "task_structure": "single_stage"}
+        if system.startswith("Classify exactly one structural property"):
+            seen.update(risk_system=system, risk_user=user)
+            return {"chained_open_world": False, "upstream_entity": "",
+                    "downstream_operation": "", "reason": "one candidate set"}
         seen.update(verifier_system=system, verifier_user=user)
         return {
             "verdict": "accept",
@@ -177,7 +289,140 @@ def test_direct_primitive_router_does_not_require_scratch_plan(tmp_path):
     assert "Do not require or mention a scratch plan" in seen["system"]
     assert "scratch_plan" not in seen["user"]
     assert "contract refinement" in seen["verifier_system"]
+    assert "nearest pharmacy from fully named CMU" in seen["risk_system"]
     assert out.contract_verdict["verdict"] == "accept"
+
+
+def test_direct_primitive_router_skips_ambiguous_open_world_chain(tmp_path):
+    root = tmp_path / "map" / "final_candidate"
+    root.mkdir(parents=True)
+    (root / "index.json").write_text(json.dumps({
+        "site": "map", "status": "candidate", "primitives": [{
+            "primitive_id": "map/search", "method_code": "def search(): pass",
+            "feature": "search", "method": "search", "capability": "search places",
+        }],
+    }))
+
+    def fake_llm(system, user):
+        if system.startswith("Route site primitives"):
+            return {
+                "decision": "adapt", "primitive_ids": ["map/search"],
+                "reason": "local searches are covered", "remaining_gap": ["choose hotel"],
+                "task_structure": "ambiguous_open_world_chain",
+            }
+        if system.startswith("Classify exactly one structural property"):
+            return {
+                "chained_open_world": True,
+                "upstream_entity": "a hotel",
+                "downstream_operation": "find its nearest supermarket",
+                "reason": "the downstream search depends on the selected hotel",
+            }
+        if system.startswith("Filter proposed primitive IDs"):
+            return {"safe_primitive_ids": [], "reason": "search is unsafe"}
+        return {
+            "verdict": "accept",
+            "checks": {
+                "input_reachability": "pass",
+                "guarantee_sufficiency": "pass",
+                "closed_acquisition": "pass",
+            },
+            "closed_acquisitions": ["place lookup"],
+            "reason": "closes place lookup",
+        }
+
+    out = E.retrieve_direct_primitives(
+        "choose a hotel, then find its nearest supermarket",
+        tmp_path, site="map", llm_fn=fake_llm,
+    )
+    assert out.decision == "skip"
+    assert out.primitives == []
+    assert out.contract_verdict == {}
+
+
+def test_direct_primitive_router_does_not_fake_late_binding_in_one_shot_prompt(tmp_path):
+    root = tmp_path / "map" / "final_candidate"
+    root.mkdir(parents=True)
+    (root / "index.json").write_text(json.dumps({
+        "site": "map", "status": "candidate", "primitives": [
+            {
+                "primitive_id": "map/search", "method_code": "def search(): pass",
+                "feature": "search", "method": "search", "capability": "search places",
+            },
+            {
+                "primitive_id": "map/route", "method_code": "def route(): pass",
+                "feature": "routing", "method": "route", "capability": "route coordinates",
+                "input_contract": {
+                    "type": "object", "properties": {
+                        "waypoints": {"type": "array", "items": {"type": "object",
+                            "properties": {"latitude": {"type": "number"},
+                                           "longitude": {"type": "number"}}}},
+                    },
+                },
+                "output_contract": {
+                    "type": "object", "properties": {
+                        "routes": {"type": "array", "items": {"type": "object",
+                            "properties": {"duration_seconds": {"type": "number"},
+                                           "distance_meters": {"type": "number"}}}},
+                    },
+                },
+            },
+        ],
+    }))
+
+    def fake_llm(system, user):
+        if system.startswith("Route site primitives"):
+            return {
+                "decision": "adapt", "primitive_ids": ["map/search", "map/route"],
+                "reason": "search then route", "remaining_gap": ["choose hotel"],
+                "task_structure": "ambiguous_open_world_chain",
+            }
+        if system.startswith("Classify exactly one structural property"):
+            return {
+                "chained_open_world": True,
+                "upstream_entity": "a hotel",
+                "downstream_operation": "route to a selected supermarket",
+                "reason": "routing consumes coordinates selected later",
+            }
+        if system.startswith("Filter proposed primitive IDs"):
+            assert "A route lookup between already selected coordinates is safe" in system
+            return {
+                "safe_primitive_ids": [],
+                "reason": "simulate an overly conservative model decision",
+            }
+        raise AssertionError("one-shot chained tasks must skip before contract verification")
+
+    out = E.retrieve_direct_primitives(
+        "choose a hotel, then route to its nearest supermarket",
+        tmp_path, site="map", llm_fn=fake_llm,
+    )
+    assert out.decision == "skip"
+    assert out.primitives == []
+
+
+def test_deterministic_guard_rejects_partial_exhaustive_collection_and_missing_quantity():
+    partial = {
+        "primitive_id": "shopping_admin/orders/list",
+        "output_contract": {"properties": {"items": {"type": "array"}}},
+        "guarantees": {"completeness": "partial"},
+    }
+    assert "exhaustive" in E.deterministic_direct_contract_guard(
+        "Get the total number of pending reviews", [partial], site="shopping_admin"
+    )
+    assert "quantity" in E.deterministic_direct_contract_guard(
+        "Get the items sold in the most recent orders", [partial], site="shopping_admin"
+    )
+
+
+def test_deterministic_guard_allows_query_scoped_price_aggregation_without_global_claim():
+    search = {
+        "primitive_id": "shopping/catalog/search_products_paginated",
+        "output_contract": {"properties": {"products": {"type": "array"},
+                                                   "price": {"type": "number"}}},
+        "guarantees": {"completeness": "conditional"},
+    }
+    assert E.deterministic_direct_contract_guard(
+        "What is the price range of teeth grinding mouth guards?", [search], site="shopping"
+    ) is None
 
 
 def test_reads_valid_primitive_execution_events(tmp_path):

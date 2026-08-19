@@ -13,6 +13,7 @@ import argparse
 import glob
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -37,6 +38,17 @@ Only when the task requires a subjective classification: optimize precision, sta
 inclusion and exclusion rule, make record-level decisions with rationales, and verify that the
 executed included set matches the semantic plan. Do not replace those decisions with an approximate
 broad keyword list.
+For catalog category/range tasks, a product whose displayed title directly states the requested
+category or function is an in-scope record. Do not exclude it because of packaging, fit, wording,
+or an imagined quality distinction that the goal did not request; exclude accessories and records
+whose displayed title does not actually describe the requested product/function.
+When a task names the current website/store as the venue of the user's purchases, that name scopes
+the site's authenticated order history; it is not an additional per-order merchant filter unless
+the acquired records expose merchant identity and the goal actually distinguishes merchants.
+Preserve transaction semantics independently of acquisition. Unless the current goal explicitly
+requests them, canceled/refunded orders are not completed spending or sales; do not aggregate them
+merely because a primitive returned them. Likewise, "items sold" means summed site-reported
+quantities, not the number of distinct line-item rows.
 
 ## Required final output
 Write $WORKSPACE_DIR/agent_response.json as:
@@ -44,9 +56,90 @@ Write $WORKSPACE_DIR/agent_response.json as:
  "retrieved_data":<a JSON list or null>,"error_details":null}
 """
 
+OFFICIAL_RETRIEVE_SPEC = ANSWER_SPEC + """
+
+## Official WebArena answer and browser-state capture
+The official evaluator consumes a textual answer and, for some tasks, the final URL. Immediately
+before closing the same live browser page, also write `await page.content()` verbatim to
+`$WORKSPACE_DIR/final_state.html` and write `$WORKSPACE_DIR/final_state.json` as:
+{"final_url": page.url, "html_path": "final_state.html",
+ "document_status": <the final document HTTP status integer or null>,
+ "answer": <the concise textual answer to the goal>}
+Keep `agent_response.json.retrieved_data` and `final_state.json.answer` semantically identical.
+Do not invent the final URL or DOM and do not use a HAR as a substitute.
+"""
+
+NAVIGATE_SPEC = """
+
+## Required final browser-state output
+This is a NAVIGATE task. Complete the requested navigation in a real Playwright page. Immediately
+before closing the browser, wait for the destination to settle and save the state from that same
+live page:
+
+1. Write `await page.content()` verbatim to `$WORKSPACE_DIR/final_state.html`.
+2. Write `$WORKSPACE_DIR/final_state.json` as:
+   {"final_url": page.url, "html_path": "final_state.html",
+    "document_status": <the final document HTTP status integer or null>, "answer": ""}
+3. Write `$WORKSPACE_DIR/agent_response.json` as:
+   {"task_type":"NAVIGATE","status":"SUCCESS","retrieved_data":null,
+    "error_details":null}
+
+Do not invent the final URL or DOM and do not use a HAR as a substitute. The official WebArena
+evaluator will score the saved URL and DOM. Only put a non-empty value in `answer` when the task
+itself requires an explicit terminal answer such as `N/A`.
+"""
+
+
+def prepend_nonempty_hint(prompt, hint):
+    """Keep a routed SKIP byte-identical to the scratch solve prompt."""
+    return hint + "\n" + prompt if hint else prompt
+
+VANILLA_FINAL_STATE_SPEC = """
+
+## Final browser-state capture
+Complete the objective using the real Playwright page. Immediately before closing the browser,
+wait for the final page to settle, write `await page.content()` verbatim to
+`$WORKSPACE_DIR/final_state.html`, and write `$WORKSPACE_DIR/final_state.json` as:
+{"final_url": page.url, "html_path": "final_state.html",
+ "document_status": <the final document HTTP status integer or null>, "answer": ""}
+Do not invent the URL or DOM and do not use a HAR as a substitute. If the objective itself requires
+an explicit terminal textual response, store it in `answer`; otherwise leave `answer` empty.
+"""
+
 
 def load_json(path):
     return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def is_official_webarena_task(task):
+    return isinstance(task.get("eval"), dict)
+
+
+def expected_task_type(task, default="retrieve"):
+    if is_official_webarena_task(task):
+        return str(default).lower()
+    expected = next(
+        (item.get("expected", {}) for item in task.get("eval", [])
+         if item.get("evaluator") == "AgentResponseEvaluator"),
+        {},
+    )
+    return str(expected.get("task_type", "retrieve")).lower()
+
+
+def load_official_execution_task(metadata_task, tasks_path):
+    """Load task text/config from WebArena while retaining Verified only as split metadata."""
+    rows = load_json(tasks_path)
+    task_id = metadata_task["task_id"]
+    official = next((row for row in rows if row.get("task_id") == task_id), None)
+    if official is None:
+        raise ValueError(f"official WebArena task {task_id} is missing from {tasks_path}")
+    for field in ("intent_template_id", "sites"):
+        if official.get(field) != metadata_task.get(field):
+            raise ValueError(
+                f"official/Verified metadata mismatch for task {task_id}: {field} "
+                f"{official.get(field)!r} != {metadata_task.get(field)!r}"
+            )
+    return official
 
 
 def validate_split(split, dataset):
@@ -71,19 +164,48 @@ def validate_split(split, dataset):
                         if tid in x["task_ids"])
         if task["intent_template_id"] != declared:
             errors.append(f"task {tid} template mismatch")
-        if task["sites"] != [split["site"]]:
-            errors.append(f"task {tid} is not single-site {split['site']}")
-        names = {e["evaluator"] for e in task.get("eval", [])}
-        if names != {"AgentResponseEvaluator"}:
-            errors.append(f"task {tid} evaluator set is {sorted(names)}")
-        expected = task["eval"][0].get("expected", {})
-        if str(expected.get("task_type", "")).lower() != "retrieve":
-            errors.append(f"task {tid} is not retrieve")
+        allowed_sites = split.get("sites") or [split["site"]]
+        if len(task["sites"]) != 1 or task["sites"][0] not in allowed_sites:
+            errors.append(f"task {tid} is not single-site in {allowed_sites}")
+        desired_type = str(split.get("task_type", "retrieve")).lower()
+        if is_official_webarena_task(task):
+            eval_types = set(task.get("eval", {}).get("eval_types") or [])
+            unsupported = eval_types - {"url_match", "program_html", "string_match"}
+            if desired_type == "navigate" and (not eval_types or unsupported):
+                errors.append(
+                    f"official task {tid} has unsupported Navigate evaluators "
+                    f"{sorted(eval_types)}"
+                )
+        else:
+            names = {e["evaluator"] for e in task.get("eval", [])}
+            if "AgentResponseEvaluator" not in names:
+                errors.append(f"task {tid} has no AgentResponseEvaluator")
+            if expected_task_type(task) != desired_type:
+                errors.append(f"task {tid} is not {desired_type}")
+    return errors
+
+
+def validate_official_task_metadata(split, dataset, tasks_path):
+    """Check that Verified grouping keys can safely index the official task source."""
+    verified = {row["task_id"]: row for row in dataset}
+    official = {row["task_id"]: row for row in load_json(tasks_path)}
+    heldout_ids = [tid for group in split["heldout"] for tid in group["task_ids"]]
+    errors = []
+    for task_id in heldout_ids:
+        if task_id not in official:
+            errors.append(f"official WebArena task {task_id} is missing")
+            continue
+        if task_id not in verified:
+            continue
+        for field in ("intent_template_id", "sites"):
+            if official[task_id].get(field) != verified[task_id].get(field):
+                errors.append(f"official/Verified task {task_id} {field} mismatch")
     return errors
 
 
 def resolve_url(task, config):
-    url = task.get("start_urls", [""])[0]
+    urls = task.get("start_urls") or []
+    url = task.get("start_url") or (urls[0] if urls else "")
     for placeholder, env in config["environments"].items():
         urls = env.get("urls") or []
         if urls and (url == placeholder or url.startswith(placeholder + "/")):
@@ -108,7 +230,10 @@ def collect_run(runs, key):
     answer, steps = None, 0
     if run_dir:
         try:
-            answer = load_json(run_dir / "agent_response.json").get("retrieved_data")
+            response = load_json(run_dir / "agent_response.json")
+            answer = response.get("retrieved_data")
+            if response.get("task_type") == "NAVIGATE" and (run_dir / "final_state.json").exists():
+                answer = load_json(run_dir / "final_state.json").get("answer", "")
         except (OSError, ValueError):
             pass
         try:
@@ -169,7 +294,31 @@ def read_primitive_execution_trace(run_dir: Path) -> list[dict]:
     return events
 
 
-def has_complete_agent_response(runs, key):
+def has_complete_final_state(runs, key):
+    matches = sorted(glob.glob(str(Path(runs) / f"{key}_*")))
+    if not matches:
+        return False
+    run_dir = Path(matches[-1])
+    try:
+        state = load_json(run_dir / "final_state.json")
+    except (OSError, ValueError):
+        return False
+    if not isinstance(state, dict) or not str(state.get("final_url") or "").strip():
+        return False
+    if isinstance(state.get("html"), str):
+        return True
+    html_path = state.get("html_path")
+    if not isinstance(html_path, str):
+        return False
+    resolved = (run_dir / html_path).resolve()
+    try:
+        resolved.relative_to(run_dir.resolve())
+    except ValueError:
+        return False
+    return resolved.is_file()
+
+
+def has_complete_agent_response(runs, key, task_type="retrieve"):
     """Completion is the artifact, not a non-null answer.
 
     NOT_FOUND_ERROR legitimately uses retrieved_data=null; treating null as unfinished makes those
@@ -183,12 +332,18 @@ def has_complete_agent_response(runs, key):
         payload = load_json(path)
     except (OSError, ValueError):
         return False
-    return (
+    expected_type = str(task_type).upper()
+    response_complete = (
         isinstance(payload, dict)
-        and payload.get("task_type") == "RETRIEVE"
-        and payload.get("status") in {"SUCCESS", "NOT_FOUND_ERROR"}
+        and payload.get("task_type") == expected_type
+        and payload.get("status") in (
+            {"SUCCESS", "NOT_FOUND_ERROR"} if expected_type == "RETRIEVE" else {"SUCCESS"}
+        )
         and "retrieved_data" in payload
     )
+    if not response_complete or expected_type != "NAVIGATE":
+        return response_complete
+    return has_complete_final_state(runs, key)
 
 
 def terminate_process_group(proc, grace_seconds=20):
@@ -240,6 +395,73 @@ def score(eval_python, tid, run_dir, config):
         return json.loads(proc.stdout.strip().splitlines()[-1])["score"]
     except (IndexError, KeyError, ValueError):
         return None
+
+
+def normalize_official_answer(run_dir):
+    """Bridge structured agent output to WebArena's required textual STOP answer."""
+    path = Path(run_dir) / "final_state.json"
+    state = load_json(path)
+    answer = state.get("answer", "")
+    status = state.get("document_status")
+    answer_needs_change = not isinstance(answer, str)
+    status_needs_change = status is not None and not isinstance(status, int)
+    if not answer_needs_change and not status_needs_change:
+        return False
+    backup = Path(run_dir) / "final_state.agent.json"
+    if not backup.exists():
+        backup.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n",
+                          encoding="utf-8")
+    normalizations = []
+    if answer_needs_change:
+        if answer is None:
+            rendered = "N/A"
+        elif isinstance(answer, list):
+            rendered = ", ".join(
+                item if isinstance(item, str) else json.dumps(item, ensure_ascii=False)
+                for item in answer
+            )
+        else:
+            rendered = json.dumps(answer, ensure_ascii=False)
+        state["answer"] = rendered
+        normalizations.append("structured_answer_to_official_text_v1")
+    if status_needs_change:
+        text_status = str(status).strip()
+        state["document_status"] = int(text_status) if text_status.isdigit() else None
+        normalizations.append("document_status_to_integer_or_null_v1")
+    state["artifact_normalizations"] = normalizations
+    path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return True
+
+
+def score_navigate(tid, run_dir, config, webarena_tasks, webarena_root, model_config=None):
+    normalize_official_answer(run_dir)
+    output = run_dir / "webarena_final_state_eval.json"
+    command = [
+        sys.executable, str(HERE / "webarena_final_state_eval.py"),
+        "--task-id", str(tid),
+        "--final-state", str(run_dir / "final_state.json"),
+        "--tasks", str(webarena_tasks),
+        "--deployment-config", str(config),
+        "--webarena-root", str(webarena_root),
+        "--output", str(output),
+    ]
+    if model_config:
+        command += ["--model-config", str(model_config)]
+    proc = subprocess.run(command, capture_output=True, text=True)
+    try:
+        result = load_json(output)
+    except (OSError, ValueError):
+        return None, {
+            "module_path": None,
+            "git_commit": None,
+            "error": (proc.stderr or proc.stdout).strip()[-2000:],
+        }
+    return result.get("score"), {
+        "module_path": str(Path(webarena_root) / "evaluation_harness" / "evaluators.py"),
+        "git_commit": result.get("official_webarena_commit"),
+        "eval_types": result.get("eval_types"),
+        "adapter_result": str(output),
+    }
 
 
 def evaluator_provenance(eval_python):
@@ -339,7 +561,10 @@ def verify_direct_primitive_contract(task, proposal, selected, *, llm_fn=None):
         "candidates, paginate, filter, or format, provided the contract exposes usable records and "
         "a defensible continuation/stopping signal. Ranked/partial/query-scoped results still "
         "cannot close open-world entity discovery or prove exhaustive sets, global nearest/shortest, "
-        "or absence. When a task requires a non-default value or a combination of independently "
+        "or absence. A scope-level multi-query primitive may nevertheless close the concrete local "
+        "acquisition of executing, merging, and deduplicating every caller-supplied search; it does "
+        "not thereby prove that the caller chose an exhaustive query family. When a task requires "
+        "a non-default value or a combination of independently "
         "exposed site-configuration inputs, source examples are not sufficient: an explicit "
         "`guarantees` field must enumerate or validate the supported combination, otherwise "
         "guarantee_sufficiency MUST fail. Site configuration means transport profile, endpoint, "
@@ -364,15 +589,118 @@ def verify_direct_primitive_contract(task, proposal, selected, *, llm_fn=None):
     )
 
 
+def deterministic_direct_contract_guard(task, selected, *, site, exposure_risk=None):
+    """Reject a few explicit pre-planning hazards without pretending to understand semantics.
+
+    The LLM still proposes reuse. This guard only enforces facts present in the task wording and
+    machine-readable contracts: partial collections cannot close exhaustive acquisition, line
+    records are not quantities, and unresolved chains cannot be genuinely late-bound in the
+    current one-shot prompt architecture.
+    """
+    text = str(task).lower()
+    if (exposure_risk or {}).get("chained_open_world") is True:
+        return "unresolved chained acquisition cannot be late-bound in a one-shot prompt"
+
+    def schema_keys(value):
+        keys = set()
+        if isinstance(value, dict):
+            properties = value.get("properties")
+            if isinstance(properties, dict):
+                keys.update(str(key).lower() for key in properties)
+            for child in value.values():
+                keys.update(schema_keys(child))
+        elif isinstance(value, list):
+            for child in value:
+                keys.update(schema_keys(child))
+        return keys
+
+    collection_keys = {
+        "results", "records", "orders", "reviews", "items", "places", "candidates",
+        "rows", "commits", "issues", "products",
+    }
+    selected_collections = [
+        primitive for primitive in selected
+        if schema_keys(primitive.get("output_contract") or {}) & collection_keys
+    ]
+    if re.search(r"\b(items?|units?)\s+sold\b", text):
+        outputs = set().union(*(
+            schema_keys(primitive.get("output_contract") or {}) for primitive in selected
+        )) if selected else set()
+        if not outputs & {"quantity", "qty", "ordered_quantity", "order_quantity"}:
+            return "items sold requires quantity facts; line-item cardinality is insufficient"
+
+    exhaustive = bool(re.search(
+        r"\b(all|total number|how many|most recent|nearest|closest|nearby|within|at most)\b",
+        text,
+    ))
+    if exhaustive and selected_collections and not any(
+        (primitive.get("guarantees") or {}).get("completeness") == "complete"
+        for primitive in selected_collections
+    ):
+        return "task requires exhaustive candidate acquisition but selected collection is partial"
+
+    # Geographic category discovery is especially sensitive to query family and search radius.
+    # Even a multi-query helper only executes caller guesses; it does not make them exhaustive.
+    if site == "map" and exhaustive and any(
+        "/places/" in str(primitive.get("primitive_id") or "")
+        for primitive in selected
+    ):
+        return "open-world map candidate discovery is partial and unsafe before planning"
+    return None
+
+
+def classify_direct_exposure_risk(task, candidates, proposed_ids, *, llm_fn=None):
+    """Detect a semantic branch that downstream pre-planning code could anchor incorrectly."""
+    if llm_fn is None:
+        from webwright.skill_factory.llm import llm_json as llm_fn
+    return llm_fn(
+        "Classify exactly one structural property of a web task. Set chained_open_world=true "
+        "only when BOTH are required: (1) choose or resolve an upstream entity that is not fully "
+        "named by the user, such as selecting one venue/product from a brand/category or vicinity; "
+        "and (2) use that chosen entity as the anchor/input for a distinct downstream acquisition, "
+        "including a detail page, review feed, candidate search, nearest comparison, or route. "
+        "Example true: choose a generic brush product, then fetch that product's reviews. "
+        "Example true: choose a Hilton near an "
+        "airport, then find the nearest supermarket from that hotel. Example false: find the "
+        "nearest pharmacy from fully named CMU. Example false: route between two fully named "
+        "places. Do not treat ordinary filtering and ranking within one candidate set as a chain. "
+        "Return only JSON {\"chained_open_world\":true|false,"
+        "\"upstream_entity\":\"...\","
+        "\"downstream_operation\":\"...\",\"reason\":\"...\"}.",
+        json.dumps({"task": task, "proposed_primitive_ids": proposed_ids,
+                    "candidate_contracts": candidates}, ensure_ascii=False),
+    )
+
+
 def retrieve_direct_primitives(task, library, *, site, max_primitives=5, llm_fn=None):
     """Metadata-first primitive routing without a scratch-first plan."""
     from webwright.skill_factory.audited_primitive_retrieve import retrieve_audited_primitives
     if llm_fn is None:
         from webwright.skill_factory.llm import llm_json as llm_fn
+    route_state = {}
 
     def decide(current_task, candidates):
-        return llm_fn(
+        candidate_ids = [
+            str(item.get("primitive_id")) for item in candidates if item.get("primitive_id")
+        ]
+        risk = classify_direct_exposure_risk(
+            current_task, candidates, candidate_ids, llm_fn=llm_fn,
+        ) or {}
+        # A false negative exposes candidate-acquisition code before the semantic anchor is fixed,
+        # which is the costly error. Confirm negative classifications once and use the safer
+        # positive verdict on disagreement; the later typed-contract gate still limits exposure.
+        if risk.get("chained_open_world") is False:
+            confirmation = classify_direct_exposure_risk(
+                current_task, candidates, candidate_ids, llm_fn=llm_fn,
+            ) or {}
+            route_state["exposure_risk_confirmation"] = confirmation
+            if confirmation.get("chained_open_world") is True:
+                risk = confirmation
+        route_state["exposure_risk"] = risk
+        proposal = llm_fn(
             "Route site primitives for DIRECT pre-planning injection using metadata only. "
+            "An independent structural classifier result is supplied as exposure_risk. Treat a "
+            "valid chained_open_world boolean as authoritative; do not reclassify it. "
             "Do not require or mention a scratch plan. USE only when selected primitives cover "
             "the complete website-specific acquisition needed by the task. ADAPT when a primitive "
             "provides a necessary, nontrivial acquisition or stable site-parsing sub-operation "
@@ -380,22 +708,75 @@ def retrieve_direct_primitives(task, library, *, site, max_primitives=5, llm_fn=
             "filtering, aggregation, ranking, semantic judgment, or formatting. SKIP when the "
             "primitive is merely related, needs unavailable inputs, supplies only a downstream "
             "operation without the task's core candidate set, duplicates work the agent must still "
-            "perform, or would anchor the agent on an incomplete strategy. Never infer capabilities "
+            "perform, or would anchor the agent on an incomplete strategy. For open-ended "
+            "category/vicinity/nearest/all tasks, candidate "
+            "discovery is core: never ADAPT using only a single-query or single-page search primitive. "
+            "When an available scope-level primitive executes multiple caller-supplied searches and "
+            "merges/deduplicates their records, prefer it for candidate acquisition; the workflow still "
+            "chooses query terms, semantic filters, and final ranking. If no such broader acquisition "
+            "is selected, SKIP rather than anchor the agent on one query. Also SKIP chained open-world "
+            "tasks when an ambiguous upstream entity choice (for example choosing one venue from a "
+            "brand/category) determines a later search or nearest comparison, unless a selected "
+            "primitive contract owns a sufficient upstream selection criterion. Merely combining a "
+            "generic multi-search primitive with a downstream route/detail primitive does not close "
+            "that semantic branch and is likely to anchor the wrong upstream entity. This restriction "
+            "does not apply to a single-stage nearest/category task or to routes between fully named "
+            "entities. When exposure_risk.chained_open_world is false, do not apply this chained-task "
+            "restriction: evaluate ordinary local contract usefulness. When it is true, candidate "
+            "selection will be handled by a separate late-bound gate, so propose every locally useful "
+            "primitive and do not force SKIP solely because the task is chained. Never infer capabilities "
             "absent from metadata. Select at most five. Return JSON "
             "{\"decision\":\"use|adapt|skip\",\"primitive_ids\":[],\"reason\":\"...\","
             "\"remaining_gap\":[]}. No patches field is needed in direct mode.",
-            json.dumps({"task": current_task, "candidates": candidates}, ensure_ascii=False),
+            json.dumps({"task": current_task, "exposure_risk": risk,
+                        "candidates": candidates}, ensure_ascii=False),
         )
+        proposed_ids = [str(x) for x in (proposal or {}).get("primitive_ids") or []]
+        is_chained = risk.get("chained_open_world") is True
+        if is_chained:
+            # This runner has one prompt boundary. Exposing a supposedly "late-bound" route/detail
+            # method here still changes planning before the upstream entity is selected. Until the
+            # runtime has a real second injection phase, chained tasks must remain scratch.
+            proposal = dict(proposal or {})
+            proposal.update({
+                "decision": "skip", "primitive_ids": [],
+                "reason": "direct exposure risk gate: unresolved chained acquisition",
+            })
+        elif risk.get("chained_open_world") is not False and str(
+            (proposal or {}).get("decision") or ""
+        ).lower() in {"use", "adapt"}:
+            # Malformed risk output is not permission to inject code before planning.  Falling
+            # back to scratch preserves the control arm's capability and makes this gate fail-safe.
+            proposal = dict(proposal or {})
+            proposal.update({
+                "decision": "skip", "primitive_ids": [],
+                "reason": "direct exposure risk gate: malformed classification",
+            })
+        selected_by_id = {str(item.get("primitive_id")): item for item in candidates}
+        proposed = [selected_by_id[pid] for pid in (proposal or {}).get("primitive_ids") or []
+                    if pid in selected_by_id]
+        guard_reason = deterministic_direct_contract_guard(
+            current_task, proposed, site=site, exposure_risk=risk,
+        )
+        if guard_reason:
+            proposal = dict(proposal or {})
+            proposal.update({"decision": "skip", "primitive_ids": [],
+                             "reason": "deterministic contract guard: " + guard_reason})
+        return proposal
 
     def verify(current_task, proposal, selected):
         return verify_direct_primitive_contract(
             current_task, proposal, selected, llm_fn=llm_fn,
         )
 
-    return retrieve_audited_primitives(
+    retrieval = retrieve_audited_primitives(
         task, library, site=site, max_primitives=max_primitives,
         decide_fn=decide, verify_fn=verify, scratch_plan=None,
     )
+    # Direct injection is itself an intervention: even correct low-level code can anchor the
+    # solver on the wrong upstream entity in a chained open-world task.  Keep that semantic
+    # decision in scratch rather than exposing downstream primitives before planning.
+    return retrieval
 
 
 def prepare_workflow_hint(task, library, *, forced_skill_id=None):
@@ -435,10 +816,21 @@ def prepare_workflow_hint(task, library, *, forced_skill_id=None):
 
 def run_one(args, split, dataset, config):
     tasks = {x["task_id"]: x for x in dataset}
-    task = tasks[args.task_id]
+    metadata_task = tasks[args.task_id]
     heldout_ids = {tid for x in split["heldout"] for tid in x["task_ids"]}
     if args.task_id not in heldout_ids and not args.allow_any_task:
         raise SystemExit(f"task {args.task_id} is not in the frozen heldout split")
+    declared_task_type = str(split.get("task_type", "retrieve")).lower()
+    task_type = expected_task_type(metadata_task, default=declared_task_type)
+    if is_official_webarena_task(metadata_task):
+        task = metadata_task
+        task_source = "official_webarena"
+    elif args.webarena_tasks:
+        task = load_official_execution_task(metadata_task, args.webarena_tasks)
+        task_source = "official_webarena"
+    else:
+        task = metadata_task
+        task_source = "webarena_verified"
     site = task["sites"][0]
     mode = args.mode
     key = f"task{args.task_id}_{mode}"
@@ -455,18 +847,34 @@ def run_one(args, split, dataset, config):
     if credentials:
         login = (f"\nIf login is required, use username `{credentials.get('username', '')}` "
                  f"and password `{credentials.get('password', '')}`.")
-    output_schema = next(
-        (item.get("results_schema") for item in task.get("eval", [])
-         if item.get("evaluator") == "AgentResponseEvaluator"),
-        None,
+    output_schema = (
+        next(
+            (item.get("results_schema") for item in metadata_task.get("eval", [])
+             if item.get("evaluator") == "AgentResponseEvaluator"),
+            None,
+        )
+        if task_type == "retrieve" and task_source != "official_webarena" else None
     )
     schema_note = (
         "\nRequired `retrieved_data` JSON schema: "
         + json.dumps(output_schema, ensure_ascii=False)
-        if output_schema else ""
+        if output_schema and task_type == "retrieve" else ""
+    )
+    if (task_type == "retrieve" and isinstance(output_schema, dict)
+            and output_schema.get("type") == "null"):
+        schema_note += (
+            "\nA null-only result schema does not permit SUCCESS with null data. Continue "
+            "acquisition until absence is justified; then return NOT_FOUND_ERROR with "
+            "retrieved_data=null."
+        )
+    task_spec = (
+        VANILLA_FINAL_STATE_SPEC if task_type == "navigate" and args.vanilla_task_interface
+        else NAVIGATE_SPEC if task_type == "navigate"
+        else OFFICIAL_RETRIEVE_SPEC if task_source == "official_webarena"
+        else ANSWER_SPEC
     )
     prompt = (f"Complete this web task.\n\nGoal: {task['intent']}\n"
-              f"Start URL: {url}{login}{schema_note}{ANSWER_SPEC}")
+              f"Start URL: {url}{login}{schema_note}{task_spec}")
     development_hint = ""
     if args.development_hint_file:
         if not args.allow_any_task:
@@ -531,9 +939,12 @@ def run_one(args, split, dataset, config):
         ) if args.scratch_first else retrieve_direct_primitives(
             task["intent"], args.candidate_library, site=site, max_primitives=5,
         ))
-        prompt = render_audited_primitive_hint(
+        primitive_hint = render_audited_primitive_hint(
             retrieval, include_code=not args.primitive_metadata_only,
-        ) + "\n" + prompt
+        )
+        # SKIP with no selected primitive must be an exact no-op on the solve prompt.  Prefixing
+        # even an empty hint with a newline makes the control prompt byte-different.
+        prompt = prepend_nonempty_hint(prompt, primitive_hint)
         offered = retrieval.sources
         route_out = {
             "route_stage": "primitive", "route_decision": retrieval.decision,
@@ -585,26 +996,66 @@ def run_one(args, split, dataset, config):
             time.sleep(5)
             # The agent can continue reflecting after it has emitted a complete benchmark
             # artifact. Stop there: AgentResponseEvaluator needs no later browser events.
-            if has_complete_agent_response(Path(args.runs), key):
+            if task_source == "official_webarena":
+                complete_artifact = has_complete_final_state(Path(args.runs), key) and (
+                    task_type == "navigate" and args.vanilla_task_interface
+                    or has_complete_agent_response(Path(args.runs), key, task_type)
+                )
+            else:
+                complete_artifact = has_complete_agent_response(
+                    Path(args.runs), key, task_type
+                )
+            if complete_artifact:
                 terminate_process_group(proc)
-                f.write("\nSTOPPED_AFTER_AGENT_RESPONSE\n")
+                f.write("\nSTOPPED_AFTER_FINAL_ARTIFACT\n")
                 break
         if proc.poll() is None:
             timed_out = True
             terminate_process_group(proc)
             f.write("\nTIMEOUT\n")
     run_dir, answer, steps = collect_run(Path(args.runs), key)
-    complete_response = has_complete_agent_response(Path(args.runs), key)
-    eval_provenance = evaluator_provenance(args.eval_python)
-    if eval_provenance["null_expected_fix"] is False:
-        raise SystemExit(
-            f"evaluator commit {eval_provenance['git_commit']} predates required "
-            f"null expected-data fix {NULL_EXPECTED_FIX}"
+    if (task_type == "navigate" and args.vanilla_task_interface and run_dir
+            and has_complete_final_state(Path(args.runs), key)):
+        response_path = run_dir / "agent_response.json"
+        if not response_path.exists():
+            response_path.write_text(json.dumps({
+                "task_type": "NAVIGATE", "status": "SUCCESS",
+                "retrieved_data": None, "error_details": None,
+            }, indent=2) + "\n", encoding="utf-8")
+        run_dir, answer, steps = collect_run(Path(args.runs), key)
+    complete_response = has_complete_agent_response(Path(args.runs), key, task_type)
+    # The official adapter evaluates the captured browser state even for retrieve tasks.
+    # Treat a missing capture as an incomplete agent run instead of invoking the adapter and
+    # crashing while normalizing a non-existent final_state.json.
+    if task_source == "official_webarena" and run_dir:
+        complete_response = complete_response and (run_dir / "final_state.json").exists()
+    if task_source == "official_webarena":
+        if not args.webarena_tasks or not args.webarena_root:
+            raise SystemExit(
+                "Official WebArena evaluation requires --webarena-tasks and --webarena-root"
+            )
+        if run_dir and complete_response:
+            gold_score, eval_provenance = score_navigate(
+                args.task_id, run_dir, args.config, args.webarena_tasks, args.webarena_root,
+                args.model_config,
+            )
+        else:
+            gold_score = None
+            eval_provenance = {
+                "module_path": str(Path(args.webarena_root) / "evaluation_harness" / "evaluators.py"),
+                "git_commit": None,
+            }
+    else:
+        eval_provenance = evaluator_provenance(args.eval_python)
+        if eval_provenance["null_expected_fix"] is False:
+            raise SystemExit(
+                f"evaluator commit {eval_provenance['git_commit']} predates required "
+                f"null expected-data fix {NULL_EXPECTED_FIX}"
+            )
+        gold_score = (
+            score(args.eval_python, args.task_id, run_dir, args.config)
+            if run_dir and complete_response else None
         )
-    gold_score = (
-        score(args.eval_python, args.task_id, run_dir, args.config)
-        if run_dir and complete_response else None
-    )
     correct, run_status = classify_result(
         complete_response, gold_score, timed_out, proc.returncode
     )
@@ -621,6 +1072,9 @@ def run_one(args, split, dataset, config):
     execution_trace = read_primitive_execution_trace(run_dir) if run_dir else []
     record = {
         "task_id": args.task_id,
+        "task_type": task_type,
+        "task_source": task_source,
+        "task_intent": task["intent"],
         "intent_template_id": task["intent_template_id"],
         "site": site,
         "mode": mode,
@@ -644,6 +1098,7 @@ def run_one(args, split, dataset, config):
         "primitive_execution_trace": execution_trace,
         "development_hint_file": args.development_hint_file or None,
         "primitive_metadata_only": bool(args.primitive_metadata_only),
+        "vanilla_task_interface": bool(args.vanilla_task_interface),
         "run_dir": str(run_dir) if run_dir else None,
     }
     result_path.parent.mkdir(parents=True, exist_ok=True)
@@ -767,6 +1222,16 @@ def main(argv=None):
     parser.add_argument("--results", default=str(HERE / "cross_task_results"))
     parser.add_argument("--model-config", default="model_openai.yaml")
     parser.add_argument("--eval-python", default=sys.executable)
+    parser.add_argument(
+        "--webarena-tasks",
+        default=os.environ.get("WEBARENA_ORIGINAL_TASKS", ""),
+        help="Original WebArena test config JSON used to score Navigate final state.",
+    )
+    parser.add_argument(
+        "--webarena-root",
+        default=os.environ.get("WEBARENA_ROOT", ""),
+        help="Pinned official WebArena checkout containing evaluation_harness/evaluators.py.",
+    )
     parser.add_argument("--timeout", type=int, default=900)
     parser.add_argument("--force", action="store_true")
     parser.add_argument(
@@ -786,6 +1251,11 @@ def main(argv=None):
     parser.add_argument(
         "--primitive-metadata-only", action="store_true",
         help="Development ablation only: route normally but withhold selected primitive code.",
+    )
+    parser.add_argument(
+        "--vanilla-task-interface", action="store_true",
+        help="Navigate ablation: do not expose task type or response schema to the agent; "
+             "the harness creates the evaluator response after final-state capture.",
     )
     parser.add_argument("--allow-any-task", action="store_true",
                         help="Development probes only: permit a task outside the frozen split.")
@@ -808,6 +1278,13 @@ def main(argv=None):
     dataset = load_json(args.dataset)
     if args.command == "validate":
         errors = validate_split(split, dataset)
+        if str(split.get("task_type", "retrieve")).lower() == "navigate":
+            if not args.webarena_tasks:
+                errors.append("Navigate validation requires --webarena-tasks")
+            else:
+                errors.extend(validate_official_task_metadata(
+                    split, dataset, args.webarena_tasks,
+                ))
         print("valid" if not errors else "\n".join(errors))
         return bool(errors)
     if args.command == "plan":

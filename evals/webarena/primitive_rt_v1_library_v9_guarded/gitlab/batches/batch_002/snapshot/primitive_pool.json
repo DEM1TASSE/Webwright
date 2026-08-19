@@ -1,0 +1,278 @@
+[
+  {
+    "primitive_id": "gitlab/get_repository_contributor_commit_stats_from_graph_page",
+    "method": "get_repository_contributor_commit_stats_from_graph_page",
+    "capability": "Extract contributor commit statistics from a GitLab repository contributors graph page into typed records.",
+    "method_code": "def get_repository_contributor_commit_stats_from_graph_page(self, graph_page_url: str) -> dict:\n    import re\n\n    if not isinstance(graph_page_url, str) or not graph_page_url.strip():\n        raise ValueError(\"graph_page_url must be a non-empty string\")\n\n    response = self.page.goto(graph_page_url, wait_until=\"networkidle\")\n    if response is not None and response.status >= 400:\n        raise RuntimeError(f\"Failed to load graph page: HTTP {response.status}\")\n\n    cards = self.page.locator('.contributors-charts .col-lg-6.col-12.gl-my-5')\n    card_count = cards.count()\n    contributors = []\n\n    for i in range(card_count):\n        card = cards.nth(i)\n        name = card.locator('h4').first.inner_text().strip()\n        if not name:\n            continue\n        summary_locator = card.locator('p').first\n        summary = summary_locator.inner_text().strip() if summary_locator.count() > 0 else ''\n        match = re.search(r'(\\d+)\\s+commit', summary)\n        commits = int(match.group(1)) if match else -1\n        contributors.append({\n            \"name\": name,\n            \"summary\": summary,\n            \"commits\": commits,\n        })\n\n    return {\"contributors\": contributors}\n",
+    "owns": [
+      "Navigate to a GitLab repository contributors graph page",
+      "Parse contributor cards from the page DOM",
+      "Extract contributor display name",
+      "Extract contributor summary text",
+      "Parse commit count from summary text when present"
+    ],
+    "does_not_own": [
+      "Choosing which contributor is most relevant or has the maximum commits",
+      "Ranking or aggregating contributors beyond returning parsed records",
+      "Inferring repository or branch outside the supplied graph page URL",
+      "Returning raw DOM or page text without typed parsing"
+    ],
+    "input_contract": {
+      "type": "object",
+      "properties": {
+        "graph_page_url": {
+          "type": "string",
+          "description": "Absolute GitLab repository contributors graph URL."
+        }
+      },
+      "required": [
+        "graph_page_url"
+      ]
+    },
+    "output_contract": {
+      "type": "object",
+      "properties": {
+        "contributors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "summary": {
+                "type": "string"
+              },
+              "commits": {
+                "type": "integer",
+                "description": "Parsed commit count, or -1 when the card summary did not match the demonstrated commit-count pattern."
+              }
+            },
+            "required": [
+              "name",
+              "summary",
+              "commits"
+            ]
+          }
+        }
+      },
+      "required": [
+        "contributors"
+      ]
+    },
+    "requires": [],
+    "provides": [
+      "gitlab_repository_contributor_commit_stats_page_records"
+    ],
+    "supported_patterns": [
+      "Open a repository contributors graph URL directly",
+      "Parse visible contributor cards into typed records",
+      "Preserve both summary text and parsed commit count"
+    ],
+    "guarantees": {
+      "collection_scope": "page",
+      "completeness": "conditional",
+      "supports_absence_proof": false,
+      "configuration": {
+        "kind": "none",
+        "supported_values": [],
+        "coupled_site_parameters_hidden": true
+      }
+    },
+    "acceptance_checks": [
+      "If navigation returns an HTTP response, the method raises on HTTP status 400 or higher instead of silently returning empty data",
+      "Returns one typed record per visible contributor card whose h4 name text is non-empty",
+      "For cards whose summary contains an '<number> commit' pattern, commits is parsed as that integer; otherwise commits is -1",
+      "When the loaded page has zero matching contributor cards, returns an empty contributors array"
+    ],
+    "source_evidence": [
+      {
+        "workflow_id": "task787_t316",
+        "template_id": "316",
+        "code_quote": "contributors = await page.locator('.contributors-charts .col-lg-6.col-12.gl-my-5').evaluate_all(\"\"\"\n    cards => cards.map(card => {\n      const name = card.querySelector('h4')?.innerText?.trim() || '';\n      const summary = card.querySelector('p')?.innerText?.trim() || '';\n      const m = summary.match(/(\\d+)\\s+commit/);\n      return {name, summary, commits: m ? Number(m[1]) : -1};\n    }).filter(x => x.name)\n\"\"\")",
+        "explanation": "Generalized the hard-coded repository graph URL into a graph_page_url input while preserving the demonstrated DOM parsing of contributor cards, summary text, and commit counts. The validation-sensitive guarantee was narrowed to observable behavior the code actually enforces.",
+        "evidence_match_mode": "exact"
+      }
+    ]
+  },
+  {
+    "primitive_id": "gitlab/get_user_follower_count_from_profile_page",
+    "method": "get_user_follower_count_from_profile_page",
+    "capability": "Extract a GitLab user's follower count from their profile page.",
+    "method_code": "def get_user_follower_count_from_profile_page(self, profile_url: str) -> dict:\n    import re\n\n    if not isinstance(profile_url, str) or not profile_url.strip():\n        raise ValueError(\"profile_url must be a non-empty string\")\n\n    response = self.page.goto(profile_url, wait_until=\"networkidle\")\n    if response is not None and response.status >= 400:\n        raise RuntimeError(f\"Failed to load profile page: HTTP {response.status}\")\n\n    follower_link = self.page.locator('a[href$=\"/followers\"]').first\n    follower_text = follower_link.inner_text().strip()\n    match = re.search(r'(\\d+)\\s+followers?', follower_text)\n    if not match:\n        raise RuntimeError(f\"Could not parse follower count from text: {follower_text!r}\")\n\n    follower_count = int(match.group(1))\n    return {\n        \"follower_count\": follower_count,\n        \"followers_link_text\": follower_text,\n    }\n",
+    "owns": [
+      "Navigate to a GitLab user profile page",
+      "Locate the followers link on the profile page",
+      "Read the rendered followers link text",
+      "Parse integer follower count from the visible text"
+    ],
+    "does_not_own": [
+      "Discovering which user profile to inspect",
+      "Verifying that a profile belongs to a task-selected contributor by matching arbitrary body text",
+      "Returning unrelated profile metadata not demonstrated in the workflow"
+    ],
+    "input_contract": {
+      "type": "object",
+      "properties": {
+        "profile_url": {
+          "type": "string",
+          "description": "Absolute GitLab user profile URL."
+        }
+      },
+      "required": [
+        "profile_url"
+      ]
+    },
+    "output_contract": {
+      "type": "object",
+      "properties": {
+        "follower_count": {
+          "type": "integer"
+        },
+        "followers_link_text": {
+          "type": "string",
+          "description": "Rendered text used to parse the count, such as '12 followers'."
+        }
+      },
+      "required": [
+        "follower_count",
+        "followers_link_text"
+      ]
+    },
+    "requires": [],
+    "provides": [
+      "gitlab_user_follower_count"
+    ],
+    "supported_patterns": [
+      "Open a GitLab user profile URL directly",
+      "Parse follower count from the visible followers link text",
+      "Return both parsed count and source text used for parsing"
+    ],
+    "guarantees": {
+      "collection_scope": "page",
+      "completeness": "conditional",
+      "supports_absence_proof": false,
+      "configuration": {
+        "kind": "none",
+        "supported_values": [],
+        "coupled_site_parameters_hidden": true
+      }
+    },
+    "acceptance_checks": [
+      "If navigation returns an HTTP response, the method raises on HTTP status 400 or higher instead of silently returning parsed data",
+      "Finds an anchor whose href ends with '/followers' on the loaded profile page or raises acquisition/parsing failure",
+      "Parses a non-negative integer from rendered follower text matching '<number> follower' or '<number> followers'",
+      "Returns both the parsed integer and the source link text used for parsing"
+    ],
+    "source_evidence": [
+      {
+        "workflow_id": "task787_t316",
+        "template_id": "316",
+        "code_quote": "follower_link = page.locator('a[href$=\"/followers\"]').first\nfollower_text = (await follower_link.inner_text()).strip()\nm = re.search(r'(\\d+)\\s+followers?', follower_text)\nfollowers = int(m.group(1))",
+        "explanation": "Generalized the hard-coded profile URL into a profile_url input and preserved the demonstrated followers-link parsing into typed count and source text outputs.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    ]
+  },
+  {
+    "primitive_id": "gitlab/list_branch_commit_day_summaries_from_url",
+    "method": "list_branch_commit_day_summaries_from_url",
+    "capability": "Retrieve a GitLab branch commits page from its absolute URL and parse its displayed day summary headers into typed records.",
+    "method_code": "def list_branch_commit_day_summaries_from_url(self, commits_page_url: str) -> dict:\n    import re\n\n    if not isinstance(commits_page_url, str) or not commits_page_url.strip():\n        raise ValueError(\"commits_page_url must be a non-empty string\")\n\n    response = self.page.goto(commits_page_url, wait_until=\"domcontentloaded\")\n    if response is not None and response.status >= 400:\n        raise RuntimeError(f\"Failed to load commits page: HTTP {response.status}\")\n\n    body_text = self.page.locator('body').inner_text()\n    header_pattern = re.compile(r'(?m)^(\\d{2} [A-Z][a-z]{2}, \\d{4})\\s+(\\d+) commits?$')\n\n    days = []\n    for match in header_pattern.finditer(body_text):\n        days.append({\n            \"day_label\": match.group(1),\n            \"displayed_commit_count\": int(match.group(2)),\n        })\n\n    return {\n        \"commits_page_url\": commits_page_url,\n        \"days\": days,\n    }\n",
+    "owns": [
+      "Navigate to a GitLab project branch commits history page using its absolute URL",
+      "Use authenticated page session to access the commits history view when required",
+      "Parse displayed day summary headers like '02 Mar, 2023 3 commits' from the currently loaded commits page",
+      "Extract the displayed commit count shown by GitLab for each visible day header"
+    ],
+    "does_not_own": [
+      "Constructing the commits page URL from separate project and branch inputs",
+      "Filtering to a specific author",
+      "Selecting a specific day as the answer target",
+      "Counting commits for one author on one day",
+      "Parsing per-commit identity, timestamp, or link fields not demonstrated by the source code",
+      "Exhaustive traversal across additional commit history pages beyond the loaded page",
+      "Proof that no commits exist outside the currently loaded/visible commits page"
+    ],
+    "input_contract": {
+      "type": "object",
+      "properties": {
+        "commits_page_url": {
+          "type": "string",
+          "description": "Absolute GitLab branch commits history URL, e.g. 'https://<host>/<namespace>/<project>/-/commits/main'."
+        }
+      },
+      "required": [
+        "commits_page_url"
+      ]
+    },
+    "output_contract": {
+      "type": "object",
+      "properties": {
+        "commits_page_url": {
+          "type": "string"
+        },
+        "days": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "day_label": {
+                "type": "string",
+                "description": "Displayed GitLab day heading, e.g. '02 Mar, 2023'"
+              },
+              "displayed_commit_count": {
+                "type": "integer",
+                "description": "Count shown in the day header on the page"
+              }
+            },
+            "required": [
+              "day_label",
+              "displayed_commit_count"
+            ]
+          }
+        }
+      },
+      "required": [
+        "commits_page_url",
+        "days"
+      ]
+    },
+    "requires": [
+      "authenticated_gitlab_session"
+    ],
+    "provides": [
+      "gitlab_branch_commits_page_day_summaries"
+    ],
+    "supported_patterns": [
+      "Open a branch commits history page from a fully specified absolute URL",
+      "Parse visible day summary headers from the currently loaded commits page",
+      "Return displayed per-day commit counts without task-specific author filtering"
+    ],
+    "guarantees": {
+      "collection_scope": "page",
+      "completeness": "partial",
+      "supports_absence_proof": false,
+      "configuration": {
+        "kind": "none",
+        "supported_values": [],
+        "coupled_site_parameters_hidden": true
+      }
+    },
+    "acceptance_checks": [
+      "If navigation returns an HTTP response, the method raises on HTTP status 400 or higher instead of silently returning empty data",
+      "Every returned day record comes from a visible header matching '<DD> <Mon>, <YYYY> <N> commit(s)' on the loaded page body text",
+      "Returns displayed_commit_count exactly as parsed from the visible day header text",
+      "If the loaded commits page contains no parseable day headers, returns an empty days array rather than fabricating records"
+    ],
+    "source_evidence": [
+      {
+        "workflow_id": "task133_t322",
+        "template_id": "322",
+        "code_quote": "const COMMITS_URL = START_URL + '/a11yproject/a11yproject.com/-/commits/main'; ... const bodyText = document.body.innerText; const targetHeader = '02 Mar, 2023 3 commits'; const nextHeaderRegex = /\\n\\d{2} [A-Z][a-z]{2}, \\d{4} \\d+ commits?/g;",
+        "explanation": "Preserved the evidenced reusable core that is actually demonstrated by the workflow code: opening a GitLab branch commits page and recognizing day summary headers with displayed counts from body text. The earlier broader per-commit projection was narrowed because the source code did not stably parse commit identity fields and the validation feedback rejected raw-text-heavy commit-entry records.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    ]
+  }
+]

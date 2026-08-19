@@ -1,0 +1,217 @@
+[
+  {
+    "attempt": 1,
+    "proposal": {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task315_t324::authenticate_session_with_sign_in_form",
+          "proposed_method": "authenticate_session_with_sign_in_form",
+          "capability": "authenticate to this GitLab deployment by submitting the web sign-in form and establishing a session",
+          "owns": [
+            "Fetches the GitLab sign-in page",
+            "Extracts the CSRF/authenticity token from the sign-in form HTML",
+            "Submits username and password with the extracted token to the sign-in endpoint",
+            "Maintains authenticated cookies/session state for subsequent requests on this deployment"
+          ],
+          "does_not_own": [
+            "Choosing which user credentials to use",
+            "Validating authorization for any later resource beyond whether login succeeded",
+            "Performing project search or repository data retrieval"
+          ],
+          "input_contract": {
+            "base_url": {
+              "type": "string",
+              "description": "Root URL of the GitLab deployment"
+            },
+            "username": {
+              "type": "string"
+            },
+            "password": {
+              "type": "string"
+            }
+          },
+          "output_contract": {
+            "authenticated": {
+              "type": "boolean"
+            },
+            "final_url": {
+              "type": "string",
+              "description": "Response URL after sign-in submission"
+            },
+            "session_established": {
+              "type": "boolean",
+              "description": "Whether cookies/session state are available for reuse"
+            }
+          },
+          "guarantees": {
+            "collection_scope": "not_applicable",
+            "completeness": "not_applicable",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "POSTing credentials after extracting an authenticity token returns a response without token-extraction failure",
+            "Subsequent requests made with the same cookie jar/opener are authenticated on the same deployment",
+            "Output final_url is populated from the sign-in response"
+          ],
+          "source_evidence": {
+            "workflow_id": "task315_t324",
+            "template_id": "324",
+            "code_quote": "sign_in_html = opener.open(BASE + '/users/sign_in').read().decode('utf-8', 'ignore')\nm = re.search(r'name=\"authenticity_token\" value=\"([^\"]+)\"', sign_in_html)\n...\nparams = urllib.parse.urlencode({\n    'user[login]': USERNAME,\n    'user[password]': PASSWORD,\n    'authenticity_token': token,\n}).encode()\nreq = urllib.request.Request(BASE + '/users/sign_in', data=params, method='POST', headers={'Content-Type': 'application/x-www-form-urlencoded'})\nresp = opener.open(req)",
+            "explanation": "The workflow demonstrates a reusable GitLab deployment-specific login mechanism: fetch sign-in HTML, parse authenticity token, submit credentials, and retain cookies for later API calls. This is a site capability independent of the specific repository task.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        },
+        {
+          "candidate_id": "task315_t324::search_projects_by_text_query",
+          "proposed_method": "search_projects_by_text_query",
+          "capability": "search GitLab projects by text query and return typed project records from the projects API",
+          "owns": [
+            "Calls the site-local GitLab projects search endpoint",
+            "Accepts a caller-supplied text query",
+            "Parses JSON project search results into typed project records",
+            "Preserves stable project identity and canonical project metadata exposed by the endpoint"
+          ],
+          "does_not_own": [
+            "Selecting the correct project for a task from among results",
+            "Inferring semantic match quality beyond returned fields",
+            "Ranking or filtering projects according to task-specific preferences"
+          ],
+          "input_contract": {
+            "base_url": {
+              "type": "string",
+              "description": "Root URL of the GitLab deployment"
+            },
+            "query": {
+              "type": "string",
+              "description": "Project search text sent to the GitLab projects search API"
+            },
+            "authenticated_session": {
+              "type": "object",
+              "description": "Reusable authenticated HTTP session/cookie context for the deployment"
+            }
+          },
+          "output_contract": {
+            "projects": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "fields": {
+                  "id": {
+                    "type": "integer"
+                  },
+                  "path_with_namespace": {
+                    "type": "string"
+                  },
+                  "web_url": {
+                    "type": "string"
+                  }
+                }
+              },
+              "description": "Project records returned by the search response, preserving demonstrated identity and link fields"
+            }
+          },
+          "guarantees": {
+            "collection_scope": "query",
+            "completeness": "partial",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "Returns a parsed array, possibly empty, rather than raw response text",
+            "Each returned record preserves the site's project id when present",
+            "Each returned record preserves path_with_namespace and web_url when present"
+          ],
+          "source_evidence": {
+            "workflow_id": "task315_t324",
+            "template_id": "324",
+            "code_quote": "search_body = opener.open(BASE + '/api/v4/projects?search=' + urllib.parse.quote('pytorch gan')).read().decode('utf-8', 'ignore')\nprojects = json.loads(search_body)\nfor p in projects:\n    if p.get('path_with_namespace') == 'eriklindernoren/PyTorch-GAN':\n        target = p",
+            "explanation": "The reusable site operation is the GitLab project search API call parameterized by arbitrary query text. The workflow's later exact-path selection is task logic, so the primitive should stop at returning typed project search results.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        },
+        {
+          "candidate_id": "task315_t324::list_repository_contributors",
+          "proposed_method": "list_repository_contributors",
+          "capability": "retrieve contributor statistics for a GitLab project repository",
+          "owns": [
+            "Calls the GitLab repository contributors endpoint for a specified project",
+            "Parses JSON contributor records",
+            "Returns objective contributor statistics exposed by the site, including identity and commit counts"
+          ],
+          "does_not_own": [
+            "Sorting contributors for a task-specific ranking",
+            "Selecting only top N contributors",
+            "Reducing records to only email addresses"
+          ],
+          "input_contract": {
+            "base_url": {
+              "type": "string",
+              "description": "Root URL of the GitLab deployment"
+            },
+            "project_id": {
+              "type": "integer",
+              "description": "GitLab project identifier"
+            },
+            "authenticated_session": {
+              "type": "object",
+              "description": "Reusable authenticated HTTP session/cookie context for the deployment"
+            }
+          },
+          "output_contract": {
+            "contributors": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "fields": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "email": {
+                    "type": "string"
+                  },
+                  "commits": {
+                    "type": "integer"
+                  }
+                }
+              },
+              "description": "Contributor statistics records returned by the repository contributors endpoint"
+            }
+          },
+          "guarantees": {
+            "collection_scope": "single",
+            "completeness": "conditional",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "Returns a parsed array, possibly empty, rather than raw JSON text",
+            "Each contributor record preserves commit counts as numeric values when present",
+            "Contributor email and display name are preserved when present in the site response"
+          ],
+          "source_evidence": {
+            "workflow_id": "task315_t324",
+            "template_id": "324",
+            "code_quote": "contrib_body = opener.open(BASE + f'/api/v4/projects/{project_id}/repository/contributors').read().decode('utf-8', 'ignore')\ncontributors = json.loads(contrib_body)\ntop3 = sorted(contributors, key=lambda x: (-int(x.get('commits', 0)), x.get('email', '')))[:3]",
+            "explanation": "The demonstrated reusable capability is fetching typed contributor statistics for a repository by project id. The workflow's descending sort, tie-break, top-3 truncation, and projection to emails are task-specific and should remain outside the primitive.",
+            "evidence_match_mode": "exact"
+          }
+        }
+      ]
+    },
+    "errors": []
+  }
+]

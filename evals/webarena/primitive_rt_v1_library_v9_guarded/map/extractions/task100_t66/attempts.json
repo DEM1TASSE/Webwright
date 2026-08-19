@@ -1,0 +1,176 @@
+[
+  {
+    "attempt": 1,
+    "proposal": {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task100_t66::search_places_by_query",
+          "proposed_method": "search_places_by_query",
+          "capability": "search the map site for places matching a text query and return typed result records from the results page",
+          "owns": [
+            "Submitting a site search through the visible query form",
+            "Reading each returned result from result links with stable site-provided attributes",
+            "Extracting typed place records including display name, latitude, longitude, and site href from each result"
+          ],
+          "does_not_own": [
+            "Choosing which query text to issue for the user's task",
+            "Determining nearest/best result across returned places",
+            "Computing distances client-side",
+            "Obtaining route distance/time between two coordinates"
+          ],
+          "input_contract": {
+            "query": {
+              "type": "string",
+              "description": "Free-text place search query submitted to the site's search form."
+            }
+          },
+          "output_contract": {
+            "records": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "latitude": {
+                    "type": "number"
+                  },
+                  "longitude": {
+                    "type": "number"
+                  },
+                  "href": {
+                    "type": "string",
+                    "description": "Site-relative or absolute link associated with the result record."
+                  }
+                }
+              }
+            }
+          },
+          "guarantees": {
+            "collection_scope": "query",
+            "completeness": "partial",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "Returns an array of result records parsed from `a.set_position` elements after submitting the query.",
+            "Each returned record includes a non-empty name plus latitude and longitude values parsed from `data-*` attributes.",
+            "An empty array is allowed when the results page shows no matching `a.set_position` elements for the submitted query."
+          ],
+          "source_evidence": {
+            "workflow_id": "task100_t66",
+            "template_id": "66",
+            "code_quote": "await q.fill(\"Starbucks\")\nawait page.locator('input[name=\"commit\"]:visible').first.click()\n...\nstars = page.locator(\"a.set_position\")\ncount = await stars.count()\nfor i in range(count):\n    a = stars.nth(i)\n    candidates.append({\n        \"name\": await a.get_attribute(\"data-name\"),\n        \"lat\": await a.get_attribute(\"data-lat\"),\n        \"lon\": await a.get_attribute(\"data-lon\"),\n        \"href\": await a.get_attribute(\"href\"),\n    })",
+            "explanation": "The workflow demonstrates a reusable query-scoped place-search operation on the site. Hard-coded query terms like Carnegie Mellon University and Starbucks are parameterizable. The extraction boundary is typed site records from search results, not raw DOM.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        },
+        {
+          "candidate_id": "task100_t66::get_walking_route_summary_between_coordinates",
+          "proposed_method": "get_walking_route_summary_between_coordinates",
+          "capability": "retrieve a walking directions summary between two coordinates from the site's directions page",
+          "owns": [
+            "Constructing the site directions URL for walking mode",
+            "Requesting the site's directions page for a coordinate pair",
+            "Parsing the displayed route summary into typed distance and time fields",
+            "Returning the final resolved route URL"
+          ],
+          "does_not_own": [
+            "Selecting origin and destination for the user's task",
+            "Comparing multiple routes to choose the nearest destination",
+            "Proving that no route exists anywhere beyond the requested coordinate pair",
+            "General text search over page body unrelated to the route summary pattern"
+          ],
+          "input_contract": {
+            "origin": {
+              "type": "object",
+              "properties": {
+                "latitude": {
+                  "type": "number"
+                },
+                "longitude": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "latitude",
+                "longitude"
+              ]
+            },
+            "destination": {
+              "type": "object",
+              "properties": {
+                "latitude": {
+                  "type": "number"
+                },
+                "longitude": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "latitude",
+                "longitude"
+              ]
+            }
+          },
+          "output_contract": {
+            "route": {
+              "type": "object",
+              "properties": {
+                "distance_text": {
+                  "type": "string",
+                  "description": "Displayed route distance string, e.g. '1.2 km'."
+                },
+                "duration_text": {
+                  "type": "string",
+                  "description": "Displayed route time string."
+                },
+                "distance_meters": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "description": "Parsed numeric distance in meters when the site's displayed units are recognized."
+                },
+                "route_url": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "guarantees": {
+            "collection_scope": "single",
+            "completeness": "conditional",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "semantic_enum",
+              "supported_values": [
+                "walking"
+              ],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "For a valid route page with the displayed summary pattern, returns non-empty `distance_text` and `duration_text`.",
+            "`distance_meters` is populated when the displayed distance uses meters or kilometers; otherwise it may be null while preserving the raw distance text.",
+            "If the page lacks a parseable `Distance: ... Time: ...` summary, the primitive reports no parsed route summary rather than fabricating values."
+          ],
+          "source_evidence": {
+            "workflow_id": "task100_t66",
+            "template_id": "66",
+            "code_quote": "route_url = f\"{BASE_URL}/directions?engine=fossgis_osrm_foot&route={cmu_lat}%2C{cmu_lon}%3B{cand['lat']}%2C{cand['lon']}\"\nawait page.goto(route_url, wait_until=\"domcontentloaded\")\n...\nm = re.search(r\"Distance:\\s*([^\\.]+)\\.\\s*Time:\\s*([^\\.]+)\\.\", body)\n...\ncand[\"distance\"] = distance\ncand[\"time\"] = time_str\ncand[\"distance_m\"] = parse_distance_meters(distance)",
+            "explanation": "The workflow demonstrates a reusable site-local directions acquisition on the map deployment. The low-level engine parameter is coupled to walking mode in the source (`fossgis_osrm_foot`), so the generalized primitive should expose semantic walking mode rather than raw engine details.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        }
+      ]
+    },
+    "errors": []
+  }
+]

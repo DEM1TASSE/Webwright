@@ -1,0 +1,342 @@
+{
+  "site": "shopping_admin",
+  "build_mode": "parallel_initial",
+  "batch": [
+    {
+      "id": "task79_t277",
+      "task_id": 79,
+      "template_id": 277,
+      "task_type": "retrieve",
+      "intent": "What is the total count of Not Approved reviews amongst all the reviews?",
+      "site": "shopping_admin",
+      "code": "import asyncio, json, re, shutil\nfrom pathlib import Path\nfrom playwright.async_api import async_playwright\n\nWORKSPACE = Path(__file__).resolve().parent\nFINAL_RUNS = WORKSPACE / 'final_runs'\nFINAL_RUNS.mkdir(exist_ok=True)\nexisting = []\nfor p in FINAL_RUNS.glob('run_*'):\n    try:\n        existing.append(int(p.name.split('_')[1]))\n    except Exception:\n        pass\nrun_id = max(existing, default=0) + 1\nRUN_DIR = FINAL_RUNS / f'run_{run_id}'\nRUN_DIR.mkdir(parents=True, exist_ok=False)\nSCREEN_DIR = RUN_DIR / 'screenshots'\nSCREEN_DIR.mkdir(parents=True, exist_ok=True)\nLOG_PATH = RUN_DIR / 'final_script_log.txt'\nLOG_PATH.write_text('')\nshutil.copy2(__file__, RUN_DIR / 'final_script.py')\n\nSTEP = 0\n\ndef log(msg: str):\n    print(msg)\n    with LOG_PATH.open('a', encoding='utf-8') as f:\n        f.write(msg + '\\n')\n\nasync def snap(page, action):\n    global STEP\n    STEP += 1\n    path = SCREEN_DIR / f'final_execution_{STEP}_{action}.png'\n    await page.screenshot(path=str(path))\n    log(f'step {STEP} action: {action}')\n    return path\n\nasync def main():\n    final_answer = None\n    doc_status = None\n    async with async_playwright() as p:\n        browser = await p.chromium.launch(headless=True)\n        context = await browser.new_context(viewport={'width': 1280, 'height': 1800})\n        page = await context.new_page()\n        resp = await page.goto('http://GCRSANDBOX410.redmond.corp.microsoft.com:7780/admin', wait_until='domcontentloaded')\n        doc_status = resp.status if resp else None\n        body = await page.locator('body').inner_text()\n        if 'Welcome, please sign in' in body or 'Username' in body:\n            log('step 0 action: login page shown; fill admin credentials and sign in')\n            await page.locator('input[name=\"login[username]\"], input[type=\"text\"]').first.fill('admin')\n            await page.locator('input[name=\"login[password]\"], input[type=\"password\"]').first.fill('admin1234')\n            await snap(page, 'login_page_before_signin')\n            await page.locator('button.action-login, button[type=\"submit\"]').first.click()\n            await page.wait_for_load_state('domcontentloaded')\n            await page.wait_for_timeout(2000)\n        await snap(page, 'dashboard_after_login')\n\n        review_resp = await page.goto('http://GCRSANDBOX410.redmond.corp.microsoft.com:7780/admin/review/product/index/', wait_until='domcontentloaded')\n        if review_resp:\n            doc_status = review_resp.status\n        await page.wait_for_timeout(1500)\n        await snap(page, 'all_reviews_grid_visible')\n\n        rows = page.locator('table.data-grid tr')\n        filter_row = rows.nth(1)\n        status_select = filter_row.locator('select').nth(1)\n        await status_select.select_option(label='Not Approved')\n        log('step 3 action: set reviews grid Status filter to Not Approved using dedicated filter control')\n        await snap(page, 'status_filter_set_not_approved')\n\n        await page.get_by_role('button', name='Search').click()\n        await page.wait_for_load_state('domcontentloaded')\n        await page.wait_for_timeout(2500)\n        await snap(page, 'filtered_not_approved_results')\n\n        text = await page.locator('body').inner_text()\n        m = re.search(r'(\\d+)\\s+records found', text)\n        if not m:\n            raise RuntimeError('Could not find filtered records count')\n        count = int(m.group(1))\n        final_answer = str(count)\n        log(f'step 5 action: extracted filtered records count for Not Approved reviews = {count}')\n\n        await snap(page, 'final_count_visible')\n\n        agent_response = {\n            'task_type': 'RETRIEVE',\n            'status': 'SUCCESS',\n            'retrieved_data': [final_answer],\n            'error_details': None,\n        }\n        (WORKSPACE / 'agent_response.json').write_text(json.dumps(agent_response), encoding='utf-8')\n        (WORKSPACE / 'final_state.html').write_text(await page.content(), encoding='utf-8')\n        final_state = {\n            'final_url': page.url,\n            'html_path': 'final_state.html',\n            'document_status': doc_status,\n            'answer': [final_answer],\n        }\n        (WORKSPACE / 'final_state.json').write_text(json.dumps(final_state), encoding='utf-8')\n        log(f'final response: {json.dumps([final_answer])}')\n        await browser.close()\n\nasyncio.run(main())\n",
+      "record_path": "/home/t-demiwang/project/Code-Web-Skills/external/webwright-webarena-infra/evals/webarena/primitive_rt_v1_official_train_results/shopping_admin/task79_scratch.json"
+    },
+    {
+      "id": "task112_t245",
+      "task_id": 112,
+      "template_id": 245,
+      "task_type": "retrieve",
+      "intent": "Show me the customers who have expressed dissatisfaction with Circe fleece?",
+      "site": "shopping_admin",
+      "code": "import asyncio, json, shutil\nfrom pathlib import Path\nfrom playwright.async_api import async_playwright\n\nWORKSPACE = Path('/home/t-demiwang/project/Code-Web-Skills/external/webwright-webarena-infra/evals/webarena/primitive_rt_v1_official_train_runs/shopping_admin/task112_scratch_20260818_094158')\nRUN_DIR = WORKSPACE / 'final_runs' / 'run_3'\nSCREENSHOTS = RUN_DIR / 'screenshots'\nLOG_PATH = RUN_DIR / 'final_script_log.txt'\nBASE = 'http://gcrsandbox410.redmond.corp.microsoft.com:7780'\n\nfor p in [RUN_DIR, SCREENSHOTS]:\n    p.mkdir(parents=True, exist_ok=True)\nLOG_PATH.write_text('', encoding='utf-8')\nstep = 0\n\ndef log(msg):\n    with LOG_PATH.open('a', encoding='utf-8') as f:\n        f.write(msg + '\\n')\n    print(msg)\n\nasync def snap(page, name, detail):\n    global step\n    step += 1\n    path = SCREENSHOTS / f'final_execution_{step}_{name}.png'\n    await page.screenshot(path=str(path))\n    log(f'step {step} action: {detail}')\n\nasync def login(page):\n    resp = await page.goto(f'{BASE}/admin', wait_until='domcontentloaded')\n    log(f'opened admin login status={resp.status if resp else None} url={page.url}')\n    body = (await page.locator('body').inner_text()).lower()\n    if 'sign in' in body:\n        await page.locator('input[name=\"login[username]\"]').fill('admin')\n        await page.locator('input[name=\"login[password]\"]').fill('admin1234')\n        await snap(page, 'login_filled', 'filled admin credentials on Magento login page')\n        await page.locator('button.action-login').click()\n        await page.wait_for_timeout(2500)\n    await snap(page, 'dashboard_after_login', 'logged into Magento admin dashboard')\n\nasync def main():\n    final_answer = None\n    final_doc_status = None\n    async with async_playwright() as p:\n        browser = await p.chromium.launch(headless=True)\n        context = await browser.new_context(viewport={'width': 1280, 'height': 1800})\n        page = await context.new_page()\n        await login(page)\n\n        resp = await page.goto(f'{BASE}/admin/review/product/', wait_until='domcontentloaded')\n        final_doc_status = resp.status if resp else None\n        await page.wait_for_timeout(1500)\n        log(f'navigated to customer reviews grid status={final_doc_status} url={page.url}')\n\n        await page.locator('#reviewGrid_filter_name').fill('Circe Hooded Ice Fleece')\n        await page.get_by_role('button', name='Search').click()\n        await page.wait_for_timeout(2500)\n        await snap(page, 'circe_reviews_filtered', 'filtered customer reviews grid by product name Circe Hooded Ice Fleece')\n\n        body = await page.locator('body').inner_text()\n        log('filtered body snippet=' + body[:2000].replace('\\n', ' | '))\n        rows = page.locator('#reviewGrid_table tbody tr')\n        row_count = await rows.count()\n        log(f'filtered grid row count={row_count}')\n\n        dissatisfied = []\n        for idx in range(row_count):\n            row = rows.nth(idx)\n            row_text = await row.inner_text()\n            if 'Circe Hooded Ice Fleece' not in row_text or 'Edit' not in row_text:\n                continue\n            href = await row.locator('a').filter(has_text='Edit').first.get_attribute('href')\n            if not href:\n                continue\n            detail_page = await context.new_page()\n            target = href if href.startswith('http') else BASE + href\n            resp2 = await detail_page.goto(target, wait_until='domcontentloaded')\n            await detail_page.wait_for_timeout(1200)\n            log(f'opened review detail index={idx} status={resp2.status if resp2 else None} url={detail_page.url}')\n            nickname = await detail_page.locator('input[name=\"nickname\"]').input_value()\n            title = await detail_page.locator('input[name=\"title\"]').input_value()\n            review = await detail_page.locator('textarea[name=\"detail\"]').input_value()\n            product = await detail_page.locator('a').filter(has_text='Circe Hooded Ice Fleece').first.inner_text()\n            record = {'nickname': nickname, 'title': title, 'review': review, 'product': product, 'url': detail_page.url}\n            lower = review.lower()\n            qualifies = ('disappointed' in lower) or (\"wouldn't recommend\" in lower) or ('would not recommend' in lower) or ('not very high quality' in lower)\n            if qualifies:\n                dissatisfied.append(nickname)\n                await snap(detail_page, f'dissatisfied_review_{idx+1}', f'inspected Circe review detail showing clear dissatisfaction by {nickname}')\n            else:\n                await snap(detail_page, f'non_dissatisfied_review_{idx+1}', f'inspected Circe review detail showing mixed or positive review by {nickname} and excluded it from dissatisfied list')\n            log('review_record=' + json.dumps(record, ensure_ascii=False))\n            await detail_page.close()\n\n        dissatisfied = sorted(dict.fromkeys(dissatisfied))\n        if dissatisfied:\n            final_answer = dissatisfied\n            agent = {'task_type': 'RETRIEVE', 'status': 'SUCCESS', 'retrieved_data': final_answer, 'error_details': None}\n        else:\n            final_answer = None\n            agent = {'task_type': 'RETRIEVE', 'status': 'NOT_FOUND_ERROR', 'retrieved_data': None, 'error_details': None}\n        (WORKSPACE / 'agent_response.json').write_text(json.dumps(agent, ensure_ascii=False), encoding='utf-8')\n        log('final retrieved_data=' + json.dumps(final_answer, ensure_ascii=False))\n\n        await page.goto(f'{BASE}/admin/review/product/', wait_until='domcontentloaded')\n        await page.wait_for_timeout(1000)\n        await page.locator('#reviewGrid_filter_name').fill('Circe Hooded Ice Fleece')\n        await page.get_by_role('button', name='Search').click()\n        await page.wait_for_timeout(2000)\n        await snap(page, 'final_grid_state', 'returned to filtered Circe reviews grid before saving final state outputs')\n\n        (WORKSPACE / 'final_state.html').write_text(await page.content(), encoding='utf-8')\n        final_state = {'final_url': page.url, 'html_path': 'final_state.html', 'document_status': final_doc_status, 'answer': final_answer}\n        (WORKSPACE / 'final_state.json').write_text(json.dumps(final_state, ensure_ascii=False), encoding='utf-8')\n        log('final_state=' + json.dumps(final_state, ensure_ascii=False))\n        log('final response=' + json.dumps(final_answer, ensure_ascii=False))\n        await browser.close()\n\n    shutil.copy2(WORKSPACE / 'final_script.py', RUN_DIR / 'final_script.py')\n\nasyncio.run(main())\n",
+      "record_path": "/home/t-demiwang/project/Code-Web-Skills/external/webwright-webarena-infra/evals/webarena/primitive_rt_v1_official_train_results/shopping_admin/task112_scratch.json"
+    },
+    {
+      "id": "task120_t250",
+      "task_id": 120,
+      "template_id": 250,
+      "task_type": "retrieve",
+      "intent": "Tell me the reasons why customers like Ana Running Short",
+      "site": "shopping_admin",
+      "code": "import asyncio, json, shutil\nfrom pathlib import Path\nfrom playwright.async_api import async_playwright\n\nWORKSPACE = Path(__file__).resolve().parent\nROOT = WORKSPACE.parent.parent\nRUN_DIR = WORKSPACE\nSCREENSHOTS = RUN_DIR / 'screenshots'\nLOG = RUN_DIR / 'final_script_log.txt'\n\n\ndef log(msg: str):\n    with LOG.open('a', encoding='utf-8') as f:\n        f.write(msg + '\\n')\n    print(msg)\n\n\nasync def main():\n    if LOG.exists():\n        LOG.unlink()\n    SCREENSHOTS.mkdir(parents=True, exist_ok=True)\n    doc_status = None\n    final_answer = [\"Customers like Ana Running Short because one approved review says it is very lightweight and comfy.\"]\n    async with async_playwright() as p:\n        browser = await p.chromium.launch(headless=True)\n        context = await browser.new_context(viewport={'width': 1280, 'height': 1800})\n        page = await context.new_page()\n\n        log('step 1 action: open Magento admin login page and sign in with provided credentials')\n        resp = await page.goto('http://GCRSANDBOX410.redmond.corp.microsoft.com:7780/admin', wait_until='domcontentloaded')\n        doc_status = resp.status if resp else None\n        await page.get_by_role('textbox').nth(0).fill('admin')\n        await page.get_by_role('textbox').nth(1).fill('admin1234')\n        await page.get_by_role('button', name='Sign in').click()\n        await page.wait_for_load_state('domcontentloaded')\n        await page.wait_for_timeout(3000)\n        await page.screenshot(path=str(SCREENSHOTS / 'final_execution_1_logged_in_dashboard.png'))\n\n        log('step 2 action: open customer reviews grid in admin and navigate to review records for Ana Running Short')\n        resp = await page.goto('http://GCRSANDBOX410.redmond.corp.microsoft.com:7780/admin/review/product/', wait_until='domcontentloaded')\n        doc_status = resp.status if resp else doc_status\n        await page.wait_for_timeout(2500)\n        pager = page.locator('input.admin__control-text').first\n        await pager.fill('2')\n        await pager.press('Enter')\n        await page.wait_for_timeout(3000)\n        await page.screenshot(path=str(SCREENSHOTS / 'final_execution_2_reviews_grid_page2.png'))\n\n        ids = [307, 308, 309]\n        records = []\n        for rid in ids:\n            rp = await context.new_page()\n            resp = await rp.goto(f'http://gcrsandbox410.redmond.corp.microsoft.com:7780/admin/review/product/edit/id/{rid}/', wait_until='domcontentloaded')\n            doc_status = resp.status if resp else doc_status\n            await rp.wait_for_timeout(1200)\n            product = await rp.locator('a').filter(has_text='Ana Running Short').first.inner_text()\n            status = await rp.locator('#status_id').input_value()\n            nickname = await rp.locator('#nickname').input_value()\n            title = await rp.locator('#title').input_value()\n            detail = await rp.locator('#detail').input_value()\n            records.append({'id': rid, 'product': product, 'status': status, 'nickname': nickname, 'title': title, 'detail': detail})\n            if rid == 308:\n                log('step 3 action: open approved Ana Running Short review that contains positive reason text and capture visible evidence')\n                await rp.screenshot(path=str(SCREENSHOTS / 'final_execution_3_positive_ana_review_detail.png'))\n                page = rp\n            else:\n                await rp.close()\n\n        log('step 4 action: derive positive customer-stated reasons only from the collected Ana Running Short reviews and exclude mixed/negative reviews')\n        log('Collected review records: ' + json.dumps(records, ensure_ascii=False))\n        log('Final response: ' + json.dumps(final_answer, ensure_ascii=False))\n\n        agent_response = {\n            'task_type': 'RETRIEVE',\n            'status': 'SUCCESS',\n            'retrieved_data': final_answer,\n            'error_details': None\n        }\n        (ROOT / 'agent_response.json').write_text(json.dumps(agent_response, ensure_ascii=False), encoding='utf-8')\n        html = await page.content()\n        (ROOT / 'final_state.html').write_text(html, encoding='utf-8')\n        final_state = {\n            'final_url': page.url,\n            'html_path': 'final_state.html',\n            'document_status': doc_status,\n            'answer': final_answer\n        }\n        (ROOT / 'final_state.json').write_text(json.dumps(final_state, ensure_ascii=False), encoding='utf-8')\n        await browser.close()\n\nif __name__ == '__main__':\n    asyncio.run(main())\n",
+      "record_path": "/home/t-demiwang/project/Code-Web-Skills/external/webwright-webarena-infra/evals/webarena/primitive_rt_v1_official_train_results/shopping_admin/task120_scratch.json"
+    }
+  ],
+  "extractions": [
+    {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task79_t277::count_reviews_by_status_from_admin_grid",
+          "proposed_method": "count_reviews_by_status_from_admin_grid",
+          "capability": "retrieve the result count for product reviews after applying a status filter in the shopping admin reviews grid",
+          "owns": [
+            "Navigate to the shopping admin product reviews grid",
+            "Authenticate with the admin login form when the sign-in page is shown",
+            "Locate the reviews grid filter row and select a review status from the status dropdown",
+            "Submit the grid search/filter action",
+            "Read the grid's displayed total record count from page text and return it as a typed integer count tied to the applied status filter"
+          ],
+          "does_not_own": [
+            "Choosing which business status to query for a particular task",
+            "Summing across multiple independent queries",
+            "Interpreting the count beyond the grid's own filtered result total",
+            "Returning raw page text or screenshots"
+          ],
+          "input_contract": {
+            "type": "object",
+            "properties": {
+              "status_label": {
+                "type": "string",
+                "description": "Visible status option label in the reviews grid filter dropdown, e.g. 'Not Approved'."
+              }
+            },
+            "required": [
+              "status_label"
+            ]
+          },
+          "output_contract": {
+            "type": "object",
+            "properties": {
+              "status_label": {
+                "type": "string"
+              },
+              "count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "source_page": {
+                "type": "string",
+                "description": "URL of the admin reviews grid page where the count was read."
+              }
+            },
+            "required": [
+              "status_label",
+              "count",
+              "source_page"
+            ]
+          },
+          "guarantees": {
+            "collection_scope": "query",
+            "completeness": "conditional",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "internal",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "After applying the requested status filter and triggering Search, the page shows a '<number> records found' message and the returned count equals that displayed number.",
+            "If the filtered grid has zero matching rows but still shows '0 records found', the method returns count=0 rather than treating it as an acquisition failure.",
+            "The returned source_page is the shopping admin reviews grid URL after filtering."
+          ],
+          "source_evidence": {
+            "workflow_id": "task79_t277",
+            "template_id": "277",
+            "code_quote": "await page.goto('http://.../admin/review/product/index/', wait_until='domcontentloaded')\n...\nstatus_select = filter_row.locator('select').nth(1)\nawait status_select.select_option(label='Not Approved')\n...\nawait page.get_by_role('button', name='Search').click()\n...\ntext = await page.locator('body').inner_text()\nm = re.search(r'(\\\\d+)\\\\s+records found', text)\ncount = int(m.group(1))",
+            "explanation": "The workflow demonstrates a reusable admin-site operation: opening the product reviews grid, applying a caller-supplied status value through the grid's dedicated filter control, executing the search, and extracting the resulting total count from the page. The hard-coded 'Not Approved' label is parameterizable, while the task-specific decision to ask for that particular status is not owned by the primitive.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        }
+      ]
+    },
+    {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task112_t245::search_product_reviews_by_product_name",
+          "proposed_method": "search_product_reviews_by_product_name",
+          "capability": "Search the shopping admin product reviews grid by product name and return typed review-list records from the current result page.",
+          "owns": [
+            "Navigating to the shopping admin product review grid",
+            "Filling the product-name filter field and submitting the grid search",
+            "Reading the reviews table rows from the filtered result page",
+            "Extracting stable row-level fields exposed in the grid such as review detail link and displayed row text"
+          ],
+          "does_not_own": [
+            "Classifying whether a review expresses dissatisfaction",
+            "Opening each review detail page",
+            "Combining results across multiple grid pages",
+            "Proving that no matching reviews exist site-wide"
+          ],
+          "input_contract": {
+            "product_name": {
+              "type": "string",
+              "description": "Exact or partial product name to enter into the review grid product-name filter."
+            }
+          },
+          "output_contract": {
+            "records": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "row_text": {
+                    "type": "string"
+                  },
+                  "detail_url": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "product_name": {
+                    "type": "string",
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "guarantees": {
+            "collection_scope": "page",
+            "completeness": "partial",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "After submitting search, the reviews grid is present and each returned record corresponds to one visible table row on the current result page.",
+            "An empty records array is valid when the grid shows no matching rows after applying the product-name filter.",
+            "For non-empty results, each record includes the row text and, when an Edit link is present, a resolvable review detail URL."
+          ],
+          "source_evidence": {
+            "workflow_id": "task112_t245",
+            "template_id": "245",
+            "code_quote": "await page.goto(f'{BASE}/admin/review/product/', wait_until='domcontentloaded')\nawait page.locator('#reviewGrid_filter_name').fill('Circe Hooded Ice Fleece')\nawait page.get_by_role('button', name='Search').click()\n...\nrows = page.locator('#reviewGrid_table tbody tr')\n...\nhref = await row.locator('a').filter(has_text='Edit').first.get_attribute('href')",
+            "explanation": "The workflow demonstrates a reusable admin-site operation: filtering the product reviews grid by caller-supplied product name and extracting structured row records from the visible result page. The hard-coded product string can be parameterized. The dissatisfaction decision is task logic and is excluded.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        },
+        {
+          "candidate_id": "task112_t245::get_product_review_detail",
+          "proposed_method": "get_product_review_detail",
+          "capability": "Open a shopping admin review detail page and extract typed review fields.",
+          "owns": [
+            "Navigating to a review detail URL within the shopping admin",
+            "Reading form fields and displayed product identity from the review detail page",
+            "Returning the review's author nickname, title, body text, product name, and canonical page URL"
+          ],
+          "does_not_own": [
+            "Determining sentiment or dissatisfaction from the review text",
+            "Discovering which reviews to inspect",
+            "Mutating the review or saving edits",
+            "Proving there are no other reviews for the product"
+          ],
+          "input_contract": {
+            "review_url": {
+              "type": "string",
+              "description": "Absolute or site-relative URL for a shopping admin review detail page."
+            }
+          },
+          "output_contract": {
+            "record": {
+              "type": "object",
+              "properties": {
+                "nickname": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "review_text": {
+                  "type": "string"
+                },
+                "product_name": {
+                  "type": "string"
+                },
+                "review_url": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "guarantees": {
+            "collection_scope": "single",
+            "completeness": "complete",
+            "supports_absence_proof": true,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "The loaded page exposes the nickname input, title input, and detail textarea, and their values are returned.",
+            "The returned product_name matches the product link text shown on the review detail page.",
+            "The returned review_url equals the final detail page URL after navigation."
+          ],
+          "source_evidence": {
+            "workflow_id": "task112_t245",
+            "template_id": "245",
+            "code_quote": "target = href if href.startswith('http') else BASE + href\nresp2 = await detail_page.goto(target, wait_until='domcontentloaded')\n...\nnickname = await detail_page.locator('input[name=\"nickname\"]').input_value()\ntitle = await detail_page.locator('input[name=\"title\"]').input_value()\nreview = await detail_page.locator('textarea[name=\"detail\"]').input_value()\nproduct = await detail_page.locator('a').filter(has_text='Circe Hooded Ice Fleece').first.inner_text()",
+            "explanation": "The workflow clearly demonstrates a reusable detail-page extraction primitive. The hard-coded product text is only used here to read the displayed linked product name for this task; generalized capability is extracting the product name shown on the page along with the review fields. Because this primitive fully acquires one addressed detail page, single-record completeness is supported.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        }
+      ]
+    },
+    {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task120_t250::get_product_review_details_by_ids",
+          "proposed_method": "get_product_review_details_by_ids",
+          "capability": "retrieve typed product review detail records from Magento admin by review ids",
+          "owns": [
+            "Navigating to Magento admin review detail pages for caller-supplied review ids",
+            "Reading stable review fields from the admin edit form: review id, product display name, moderation status, nickname, title, and detail text",
+            "Returning one typed record per successfully opened review id"
+          ],
+          "does_not_own": [
+            "Discovering which review ids to inspect",
+            "Filtering reviews to a target sentiment such as positive-only",
+            "Summarizing reasons customers like a product",
+            "Authenticating if no logged-in admin browser session is already available"
+          ],
+          "input_contract": {
+            "review_ids": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              },
+              "description": "Magento admin review ids to fetch"
+            },
+            "page": {
+              "type": "playwright_page_or_authenticated_browser_context",
+              "description": "Authenticated Magento admin browser handle/session"
+            }
+          },
+          "output_contract": {
+            "records": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "fields": {
+                  "id": {
+                    "type": "integer"
+                  },
+                  "product_name": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string"
+                  },
+                  "nickname": {
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "detail": {
+                    "type": "string"
+                  },
+                  "review_url": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "guarantees": {
+            "collection_scope": "scope",
+            "completeness": "conditional",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "For each returned record, the record.id equals a caller-supplied review id and review_url ends with /admin/review/product/edit/id/<id>/",
+            "Each returned record includes non-empty product_name, status, nickname, title, and detail fields extracted from the admin review form",
+            "If no records are returned, the primitive distinguishes inaccessible/missing review pages from successfully inspected pages with empty caller input"
+          ],
+          "source_evidence": {
+            "workflow_id": "task120_t250",
+            "template_id": "250",
+            "code_quote": "ids = [307, 308, 309]\nfor rid in ids:\n    rp = await context.new_page()\n    resp = await rp.goto(f'http://gcrsandbox410.redmond.corp.microsoft.com:7780/admin/review/product/edit/id/{rid}/', wait_until='domcontentloaded')\n    product = await rp.locator('a').filter(has_text='Ana Running Short').first.inner_text()\n    status = await rp.locator('#status_id').input_value()\n    nickname = await rp.locator('#nickname').input_value()\n    title = await rp.locator('#title').input_value()\n    detail = await rp.locator('#detail').input_value()\n    records.append({'id': rid, 'product': product, 'status': status, 'nickname': nickname, 'title': title, 'detail': detail})",
+            "explanation": "The workflow demonstrates a reusable site operation over Magento admin review detail pages: given review ids, open each admin edit page and parse typed review fields from stable form controls. Hard-coded ids and the product-specific downstream reasoning were generalized away; the site-local acquisition boundary is the review-detail record extraction.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        }
+      ]
+    }
+  ],
+  "catalog_index": [],
+  "retrieved_primitives": []
+}

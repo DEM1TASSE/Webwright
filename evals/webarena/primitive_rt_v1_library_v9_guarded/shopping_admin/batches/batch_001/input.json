@@ -1,0 +1,431 @@
+{
+  "site": "shopping_admin",
+  "build_mode": "parallel_initial",
+  "batch": [
+    {
+      "id": "task210_t364",
+      "task_id": 210,
+      "template_id": 364,
+      "task_type": "retrieve",
+      "intent": "Find the customer name and email with phone number 2065555555",
+      "site": "shopping_admin",
+      "code": "from pathlib import Path\nimport json, os, re, subprocess, textwrap\n\nROOT = Path(__file__).resolve().parent\nFINAL_RUNS = ROOT / 'final_runs'\nFINAL_RUNS.mkdir(exist_ok=True)\nexisting = []\nfor p in FINAL_RUNS.glob('run_*'):\n    m = re.fullmatch(r'run_(\\d+)', p.name)\n    if m:\n        existing.append(int(m.group(1)))\nrun_id = max(existing, default=0) + 1\nRUN_DIR = FINAL_RUNS / f'run_{run_id:03d}'\nSHOT_DIR = RUN_DIR / 'screenshots'\nSHOT_DIR.mkdir(parents=True, exist_ok=True)\nLOG_PATH = RUN_DIR / 'final_script_log.txt'\n(RUN_DIR / 'final_script.py').write_text(Path(__file__).read_text())\nLOG_PATH.write_text('')\n\ndef log(msg: str):\n    with LOG_PATH.open('a') as f:\n        f.write(msg + '\\n')\n    print(msg)\n\nlog(f'run_dir: {RUN_DIR}')\n\nnode_code = textwrap.dedent(r'''\nconst fs = require('fs');\nconst os = require('os');\nconst path = require('path');\n\nconst root = process.argv[2];\nconst runDir = process.argv[3];\nconst shotDir = process.argv[4];\nconst logPath = process.argv[5];\n\nfunction log(msg) {\n  fs.appendFileSync(logPath, msg + \"\\n\");\n  console.log(msg);\n}\n\nlet pwPath = null;\nconst base = path.join(os.homedir(), '.npm', '_npx');\nfor (const d of fs.readdirSync(base)) {\n  const p = path.join(base, d, 'node_modules', 'playwright');\n  if (fs.existsSync(p)) { pwPath = p; break; }\n}\nif (!pwPath) throw new Error('Playwright package not found in npx cache');\nconst { chromium } = require(pwPath);\n\n(async() => {\n  const browser = await chromium.launch({ headless: true });\n  const context = await browser.newContext({ viewport: { width: 1280, height: 1800 } });\n  const page = await context.newPage();\n  let finalDocStatus = null;\n  page.on('response', async (resp) => {\n    try {\n      if (resp.url() === page.url() && resp.request().resourceType() === 'document') finalDocStatus = resp.status();\n    } catch (e) {}\n  });\n\n  log('step 1 action: open admin login/dashboard page');\n  let resp = await page.goto('http://GCRSANDBOX410.redmond.corp.microsoft.com:7780/admin', { waitUntil: 'domcontentloaded' });\n  if (resp) finalDocStatus = resp.status();\n  await page.waitForTimeout(2000);\n  let body0 = await page.locator('body').innerText().catch(() => '');\n  if (/Username|Sign in|Login|password/i.test(body0)) {\n    log('step 2 action: login with provided admin credentials');\n    const fillIf = async (sels, val) => {\n      for (const sel of sels) {\n        const loc = page.locator(sel).first();\n        if (await loc.count()) {\n          try { await loc.fill(val); return true; } catch (e) {}\n        }\n      }\n      return false;\n    };\n    await fillIf(['input[name=\"login[username]\"]','input[name=\"username\"]','#username','input[type=\"email\"]','input[type=\"text\"]'], 'admin');\n    await fillIf(['input[name=\"login[password]\"]','input[name=\"password\"]','input[type=\"password\"]'], 'admin1234');\n    for (const sel of ['button[type=\"submit\"]','.action-login','button:has-text(\"Sign in\")','button:has-text(\"Login\")']) {\n      const loc = page.locator(sel).first();\n      if (await loc.count()) {\n        try { await loc.click(); break; } catch (e) {}\n      }\n    }\n    await page.waitForTimeout(4000);\n  }\n  await page.screenshot({ path: path.join(shotDir, 'final_execution_1_dashboard_or_login.png') });\n\n  log('step 3 action: navigate directly to Customers grid page');\n  resp = await page.goto('http://GCRSANDBOX410.redmond.corp.microsoft.com:7780/admin/customer/index/index', { waitUntil: 'domcontentloaded' });\n  if (resp) finalDocStatus = resp.status();\n  await page.waitForTimeout(3000);\n  await page.screenshot({ path: path.join(shotDir, 'final_execution_2_customers_grid.png') });\n\n  log('step 4 action: verify customer row with exact phone number 2065555555 and extract corresponding name/email');\n  const text = await page.locator('body').innerText();\n  const normalized = text.replace(/\\s+/g, ' ');\n  const match = normalized.match(/([A-Z][a-z]+ [A-Z][a-z]+)\\s+([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,})\\s+General\\s+2065555555\\b/);\n  let answerList = null;\n  if (match) {\n    const name = match[1];\n    const email = match[2];\n    answerList = [{ name, email, phone: '2065555555' }];\n    log(`extracted_match: ${JSON.stringify(answerList[0])}`);\n  } else {\n    log('extracted_match: null');\n  }\n\n  const answerText = answerList ? JSON.stringify(answerList) : 'null';\n  await page.screenshot({ path: path.join(shotDir, 'final_execution_3_matching_customer_visible.png') });\n\n  const agentResponse = answerList\n    ? { task_type: 'RETRIEVE', status: 'SUCCESS', retrieved_data: answerList, error_details: null }\n    : { task_type: 'RETRIEVE', status: 'NOT_FOUND_ERROR', retrieved_data: null, error_details: null };\n  fs.writeFileSync(path.join(root, 'agent_response.json'), JSON.stringify(agentResponse));\n\n  const html = await page.content();\n  fs.writeFileSync(path.join(root, 'final_state.html'), html);\n  const finalState = {\n    final_url: page.url(),\n    html_path: 'final_state.html',\n    document_status: finalDocStatus,\n    answer: answerList ? answerList : null\n  };\n  fs.writeFileSync(path.join(root, 'final_state.json'), JSON.stringify(finalState));\n  log('final_response: ' + JSON.stringify(agentResponse.retrieved_data));\n\n  await browser.close();\n})();\n''')\n\nnode_path = RUN_DIR / 'runner.js'\nnode_path.write_text(node_code)\nsubprocess.run(['node', str(node_path), str(ROOT), str(RUN_DIR), str(SHOT_DIR), str(LOG_PATH)], check=True)\nprint(f'COMPLETED_RUN={RUN_DIR}')\n",
+      "record_path": "/home/t-demiwang/project/Code-Web-Skills/external/webwright-webarena-infra/evals/webarena/primitive_rt_v1_official_train_results/shopping_admin/task210_scratch.json"
+    },
+    {
+      "id": "task209_t364",
+      "task_id": 209,
+      "template_id": 364,
+      "task_type": "retrieve",
+      "intent": "Find the customer name and email with phone number 2137418080",
+      "site": "shopping_admin",
+      "code": "import asyncio, json, os, shutil\nfrom pathlib import Path\nfrom playwright.async_api import async_playwright\n\nWORKSPACE = Path(os.environ['WORKSPACE_DIR'])\nRUN_DIR = WORKSPACE / 'final_runs' / 'run_001'\nSCREENSHOTS = RUN_DIR / 'screenshots'\nLOG_PATH = RUN_DIR / 'final_script_log.txt'\nSTART_URL = 'http://gcrsandbox410.redmond.corp.microsoft.com:7780/admin'\nCUSTOMERS_URL = 'http://gcrsandbox410.redmond.corp.microsoft.com:7780/admin/customer/index/'\nPHONE = '2137418080'\n\n\ndef log(msg: str):\n    print(msg)\n    with LOG_PATH.open('a', encoding='utf-8') as f:\n        f.write(msg + '\\n')\n\n\nasync def main():\n    RUN_DIR.mkdir(parents=True, exist_ok=True)\n    SCREENSHOTS.mkdir(parents=True, exist_ok=True)\n    LOG_PATH.write_text('', encoding='utf-8')\n    step = 1\n    final_answer = None\n    final_status = None\n    doc_status = None\n\n    async with async_playwright() as p:\n        browser = await p.chromium.launch(headless=True)\n        context = await browser.new_context(viewport={'width': 1280, 'height': 1800})\n        page = await context.new_page()\n\n        log(f'step {step} action: open Magento admin start page and inspect login state')\n        resp = await page.goto(START_URL, wait_until='domcontentloaded')\n        doc_status = resp.status if resp else None\n        await page.screenshot(path=str(SCREENSHOTS / f'final_execution_{step}_start_page.png'))\n        step += 1\n\n        if await page.get_by_label('Username').count():\n            log(f'step {step} action: sign in with provided admin credentials')\n            await page.get_by_label('Username').fill('admin')\n            await page.get_by_label('Password').fill('admin1234')\n            await page.get_by_role('button', name='Sign in').click()\n            await page.wait_for_load_state('networkidle')\n            await page.screenshot(path=str(SCREENSHOTS / f'final_execution_{step}_after_login.png'))\n            step += 1\n\n        log(f'step {step} action: navigate to All Customers grid')\n        resp = await page.goto(CUSTOMERS_URL, wait_until='domcontentloaded')\n        doc_status = resp.status if resp else doc_status\n        await page.wait_for_load_state('networkidle')\n        await page.screenshot(path=str(SCREENSHOTS / f'final_execution_{step}_customers_grid.png'))\n        step += 1\n\n        if await page.get_by_role('button', name='Clear all').count():\n            log(f'step {step} action: clear any saved active customer filters to avoid stale phone criteria')\n            await page.get_by_role('button', name='Clear all').click()\n            await page.wait_for_load_state('networkidle')\n            await page.wait_for_timeout(1000)\n            await page.screenshot(path=str(SCREENSHOTS / f'final_execution_{step}_filters_cleared.png'))\n            step += 1\n\n        log(f'step {step} action: expand Filters panel and set exact Phone filter to {PHONE}')\n        filters_btn = page.get_by_role('button', name='Filters')\n        if await filters_btn.count():\n            await filters_btn.click()\n            await page.wait_for_timeout(800)\n        phone_input = page.locator('input[name=\"billing_telephone\"]:visible')\n        await phone_input.fill(PHONE)\n        await page.screenshot(path=str(SCREENSHOTS / f'final_execution_{step}_phone_filter_filled.png'))\n        step += 1\n\n        log(f'step {step} action: apply phone filter and wait for filtered customer result')\n        await page.get_by_role('button', name='Apply Filters').click()\n        await page.wait_for_load_state('networkidle')\n        await page.wait_for_timeout(1500)\n        body_text = await page.locator('body').inner_text()\n        await page.screenshot(path=str(SCREENSHOTS / f'final_execution_{step}_phone_filter_applied.png'))\n        step += 1\n\n        rows = await page.locator('tbody tr').evaluate_all(\"rows => rows.map(r => (r.innerText||'').trim()).filter(t => t)\")\n        matching = [r for r in rows if PHONE in r]\n        log('Filtered rows: ' + json.dumps(matching, ensure_ascii=False))\n\n        if matching:\n            parts = [p for p in matching[0].split('\\t') if p.strip()]\n            name = parts[0].strip() if len(parts) > 0 else None\n            email = parts[1].strip() if len(parts) > 1 else None\n            final_answer = [{\"name\": name, \"email\": email, \"phone\": PHONE}]\n            final_status = 'SUCCESS'\n            log(f'step {step} action: extract matching customer data from visible filtered grid row: name={name}, email={email}, phone={PHONE}')\n            await page.screenshot(path=str(SCREENSHOTS / f'final_execution_{step}_final_matching_row.png'))\n            step += 1\n        else:\n            final_answer = None\n            final_status = 'NOT_FOUND_ERROR'\n            log(f'step {step} action: confirm no visible grid row matches exact phone {PHONE}')\n            await page.screenshot(path=str(SCREENSHOTS / f'final_execution_{step}_no_match_result.png'))\n            step += 1\n\n        agent_response = {\n            'task_type': 'RETRIEVE',\n            'status': final_status,\n            'retrieved_data': final_answer,\n            'error_details': None,\n        }\n        (WORKSPACE / 'agent_response.json').write_text(json.dumps(agent_response, ensure_ascii=False), encoding='utf-8')\n        log('Wrote agent_response.json: ' + json.dumps(agent_response, ensure_ascii=False))\n\n        concise_answer = json.dumps(final_answer, ensure_ascii=False) if final_answer is not None else 'null'\n        (WORKSPACE / 'final_state.html').write_text(await page.content(), encoding='utf-8')\n        final_state = {\n            'final_url': page.url,\n            'html_path': 'final_state.html',\n            'document_status': doc_status,\n            'answer': concise_answer,\n        }\n        (WORKSPACE / 'final_state.json').write_text(json.dumps(final_state, ensure_ascii=False), encoding='utf-8')\n        log('Final response: ' + concise_answer)\n        log('Wrote final_state.json: ' + json.dumps(final_state, ensure_ascii=False))\n\n        await browser.close()\n\n    shutil.copy2(WORKSPACE / 'final_script.py', RUN_DIR / 'final_script.py')\n\nasyncio.run(main())\n",
+      "record_path": "/home/t-demiwang/project/Code-Web-Skills/external/webwright-webarena-infra/evals/webarena/primitive_rt_v1_official_train_results/shopping_admin/task209_scratch.json"
+    },
+    {
+      "id": "task187_t368",
+      "task_id": 187,
+      "template_id": 368,
+      "task_type": "retrieve",
+      "intent": "Give me the SKU of the products that have 1-3 units left",
+      "site": "shopping_admin",
+      "code": "import asyncio\nimport json\nimport shutil\nfrom pathlib import Path\nfrom typing import List\nfrom playwright.async_api import async_playwright, Page\n\nWORKSPACE = Path(__file__).resolve().parent\nFINAL_RUNS = WORKSPACE / 'final_runs'\nFINAL_RUNS.mkdir(exist_ok=True)\nexisting = [int(p.name.split('_')[1]) for p in FINAL_RUNS.glob('run_*') if p.name.split('_')[1].isdigit()]\nRUN_ID = max(existing, default=0) + 1\nRUN_DIR = FINAL_RUNS / f'run_{RUN_ID}'\nSCREENSHOTS = RUN_DIR / 'screenshots'\nLOG_FILE = RUN_DIR / 'final_script_log.txt'\n\nRUN_DIR.mkdir(parents=True, exist_ok=True)\nSCREENSHOTS.mkdir(parents=True, exist_ok=True)\nLOG_FILE.write_text('')\n\nshutil.copy2(Path(__file__), RUN_DIR / 'final_script.py')\n\nstep_counter = 0\nfinal_document_status = None\n\n\ndef log(message: str) -> None:\n    print(message)\n    with LOG_FILE.open('a', encoding='utf-8') as f:\n        f.write(message + '\\n')\n\n\nasync def shot(page: Page, label: str) -> None:\n    global step_counter\n    step_counter += 1\n    path = SCREENSHOTS / f'final_execution_{step_counter}_{label}.png'\n    await page.screenshot(path=str(path))\n    log(f'step {step_counter} screenshot: {path.name}')\n\n\nasync def login_if_needed(page: Page) -> None:\n    global final_document_status\n    response = await page.goto('http://GCRSANDBOX410.redmond.corp.microsoft.com:7780/admin', wait_until='domcontentloaded')\n    final_document_status = response.status if response else None\n    await page.wait_for_timeout(1500)\n    body = (await page.locator('body').inner_text()).lower()\n    if 'username' in body or 'sign in' in body:\n        log('step 1 action: login page detected; filling admin credentials and signing in')\n        await page.locator('input[name=\"login[username]\"]').fill('admin')\n        await page.locator('input[name=\"login[password]\"]').fill('admin1234')\n        await shot(page, 'login_page_filled')\n        await page.locator('button.action-login').click()\n        await page.wait_for_load_state('domcontentloaded')\n        await page.wait_for_timeout(3000)\n        log(f'login complete url: {page.url}')\n    else:\n        log('step 1 action: no login required; already authenticated')\n\n\nasync def extract_rows(page: Page) -> List[dict]:\n    js = '''() => {\n      const rows = [];\n      const grid = document.querySelector('table[data-role=\"grid\"] tbody') || document.querySelector('table tbody');\n      if (!grid) return rows;\n      for (const tr of Array.from(grid.querySelectorAll('tr'))) {\n        const tds = Array.from(tr.querySelectorAll('td')).map(td => (td.innerText || td.textContent || '').trim());\n        if (tds.length >= 15 && tds[6] && tds[8]) {\n          rows.push({name: tds[3], sku: tds[6], quantity: tds[8], salable: tds[9]});\n        }\n      }\n      return rows;\n    }'''\n    return await page.evaluate(js)\n\n\nasync def main() -> None:\n    async with async_playwright() as p:\n        browser = await p.chromium.launch(headless=True)\n        context = await browser.new_context(viewport={'width': 1280, 'height': 1800})\n        page = await context.new_page()\n\n        await login_if_needed(page)\n        log('step 2 action: navigate to catalog products grid to inspect SKU and quantity using dedicated filters')\n        response = await page.goto('http://GCRSANDBOX410.redmond.corp.microsoft.com:7780/admin/catalog/product/', wait_until='domcontentloaded')\n        final_document_status = response.status if response else final_document_status\n        await page.wait_for_timeout(5000)\n        await shot(page, 'products_grid_open')\n\n        log('step 3 action: open Filters drawer and apply exact quantity range from 1 to 3 units')\n        await page.get_by_role('button', name='Filters').first.click()\n        await page.wait_for_timeout(800)\n        await page.locator('input[name=\"qty[from]\"]').fill('1')\n        await page.locator('input[name=\"qty[to]\"]').fill('3')\n        await shot(page, 'qty_filter_filled')\n        await page.get_by_role('button', name='Apply Filters').click()\n        await page.wait_for_timeout(6000)\n        await shot(page, 'qty_filter_applied_results')\n\n        rows = await extract_rows(page)\n        matching = []\n        for row in rows:\n            try:\n                qty = float(row['quantity'])\n            except Exception:\n                continue\n            if 1 <= qty <= 3:\n                matching.append(row)\n        skus = [row['sku'] for row in matching]\n        log(f'step 4 action: extracted filtered rows = {json.dumps(matching, ensure_ascii=False)}')\n        log(f'final answer skus: {json.dumps(skus)}')\n\n        answer = skus\n        status = 'SUCCESS' if skus else 'NOT_FOUND_ERROR'\n        agent_response = {\n            'task_type': 'RETRIEVE',\n            'status': status,\n            'retrieved_data': answer if skus else None,\n            'error_details': None,\n        }\n        (WORKSPACE / 'agent_response.json').write_text(json.dumps(agent_response, ensure_ascii=False), encoding='utf-8')\n\n        (WORKSPACE / 'final_state.html').write_text(await page.content(), encoding='utf-8')\n        final_state = {\n            'final_url': page.url,\n            'html_path': 'final_state.html',\n            'document_status': final_document_status,\n            'answer': answer if skus else None,\n        }\n        (WORKSPACE / 'final_state.json').write_text(json.dumps(final_state, ensure_ascii=False), encoding='utf-8')\n        log(f'step 5 action: wrote agent_response.json and final_state.json with answer {json.dumps(answer)}')\n\n        await browser.close()\n\nif __name__ == '__main__':\n    asyncio.run(main())\n",
+      "record_path": "/home/t-demiwang/project/Code-Web-Skills/external/webwright-webarena-infra/evals/webarena/primitive_rt_v1_official_train_results/shopping_admin/task187_scratch.json"
+    },
+    {
+      "id": "task348_t248",
+      "task_id": 348,
+      "template_id": 248,
+      "task_type": "retrieve",
+      "intent": "How many reviews our shop received in May 2023?",
+      "site": "shopping_admin",
+      "code": "const fs = require('fs');\nconst path = require('path');\nconst { chromium } = require('playwright');\n\n(async() => {\n  const workspace = process.cwd();\n  const runDir = path.join(workspace, 'final_runs', 'run_1');\n  const shots = path.join(runDir, 'screenshots');\n  fs.mkdirSync(shots, { recursive: true });\n  const logPath = path.join(runDir, 'final_script_log.txt');\n  fs.writeFileSync(logPath, '');\n  let step = 1;\n  const log = (msg) => { fs.appendFileSync(logPath, `step ${step} action: ${msg}\\n`); };\n  const shot = async(page, name) => { await page.screenshot({ path: path.join(shots, `final_execution_${step}_${name}.png`) }); step += 1; };\n\n  const browser = await chromium.launch({ headless: true });\n  const context = await browser.newContext({ viewport: { width: 1280, height: 1800 } });\n  const page = await context.newPage();\n  let finalStatus = null;\n\n  const resp1 = await page.goto('http://gcrsandbox410.redmond.corp.microsoft.com:7780/admin', { waitUntil: 'domcontentloaded' });\n  finalStatus = resp1 ? resp1.status() : null;\n  if (await page.locator('input[name=\"username\"]').count()) await page.fill('input[name=\"username\"]', 'admin');\n  if (await page.locator('input[name=\"password\"]').count()) await page.fill('input[name=\"password\"]', 'admin1234');\n  if (await page.locator('input[name=\"login[username]\"]').count()) await page.fill('input[name=\"login[username]\"]', 'admin');\n  if (await page.locator('input[name=\"login[password]\"]').count()) await page.fill('input[name=\"login[password]\"]', 'admin1234');\n  log('Logged into Magento admin using provided credentials.');\n  if (await page.getByRole('button', { name: /sign in|login/i }).count()) await page.getByRole('button', { name: /sign in|login/i }).first().click();\n  else if (await page.locator('button[type=\"submit\"]').count()) await page.locator('button[type=\"submit\"]').first().click();\n  await page.waitForLoadState('domcontentloaded');\n  await page.waitForTimeout(1500);\n  await shot(page, 'login_success_dashboard');\n\n  const resp2 = await page.goto('http://gcrsandbox410.redmond.corp.microsoft.com:7780/admin/review/product/index/', { waitUntil: 'domcontentloaded' });\n  finalStatus = resp2 ? resp2.status() : finalStatus;\n  await page.waitForTimeout(1500);\n  const initialBody = await page.locator('body').innerText();\n  log('Navigated to Marketing > Reviews grid showing review records and created date filter.');\n  fs.appendFileSync(logPath, `Initial reviews summary: ${(initialBody.match(/(\\d+) records found/)||[])[1] || 'unknown'} records found before filtering.\\n`);\n  await shot(page, 'reviews_grid_before_filter');\n\n  await page.fill('input[name=\"created_at[from]\"]', '5/1/2023');\n  await page.fill('input[name=\"created_at[to]\"]', '5/31/2023');\n  log('Applied exact Created date filter from 5/1/2023 to 5/31/2023 for May 2023 reviews.');\n  await shot(page, 'may_2023_filter_filled');\n  await page.getByRole('button', { name: 'Search' }).click();\n  await page.waitForLoadState('networkidle');\n  await page.waitForTimeout(1000);\n  const filteredBody = await page.locator('body').innerText();\n  const countMatch = filteredBody.match(/(\\d+) records found/);\n  const count = countMatch ? Number(countMatch[1]) : null;\n  const answer = String(count ?? 0);\n  fs.appendFileSync(logPath, `Filtered reviews summary: ${count === null ? 'unknown' : count} records found for May 2023.\\n`);\n  log(`Determined the shop received ${answer} reviews in May 2023 from the filtered review grid.`);\n  await shot(page, 'may_2023_filtered_result');\n\n  fs.writeFileSync(path.join(workspace, 'agent_response.json'), JSON.stringify({ task_type: 'RETRIEVE', status: 'SUCCESS', retrieved_data: [answer], error_details: null }));\n  fs.appendFileSync(logPath, `Final answer written to agent_response.json: ${answer}\\n`);\n  fs.writeFileSync(path.join(workspace, 'final_state.html'), await page.content());\n  fs.writeFileSync(path.join(workspace, 'final_state.json'), JSON.stringify({ final_url: page.url(), html_path: 'final_state.html', document_status: finalStatus, answer }));\n  fs.appendFileSync(logPath, `Final state saved with URL ${page.url()} and answer ${answer}.\\n`);\n\n  fs.copyFileSync(path.join(workspace, 'final_script.py'), path.join(runDir, 'final_script.py'));\n  await browser.close();\n})();\n",
+      "record_path": "/home/t-demiwang/project/Code-Web-Skills/external/webwright-webarena-infra/evals/webarena/primitive_rt_v1_official_train_results/shopping_admin/task348_scratch.json"
+    }
+  ],
+  "extractions": [
+    {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task210_t364::find_customers_by_phone_from_customer_grid_text",
+          "proposed_method": "find_customers_by_phone_from_customer_grid_text",
+          "capability": "Locate customer records on the shopping admin Customers grid by matching an exact phone number in rendered page text and return typed customer details.",
+          "owns": [
+            "Navigate to the shopping admin customer grid page after authentication",
+            "Read rendered page text from the customer grid",
+            "Parse matching customer row information from the displayed grid text using the site's stable row semantics as demonstrated",
+            "Return typed customer records containing customer name, email, and matched phone number when a displayed match is found"
+          ],
+          "does_not_own": [
+            "Choosing the target phone number for a particular task",
+            "Proving absence beyond the currently displayed customer grid contents",
+            "General customer search/filter interactions not shown in the workflow",
+            "Returning raw DOM or full page text to the caller",
+            "Ranking or selecting among multiple matches beyond exact phone equality"
+          ],
+          "input_contract": {
+            "type": "object",
+            "properties": {
+              "phone_number": {
+                "type": "string",
+                "description": "Exact phone number to match in the rendered Customers grid text."
+              }
+            },
+            "required": [
+              "phone_number"
+            ]
+          },
+          "output_contract": {
+            "type": "object",
+            "properties": {
+              "customers": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "email": {
+                      "type": "string"
+                    },
+                    "phone_number": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "email",
+                    "phone_number"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "customers"
+            ]
+          },
+          "guarantees": {
+            "collection_scope": "page",
+            "completeness": "partial",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "If a displayed customer row contains the exact requested phone number in the demonstrated grid text pattern, the returned record includes the adjacent parsed name and email from that same row.",
+            "If no displayed row on the loaded Customers grid matches the requested phone number, the method returns an empty customers array rather than failing.",
+            "Each returned record's phone_number exactly equals the requested phone_number."
+          ],
+          "source_evidence": {
+            "workflow_id": "task210_t364",
+            "template_id": "364",
+            "code_quote": "resp = await page.goto('http://.../admin/customer/index/index', { waitUntil: 'domcontentloaded' });\n...\nconst text = await page.locator('body').innerText();\nconst normalized = text.replace(/\\s+/g, ' ');\nconst match = normalized.match(/([A-Z][a-z]+ [A-Z][a-z]+)\\s+([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,})\\s+General\\s+2065555555\\b/);\n...\nanswerList = [{ name, email, phone: '2065555555' }];",
+            "explanation": "The workflow demonstrates a site-specific read capability on the shopping admin Customers grid: load the customer listing page, acquire rendered page text, and parse a customer record keyed by an exact phone number. The hard-coded phone number is generalized into an input parameter. The task-specific final response formatting is removed, while the typed extracted fields actually demonstrated at the acquisition boundary—name, email, and phone number—are preserved. Because the code only inspects one rendered grid page and does not paginate or use site search/filter controls, the result is page-scoped and partial.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        }
+      ]
+    },
+    {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task209_t364::filter_customers_by_billing_phone_in_admin_grid",
+          "proposed_method": "filter_customers_by_billing_phone_in_admin_grid",
+          "capability": "Filter the Magento admin customer grid by billing phone number and return typed customer rows visible in the filtered result set.",
+          "owns": [
+            "Navigating to the Magento admin customers grid",
+            "Authenticating to the admin site when a login form is presented",
+            "Clearing saved active customer filters in the grid when the UI exposes a Clear all control",
+            "Opening the Filters panel if needed",
+            "Filling the billing telephone filter field",
+            "Applying the filter through the site UI",
+            "Reading visible grid rows and parsing row text into typed customer records with name, email, and matched phone"
+          ],
+          "does_not_own": [
+            "Choosing which phone number to search for",
+            "Ranking or selecting among multiple returned customers beyond preserving visible row order",
+            "Proving site-wide absence beyond the currently acquired filtered grid result slice",
+            "Returning raw DOM or page text without parsing"
+          ],
+          "input_contract": {
+            "type": "object",
+            "properties": {
+              "billing_phone": {
+                "type": "string",
+                "description": "Phone number to enter into the customer grid billing telephone filter."
+              }
+            },
+            "required": [
+              "billing_phone"
+            ]
+          },
+          "output_contract": {
+            "type": "object",
+            "properties": {
+              "customers": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "email": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "billing_phone": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "email",
+                    "billing_phone"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "customers"
+            ]
+          },
+          "guarantees": {
+            "collection_scope": "query",
+            "completeness": "conditional",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "After execution, the browser is on the admin customer grid and the billing telephone filter has been applied for the caller-supplied phone value.",
+            "Each returned record corresponds to a visible grid row from the filtered result set and carries the queried billing_phone value.",
+            "If no visible rows remain after filtering, the primitive returns an empty customers array rather than failing solely because no match was found."
+          ],
+          "source_evidence": {
+            "workflow_id": "task209_t364",
+            "template_id": "364",
+            "code_quote": "await page.goto(CUSTOMERS_URL, wait_until='domcontentloaded') ... if await page.get_by_role('button', name='Clear all').count(): await page.get_by_role('button', name='Clear all').click() ... phone_input = page.locator('input[name=\"billing_telephone\"]:visible')\nawait phone_input.fill(PHONE)\n... await page.get_by_role('button', name='Apply Filters').click()\n... rows = await page.locator('tbody tr').evaluate_all(\"rows => rows.map(r => (r.innerText||'').trim()).filter(t => t)\")\nmatching = [r for r in rows if PHONE in r]\n... parts = [p for p in matching[0].split('\\t') if p.strip()]\nname = parts[0].strip() if len(parts) > 0 else None\nemail = parts[1].strip() if len(parts) > 1 else None",
+            "explanation": "The workflow demonstrates a reusable site operation on the shopping_admin deployment: use the Magento customers grid's built-in billing telephone filter to retrieve customer row data. Hard-coded values were generalized by parameterizing the phone input. The workflow also shows site-specific setup steps needed for reliable acquisition: optional login, navigating directly to the customers grid, optional clearing of persisted filters, opening filters, applying the billing telephone criterion, and parsing the resulting grid row text into typed customer records rather than returning raw page text.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        }
+      ]
+    },
+    {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task187_t368::list_catalog_products_by_quantity_range_from_admin_grid",
+          "proposed_method": "list_catalog_products_by_quantity_range_from_admin_grid",
+          "capability": "Retrieve product records from the shopping admin catalog products grid filtered by inventory quantity range.",
+          "owns": [
+            "Navigate to the shopping admin catalog product grid page",
+            "Authenticate to the admin site when the login form is presented",
+            "Open the grid's Filters UI and populate the quantity range filter fields",
+            "Apply the site filter and wait for filtered grid results",
+            "Parse typed product records from the rendered grid table, including stable displayed fields demonstrated by the workflow",
+            "Return the records visible in the filtered grid page"
+          ],
+          "does_not_own": [
+            "Choosing the business-relevant quantity range for a particular task",
+            "Further post-filtering rows client-side beyond the site filter",
+            "Reducing records to only SKU values",
+            "Proving that no matching products exist outside the currently acquired grid page",
+            "Cross-page pagination traversal or full-result exhaustion"
+          ],
+          "input_contract": {
+            "type": "object",
+            "properties": {
+              "page": {
+                "description": "Playwright page object bound to the shopping admin site session"
+              },
+              "quantity_from": {
+                "type": "number",
+                "description": "Inclusive lower bound for the quantity filter"
+              },
+              "quantity_to": {
+                "type": "number",
+                "description": "Inclusive upper bound for the quantity filter"
+              }
+            },
+            "required": [
+              "page",
+              "quantity_from",
+              "quantity_to"
+            ]
+          },
+          "output_contract": {
+            "type": "object",
+            "properties": {
+              "records": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "sku": {
+                      "type": "string"
+                    },
+                    "quantity": {
+                      "type": "string",
+                      "description": "Quantity text as displayed in the grid"
+                    },
+                    "salable": {
+                      "type": "string",
+                      "description": "Salable quantity text as displayed in the grid"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "sku",
+                    "quantity",
+                    "salable"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "records"
+            ]
+          },
+          "guarantees": {
+            "collection_scope": "page",
+            "completeness": "partial",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "After applying the filters, the page contains a product grid table and the primitive returns one typed record per parsed grid row, each with non-empty sku and quantity fields.",
+            "If the filtered grid shows no rows on the acquired page, the primitive returns an empty records array rather than failing.",
+            "Returned records reflect the quantity range that was submitted through the site's qty[from] and qty[to] filter controls on the admin products grid."
+          ],
+          "source_evidence": {
+            "workflow_id": "task187_t368",
+            "template_id": "368",
+            "code_quote": "await page.goto('http://.../admin/catalog/product/', wait_until='domcontentloaded')\nawait page.get_by_role('button', name='Filters').first.click()\nawait page.locator('input[name=\"qty[from]\"]').fill('1')\nawait page.locator('input[name=\"qty[to]\"]').fill('3')\nawait page.get_by_role('button', name='Apply Filters').click()\n...\nfor (const tr of Array.from(grid.querySelectorAll('tr'))) {\n  const tds = Array.from(tr.querySelectorAll('td')).map(td => (td.innerText || td.textContent || '').trim());\n  if (tds.length >= 15 && tds[6] && tds[8]) {\n    rows.push({name: tds[3], sku: tds[6], quantity: tds[8], salable: tds[9]});\n  }\n}",
+            "explanation": "The workflow demonstrates a reusable site-local operation on the shopping admin deployment: using the catalog products grid's built-in quantity range filters and parsing typed product records from the resulting table. Hard-coded bounds 1 and 3 are task parameters and can be generalized to caller-supplied quantity_from and quantity_to. The workflow also logs in if needed before reaching the admin grid, so session establishment is part of the site mechanism. The extraction boundary is the currently rendered filtered grid page only; there is no pagination handling, so completeness is partial and page-scoped.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        }
+      ]
+    },
+    {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task348_t248::count_reviews_by_created_date_range",
+          "proposed_method": "count_reviews_by_created_date_range",
+          "capability": "Get the review-grid record count after applying a created-date range filter in the shopping admin reviews page.",
+          "owns": [
+            "Navigate to the shopping admin product reviews grid",
+            "Use admin-session-authenticated page access to the reviews grid",
+            "Fill the grid's created date from/to filter inputs",
+            "Submit the grid search",
+            "Read and parse the displayed '<n> records found' summary from the page into a numeric count"
+          ],
+          "does_not_own": [
+            "Choosing the business period of interest such as May 2023",
+            "Aggregating counts across multiple separate filter runs",
+            "Interpreting the count beyond the grid result size",
+            "Returning raw page text or DOM"
+          ],
+          "input_contract": {
+            "type": "object",
+            "properties": {
+              "start_date": {
+                "type": "string",
+                "description": "Start of created-date filter in the admin UI's accepted format, as demonstrated by values like '5/1/2023'."
+              },
+              "end_date": {
+                "type": "string",
+                "description": "End of created-date filter in the admin UI's accepted format, as demonstrated by values like '5/31/2023'."
+              }
+            },
+            "required": [
+              "start_date",
+              "end_date"
+            ]
+          },
+          "output_contract": {
+            "type": "object",
+            "properties": {
+              "record_count": {
+                "type": "integer",
+                "description": "Numeric count parsed from the reviews grid summary after filtering."
+              },
+              "applied_filters": {
+                "type": "object",
+                "properties": {
+                  "start_date": {
+                    "type": "string"
+                  },
+                  "end_date": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "start_date",
+                  "end_date"
+                ]
+              },
+              "source_page": {
+                "type": "string",
+                "description": "Reviews grid URL used for the query."
+              }
+            },
+            "required": [
+              "record_count",
+              "applied_filters",
+              "source_page"
+            ]
+          },
+          "guarantees": {
+            "collection_scope": "query",
+            "completeness": "conditional",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "After submitting the search, the reviews grid page remains loaded and exposes a summary matching /\\d+ records found/.",
+            "The returned record_count equals the integer parsed from the post-filter page summary, not a pre-filter value.",
+            "If the summary shows '0 records found', the method returns record_count: 0 rather than treating it as an acquisition failure."
+          ],
+          "source_evidence": {
+            "workflow_id": "task348_t248",
+            "template_id": "248",
+            "code_quote": "await page.goto('http://.../admin/review/product/index/', { waitUntil: 'domcontentloaded' });\nawait page.fill('input[name=\"created_at[from]\"]', '5/1/2023');\nawait page.fill('input[name=\"created_at[to]\"]', '5/31/2023');\nawait page.getByRole('button', { name: 'Search' }).click();\n...\nconst filteredBody = await page.locator('body').innerText();\nconst countMatch = filteredBody.match(/(\\d+) records found/);\nconst count = countMatch ? Number(countMatch[1]) : null;",
+            "explanation": "The workflow demonstrates a reusable site operation on the Magento admin reviews grid: parameterizing the created-date range, executing the grid search, and parsing the resulting record count from the page summary. The task-specific choice of May 2023 was generalized into caller-supplied start and end dates.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        }
+      ]
+    }
+  ],
+  "catalog_index": [],
+  "retrieved_primitives": []
+}

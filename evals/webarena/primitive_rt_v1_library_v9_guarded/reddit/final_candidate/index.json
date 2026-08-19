@@ -1,0 +1,585 @@
+{
+  "schema_version": 1,
+  "status": "candidate",
+  "approved": false,
+  "site": "reddit",
+  "root_class": "RedditSite",
+  "primitives": [
+    {
+      "primitive_id": "reddit/forums/list_forum_new_posts",
+      "method": "list_forum_new_posts",
+      "capability": "Retrieve the posts shown on a Reddit forum's /new listing page in displayed order, including stable post URL and displayed author username, plus displayed post title when available from the rendered listing structure.",
+      "method_code": "def list_forum_new_posts(self, forum_name: str, max_items: int = 20):\n    import re\n    from urllib.parse import urljoin\n\n    if not isinstance(forum_name, str) or not forum_name.strip():\n        raise ValueError(\"forum_name must be a non-empty string\")\n    if not isinstance(max_items, int) or max_items < 1:\n        raise ValueError(\"max_items must be a positive integer\")\n\n    forum_name = forum_name.strip()\n    response = self.page.goto(f\"/f/{forum_name}/new\", wait_until=\"domcontentloaded\")\n    document_status = response.status if response else None\n\n    posts = []\n    seen_urls = set()\n\n    submission_cards = self.page.locator(\"article.submission\")\n    card_count = submission_cards.count()\n\n    if card_count > 0:\n        limit = min(card_count, max_items)\n        for i in range(limit):\n            card = submission_cards.nth(i)\n            title_locator = card.locator(\"a.submission__link\").first\n            author_locator = card.locator(\"a.submission__submitter\").first\n\n            href = title_locator.get_attribute(\"href\") if title_locator.count() else None\n            title = title_locator.inner_text().strip() if title_locator.count() else None\n            author_username = author_locator.inner_text().strip() if author_locator.count() else None\n\n            if not href or not author_username:\n                continue\n\n            post_url = urljoin(self.page.url, href)\n            if post_url in seen_urls:\n                continue\n            seen_urls.add(post_url)\n\n            posts.append({\n                \"rank_on_page\": len(posts) + 1,\n                \"post_url\": post_url,\n                \"author_username\": author_username,\n                \"title\": title if title else None,\n            })\n    else:\n        body_text = self.page.locator(\"body\").inner_text()\n        author_matches = re.findall(r\"Submitted by ([^\\s]+) \", body_text)\n        hrefs = self.page.locator(\"a\").evaluate_all(\"els => els.map(e => e.href)\")\n        matched_urls = []\n        for href in hrefs:\n            if href and re.search(rf\"/f/{re.escape(forum_name)}/\\d+/\", href):\n                if href not in seen_urls:\n                    seen_urls.add(href)\n                    matched_urls.append(href)\n        for idx, post_url in enumerate(matched_urls[:max_items]):\n            author_username = author_matches[idx] if idx < len(author_matches) else None\n            if not author_username:\n                continue\n            posts.append({\n                \"rank_on_page\": len(posts) + 1,\n                \"post_url\": post_url,\n                \"author_username\": author_username,\n                \"title\": None,\n            })\n\n    return {\n        \"forum_name\": forum_name,\n        \"listing_url\": self.page.url,\n        \"ordering\": \"new\",\n        \"document_status\": document_status,\n        \"posts\": posts,\n    }\n",
+      "owns": [
+        "Navigate to a specified Reddit forum's /new listing page",
+        "Read the rendered listing page",
+        "Extract displayed post URLs for posts shown on that /new page",
+        "Extract displayed author usernames associated with shown posts",
+        "Extract displayed post title when the rendered listing structure exposes it",
+        "Preserve the displayed order of posts on the listing page",
+        "Return typed listing records for the acquired page slice"
+      ],
+      "does_not_own": [
+        "Choosing which forum to inspect for a task",
+        "Interpreting 'latest' beyond the site's displayed /new ordering",
+        "Selecting one post from the returned list for task logic",
+        "Ranking, filtering, or semantic relevance decisions beyond the site's displayed order",
+        "Answer formatting"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "forum_name": {
+            "type": "string",
+            "description": "Forum/community name segment, for example 'space' or 'Showerthoughts'."
+          },
+          "max_items": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Maximum number of displayed posts to return from the loaded /new listing page."
+          }
+        },
+        "required": [
+          "forum_name"
+        ]
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "forum_name": {
+            "type": "string"
+          },
+          "listing_url": {
+            "type": "string",
+            "description": "Resolved URL of the visited /new listing page."
+          },
+          "ordering": {
+            "type": "string",
+            "enum": [
+              "new"
+            ]
+          },
+          "document_status": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "posts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "rank_on_page": {
+                  "type": "integer",
+                  "description": "1-based display order on the loaded page."
+                },
+                "post_url": {
+                  "type": "string",
+                  "description": "Absolute URL of the post detail page."
+                },
+                "author_username": {
+                  "type": "string",
+                  "description": "Displayed submitter username for the post."
+                },
+                "title": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Displayed post title when available from the rendered listing structure; null when the demonstrated fallback path cannot recover it."
+                }
+              },
+              "required": [
+                "rank_on_page",
+                "post_url",
+                "author_username",
+                "title"
+              ]
+            }
+          }
+        },
+        "required": [
+          "forum_name",
+          "listing_url",
+          "ordering",
+          "document_status",
+          "posts"
+        ]
+      },
+      "requires": [],
+      "provides": [
+        "reddit.forum_listing.new_page_loaded"
+      ],
+      "supported_patterns": [
+        "Read a forum's /new page and let the workflow take the first returned post as the latest shown item",
+        "Acquire multiple displayed posts in page order from the rendered New listing",
+        "Use rendered submission cards when available, with fallback to demonstrated page-text/link parsing for the same listing route"
+      ],
+      "guarantees": {
+        "collection_scope": "page",
+        "completeness": "partial",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "none",
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "Returned listing_url resolves to the forum's /new listing page for the requested forum_name",
+        "Returned posts are in displayed page order and contain no duplicate post_url values",
+        "Every returned record has a non-empty author_username and absolute post_url",
+        "Returned title is non-null only when extracted from rendered listing structure; fallback-derived records may return title as null",
+        "The method returns at most max_items records from the loaded page and does not fabricate unseen posts"
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task30_t33",
+          "template_id": "33",
+          "code_quote": "await page.goto(BASE + '/f/space/new', wait_until='domcontentloaded')\nbody_text = await page.locator('body').inner_text()\nm = re.search(r'Submitted by ([^\\\\s]+) ', body_text)\nhrefs = await page.locator('a').evaluate_all(\"els => els.map(e => e.href)\")\nmatches = [h for h in hrefs if re.search(r'/f/space/\\\\d+/', h)]\nlatest_author = m.group(1).strip()\nlatest_post_link = matches[0]",
+          "explanation": "Generalized the demonstrated /f/{forum}/new acquisition from hard-coded forum 'space' to a parameterized forum_name and preserved the page-scoped displayed-order semantics. This evidence supports post URL and author extraction, but not reliable title extraction on the fallback path.",
+          "evidence_match_mode": "attributed_nonverbatim"
+        },
+        {
+          "workflow_id": "task27_t33",
+          "template_id": "33",
+          "code_quote": "await page.goto(BASE + '/f/Showerthoughts/new', wait_until='domcontentloaded')\nfirst_submission = page.locator('article.submission').first\nfirst_title = first_submission.locator('a.submission__link').first\nlatest_title = (await first_title.inner_text()).strip()\nlatest_href = await first_title.get_attribute('href')\nlatest_author = (await first_submission.locator('a.submission__submitter').first.inner_text()).strip()",
+          "explanation": "Generalized the submission-card extraction on a /new listing into an ordered page-listing primitive that returns stable displayed fields for each shown post, including title when the structured card selectors are present.",
+          "evidence_match_mode": "attributed_nonverbatim"
+        }
+      ],
+      "feature": "forums"
+    },
+    {
+      "primitive_id": "reddit/users/get_user_comments_page_state",
+      "method": "get_user_comments_page_state",
+      "capability": "Retrieve a Reddit user's comments page state, including whether the page explicitly shows the site's no-entries empty state.",
+      "method_code": "def get_user_comments_page_state(self, username: str):\n    if not isinstance(username, str) or not username.strip():\n        raise ValueError(\"username must be a non-empty string\")\n\n    username = username.strip()\n    response = self.page.goto(f\"/user/{username}/comments\", wait_until=\"domcontentloaded\")\n    document_status = response.status if response else None\n    body_text = self.page.locator(\"body\").inner_text()\n\n    empty_state_message = \"There are no entries to display.\"\n    is_explicitly_empty = empty_state_message in body_text\n\n    return {\n        \"username\": username,\n        \"comments_url\": self.page.url,\n        \"document_status\": document_status,\n        \"is_explicitly_empty\": is_explicitly_empty,\n        \"empty_state_message\": empty_state_message if is_explicitly_empty else None,\n    }\n",
+      "owns": [
+        "Navigate to a specified Reddit user's /comments page",
+        "Acquire the rendered page body text and page URL/status context",
+        "Detect the explicit site empty-state message on the comments page",
+        "Return typed page-state metadata for that user comments page"
+      ],
+      "does_not_own": [
+        "Parsing individual comment records when comments exist",
+        "Counting comments with specific vote properties",
+        "Inferring anything beyond the single loaded comments page",
+        "Task-specific choice of which username to inspect",
+        "Answer formatting"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string",
+            "description": "Reddit username whose /comments page should be inspected."
+          }
+        },
+        "required": [
+          "username"
+        ]
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string"
+          },
+          "comments_url": {
+            "type": "string",
+            "description": "Resolved URL of the visited /user/{username}/comments page."
+          },
+          "document_status": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "is_explicitly_empty": {
+            "type": "boolean",
+            "description": "True only when the page displays the site's explicit no-entries message."
+          },
+          "empty_state_message": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The explicit empty-state message when present; otherwise null."
+          }
+        },
+        "required": [
+          "username",
+          "comments_url",
+          "document_status",
+          "is_explicitly_empty",
+          "empty_state_message"
+        ]
+      },
+      "requires": [],
+      "provides": [
+        "reddit.user_comments_page.loaded"
+      ],
+      "supported_patterns": [
+        "Detect whether a user's comments page explicitly states there are no entries to display",
+        "Return page-level emptiness metadata without parsing comment rows",
+        "Use the result as workflow input for later counting or branching logic"
+      ],
+      "guarantees": {
+        "collection_scope": "page",
+        "completeness": "conditional",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "none",
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "Returned comments_url resolves to /user/{username}/comments for the requested username",
+        "Returned is_explicitly_empty is true only when the exact site message 'There are no entries to display.' is observed in rendered body text",
+        "A successful non-empty result does not invent comment records or vote fields",
+        "A successful empty result remains distinguishable from navigation failure through a loaded page and returned document_status"
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task30_t33",
+          "template_id": "33",
+          "code_quote": "comments_response = await page.goto(BASE + author_href + '/comments', wait_until='domcontentloaded')\ncomments_text = await page.locator('body').inner_text()\nno_entries = 'There are no entries to display.' in comments_text",
+          "explanation": "Generalized the demonstrated author comments-page inspection into a reusable user-parameterized page-state primitive limited to explicit empty-state detection.",
+          "evidence_match_mode": "exact"
+        },
+        {
+          "workflow_id": "task27_t33",
+          "template_id": "33",
+          "code_quote": "resp = await page.goto(BASE + f'/user/{latest_author}/comments', wait_until='domcontentloaded')\nbody_text = await page.locator('body').inner_text()\nno_entries = 'There are no entries to display.' in body_text",
+          "explanation": "Confirms the same reusable comments-page empty-state detection pattern on another forum/user workflow, supporting a shared primitive.",
+          "evidence_match_mode": "attributed_nonverbatim"
+        }
+      ],
+      "feature": "users"
+    },
+    {
+      "primitive_id": "reddit/forums/list_forum_top_posts",
+      "method": "list_forum_top_posts",
+      "capability": "Retrieve the posts shown on a Reddit forum's top listing page in displayed order, including stable post title and post URL.",
+      "method_code": "def list_forum_top_posts(self, forum_name: str, time_filter: str = \"all\", max_items: int = 10):\n    import re\n    from urllib.parse import urljoin\n\n    if not isinstance(forum_name, str) or not forum_name.strip():\n        raise ValueError(\"forum_name must be a non-empty string\")\n    if time_filter not in {\"all\"}:\n        raise ValueError(\"time_filter must be one of: all\")\n    if not isinstance(max_items, int) or max_items < 1:\n        raise ValueError(\"max_items must be a positive integer\")\n\n    forum_name = forum_name.strip()\n    response = self.page.goto(f\"/f/{forum_name}/top?t={time_filter}\", wait_until=\"domcontentloaded\")\n    document_status = response.status if response else None\n\n    posts = []\n    seen_urls = set()\n\n    submission_cards = self.page.locator(\"article.submission\")\n    card_count = submission_cards.count()\n    if card_count > 0:\n        limit = min(card_count, max_items)\n        for i in range(limit):\n            card = submission_cards.nth(i)\n            title_locator = card.locator(\"a.submission__link\").first\n            href = title_locator.get_attribute(\"href\") if title_locator.count() else None\n            title = title_locator.inner_text().strip() if title_locator.count() else \"\"\n            if not href or not title:\n                continue\n            post_url = urljoin(self.page.url, href)\n            if post_url in seen_urls:\n                continue\n            seen_urls.add(post_url)\n            posts.append({\n                \"rank_on_page\": len(posts) + 1,\n                \"title\": title,\n                \"post_url\": post_url,\n            })\n    else:\n        body_text = self.page.locator(\"body\").inner_text()\n        lines = [ln.strip() for ln in body_text.splitlines()]\n        href_pairs = self.page.locator(\"a\").evaluate_all(\"els => els.map(e => ({href: e.href, text: (e.innerText || '').trim()}))\")\n        title_to_url = {}\n        for item in href_pairs:\n            href = item.get(\"href\")\n            text = item.get(\"text\")\n            if href and text and re.search(rf\"/f/{re.escape(forum_name)}/\\d+/\", href) and text not in title_to_url:\n                title_to_url[text] = href\n\n        skip = {\n            \"Jump to main content\", \"Jump to sidebar\", \"Postmill\", \"Forums\", \"Wiki\", \"Log in\", \"Sign up\",\n            f\"/f/{forum_name}\", \"Submissions\", \"Comments\", \"Top\", \"All time\", \"More\", forum_name,\n            \"Subscribe via RSS\", \"Toolbox\", \"Bans\", \"Moderation log\", \"Running Postmill\"\n        }\n\n        for i, line in enumerate(lines):\n            if len(posts) >= max_items:\n                break\n            if not line or line in skip:\n                continue\n            if i + 4 < len(lines) and lines[i + 2].startswith(\"Submitted by \") and re.fullmatch(r\"\\d+ comments\", lines[i + 4]):\n                title = line\n                post_url = title_to_url.get(title)\n                if not post_url or post_url in seen_urls:\n                    continue\n                seen_urls.add(post_url)\n                posts.append({\n                    \"rank_on_page\": len(posts) + 1,\n                    \"title\": title,\n                    \"post_url\": post_url,\n                })\n\n    return {\n        \"forum_name\": forum_name,\n        \"time_filter\": time_filter,\n        \"listing_url\": self.page.url,\n        \"document_status\": document_status,\n        \"posts\": posts,\n    }\n",
+      "owns": [
+        "Navigate to a specified Reddit forum's top listing page with a supported time filter",
+        "Read the rendered top-listing page",
+        "Extract repeated displayed post titles and stable post URLs from the loaded page",
+        "Preserve displayed rank order on the page",
+        "Return typed post records for the loaded page slice"
+      ],
+      "does_not_own": [
+        "Choosing which forum or time filter to inspect for a task beyond the supported parameter",
+        "Semantic relevance judgments about post topics",
+        "Opening a selected post and interpreting its contents",
+        "Aggregation, ranking, or final answer formatting outside the loaded page slice"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "forum_name": {
+            "type": "string",
+            "description": "Forum/community name segment, for example 'books'."
+          },
+          "time_filter": {
+            "type": "string",
+            "enum": [
+              "all"
+            ],
+            "description": "Supported top-listing time filter demonstrated by source workflows."
+          },
+          "max_items": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Maximum number of displayed posts to return from the loaded top listing page."
+          }
+        },
+        "required": [
+          "forum_name"
+        ]
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "forum_name": {
+            "type": "string"
+          },
+          "time_filter": {
+            "type": "string",
+            "enum": [
+              "all"
+            ]
+          },
+          "listing_url": {
+            "type": "string",
+            "description": "Resolved URL of the visited /top listing page."
+          },
+          "document_status": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "posts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "rank_on_page": {
+                  "type": "integer",
+                  "description": "1-based display order on the loaded page."
+                },
+                "title": {
+                  "type": "string"
+                },
+                "post_url": {
+                  "type": "string",
+                  "description": "Absolute URL of the post detail page."
+                }
+              },
+              "required": [
+                "rank_on_page",
+                "title",
+                "post_url"
+              ]
+            }
+          }
+        },
+        "required": [
+          "forum_name",
+          "time_filter",
+          "listing_url",
+          "document_status",
+          "posts"
+        ]
+      },
+      "requires": [],
+      "provides": [
+        "reddit.forum_listing.top_page_loaded"
+      ],
+      "supported_patterns": [
+        "Acquire the top N displayed posts from a forum's /top page using the demonstrated all-time filter",
+        "Use rendered submission cards when available, with fallback to demonstrated body-text parsing of repeated listing structure",
+        "Let workflows inspect returned titles to choose posts of interest"
+      ],
+      "guarantees": {
+        "collection_scope": "page",
+        "completeness": "partial",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "semantic_enum",
+          "supported_values": [
+            "all"
+          ],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "Returned listing_url resolves to /f/{forum_name}/top?t={time_filter} for a supported time_filter",
+        "Returns at most max_items records in displayed page order without duplicate post_url values",
+        "Each returned record has a non-empty title and absolute post_url on the same site",
+        "The method does not claim forum-wide completeness beyond the loaded top-listing page slice",
+        "If fewer than max_items parsable records are present on the loaded page, the method returns only the observed subset"
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task69_t17",
+          "template_id": "17",
+          "code_quote": "resp = await page.goto(f\"{BASE_URL}/f/books/top?t=all\", wait_until=\"domcontentloaded\")\nbody_text = await page.locator(\"body\").inner_text()\nif i + 4 < len(lines) and lines[i+2].startswith(\"Submitted by \") and re.fullmatch(r\"\\d+ comments\", lines[i+4]):\n    title = line\n    top10.append({\"rank\": len(top10)+1, \"title\": title, \"score\": score})",
+          "explanation": "Generalized the demonstrated /f/books/top?t=all page-text parsing into a reusable forum_name/time_filter/max_items listing primitive while retaining only the consistently supported typed fields title and page-order rank, plus linked post URL.",
+          "evidence_match_mode": "attributed_nonverbatim"
+        },
+        {
+          "workflow_id": "task67_t17",
+          "template_id": "17",
+          "code_quote": "for href, inner in re.findall(r'<a[^>]+href=[\"\\'](/f/books/\\d+/[^\"\\']+)[\"\\'][^>]*>(.*?)</a>', forum_html, re.I|re.S):\n    title=' '.join(html.unescape(re.sub(r'<[^>]+>',' ',inner)).split())\n    if href in seen: continue\n    posts.append({'title': title, 'url': urljoin(BASE, href)})\n    if len(posts) >= 10: break",
+          "explanation": "Provides corroborating evidence that forum listing pages expose stable repeated post links and titles in page order; those are preserved as the public typed output without overclaiming additional fields not consistently demonstrated.",
+          "evidence_match_mode": "attributed_nonverbatim"
+        }
+      ],
+      "feature": "forums"
+    },
+    {
+      "primitive_id": "reddit/posts/open_post_from_listing_by_title",
+      "method": "open_post_from_listing_by_title",
+      "capability": "Open a Reddit post from the current listing page by its displayed link title and return the destination post URL.",
+      "method_code": "def open_post_from_listing_by_title(self, link_title: str):\n    if not isinstance(link_title, str) or not link_title.strip():\n        raise ValueError(\"link_title must be a non-empty string\")\n\n    link_title = link_title.strip()\n    source_url = self.page.url\n    target = self.page.get_by_role(\"link\", name=link_title).first\n    if target.count() == 0:\n        raise ValueError(\"No matching post link found on the current page\")\n\n    target.click()\n    self.page.wait_for_load_state(\"domcontentloaded\")\n\n    return {\n        \"source_listing_url\": source_url,\n        \"selected_link_title\": link_title,\n        \"post_url\": self.page.url,\n    }\n",
+      "owns": [
+        "Locate a Reddit post link on the current rendered listing page by visible link title",
+        "Navigate to the selected post page by clicking that link",
+        "Return typed navigation facts for the opened destination"
+      ],
+      "does_not_own": [
+        "Determining which title should be selected for a task",
+        "Extracting entities, organizations, or semantic meaning from the destination page",
+        "Returning arbitrary page text or HTML from the destination page"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "link_title": {
+            "type": "string",
+            "description": "Exact visible post-link title to open from the current Reddit page context."
+          }
+        },
+        "required": [
+          "link_title"
+        ]
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "source_listing_url": {
+            "type": "string",
+            "description": "URL of the page from which the link was selected."
+          },
+          "selected_link_title": {
+            "type": "string",
+            "description": "Visible link title used for selection."
+          },
+          "post_url": {
+            "type": "string",
+            "description": "Resolved URL of the opened post page."
+          }
+        },
+        "required": [
+          "source_listing_url",
+          "selected_link_title",
+          "post_url"
+        ]
+      },
+      "requires": [
+        "reddit.forum_listing.top_page_loaded|reddit.forum_listing.new_page_loaded"
+      ],
+      "provides": [
+        "reddit.post_page.loaded"
+      ],
+      "supported_patterns": [
+        "After loading a Reddit listing page, open one displayed post by its visible title",
+        "Use typed navigation output to let the workflow perform later page-specific extraction"
+      ],
+      "guarantees": {
+        "collection_scope": "single",
+        "completeness": "conditional",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "none",
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "On success, returned selected_link_title equals the requested link_title",
+        "Returned post_url is the resolved destination URL after clicking the matching link",
+        "If no matching visible link is present on the current page, the method fails distinctly rather than opening an unrelated page"
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task69_t17",
+          "template_id": "17",
+          "code_quote": "target = page.get_by_role(\"link\", name=\"Friendly reminder bookshop.org exists.\")\nawait target.first.click()\nawait page.wait_for_load_state(\"domcontentloaded\")",
+          "explanation": "Narrowed the evidenced core from the candidate's boundary-defective raw page-text return to a typed navigation primitive: select a displayed post link by visible title on a Reddit listing page and open its destination.",
+          "evidence_match_mode": "attributed_nonverbatim"
+        }
+      ],
+      "feature": "posts"
+    },
+    {
+      "primitive_id": "reddit/posts/load_post_page",
+      "method": "load_post_page",
+      "capability": "Load a Reddit post detail page by URL and return page-level fetch facts for the reached post page.",
+      "method_code": "def load_post_page(self, post_url: str):\n    if not isinstance(post_url, str) or not post_url.strip():\n        raise ValueError(\"post_url must be a non-empty string\")\n\n    post_url = post_url.strip()\n    response = self.page.goto(post_url, wait_until=\"domcontentloaded\")\n    document_status = response.status if response else None\n    final_url = self.page.url\n    page_title = self.page.title()\n\n    return {\n        \"requested_post_url\": post_url,\n        \"final_url\": final_url,\n        \"document_status\": document_status,\n        \"page_title\": page_title,\n    }\n",
+      "owns": [
+        "Navigate to a specific Reddit post detail URL",
+        "Wait for the post page to load",
+        "Return typed fetch facts about the reached page"
+      ],
+      "does_not_own": [
+        "Returning raw HTML, raw DOM, or arbitrary page text",
+        "Classifying the meaning of the post content",
+        "Extracting subjective recommendations or book names from prose"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "post_url": {
+            "type": "string",
+            "description": "Absolute URL of a Reddit post detail page on the site."
+          }
+        },
+        "required": [
+          "post_url"
+        ]
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "requested_post_url": {
+            "type": "string",
+            "description": "Input post URL requested by the caller."
+          },
+          "final_url": {
+            "type": "string",
+            "description": "Resolved URL after navigation."
+          },
+          "document_status": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "HTTP/document status returned by navigation when available."
+          },
+          "page_title": {
+            "type": "string",
+            "description": "Browser page title after the post page loads."
+          }
+        },
+        "required": [
+          "requested_post_url",
+          "final_url",
+          "document_status",
+          "page_title"
+        ]
+      },
+      "requires": [],
+      "provides": [
+        "reddit.post_page.loaded"
+      ],
+      "supported_patterns": [
+        "Open a known Reddit post detail URL and confirm the page loaded",
+        "Use typed page-load facts before later workflow-specific inspection"
+      ],
+      "guarantees": {
+        "collection_scope": "single",
+        "completeness": "conditional",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "none",
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "On success, returned requested_post_url equals the caller input",
+        "Returned final_url is the page URL after navigation completes",
+        "Returned page_title is a string observed from the loaded page",
+        "Navigation failure is surfaced distinctly from a successful load with sparse page content"
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task67_t17",
+          "template_id": "17",
+          "code_quote": "resp = session.get(post['url'], timeout=30)\nresp.raise_for_status()\nplain = to_plain(resp.text)",
+          "explanation": "Narrowed the evidenced reusable core from boundary-defective plain-text extraction to the stable site acquisition fact actually supported: loading a specific Reddit post URL successfully. The workflow proves direct post-URL fetch and successful page acquisition, but not a typed field schema from page contents beyond page-level load facts.",
+          "evidence_match_mode": "exact"
+        }
+      ],
+      "feature": "posts"
+    }
+  ],
+  "package_sha256": "sha256:599886b1b1cd8039f6e9ccb1ca156472c450b010fa305cce4bd4bb738925f1e9"
+}

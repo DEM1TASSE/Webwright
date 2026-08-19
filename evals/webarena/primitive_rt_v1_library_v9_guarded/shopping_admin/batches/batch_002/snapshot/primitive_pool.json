@@ -1,0 +1,293 @@
+[
+  {
+    "primitive_id": "shopping_admin/get_review_grid_record_count_by_status",
+    "method": "get_review_grid_record_count_by_status",
+    "capability": "retrieve the site-reported record count from the Magento admin product reviews grid after applying a review status filter",
+    "method_code": "def get_review_grid_record_count_by_status(self, status: str) -> dict:\n    import re\n\n    if not isinstance(status, str) or not status.strip():\n        raise ValueError(\"status must be a non-empty string\")\n    status = status.strip()\n\n    review_url = \"http://GCRSANDBOX410.redmond.corp.microsoft.com:7780/admin/review/product/index/\"\n    self.page.goto(review_url, wait_until=\"domcontentloaded\")\n    self.page.wait_for_load_state(\"networkidle\")\n\n    self.page.select_option(\"#reviewGrid_filter_status\", label=status)\n    self.page.get_by_role(\"button\", name=\"Search\").click()\n    self.page.wait_for_load_state(\"networkidle\")\n\n    summary_texts = self.page.locator(\".admin__data-grid-header .admin__control-support-text\").all_inner_texts()\n    summary_text = \" | \".join(t.strip() for t in summary_texts if t and t.strip())\n    body_text = self.page.locator(\"body\").inner_text()\n\n    match = re.search(r\"(\\d+)\\s+records\\s+found\", summary_text, re.I)\n    if not match:\n        match = re.search(r\"(\\d+)\\s+records\\s+found\", body_text, re.I)\n    if not match:\n        raise RuntimeError(\"Could not parse filtered review grid record count\")\n\n    return {\n        \"status\": status,\n        \"record_count\": int(match.group(1)),\n        \"summary_text\": summary_text,\n        \"grid_url\": self.page.url,\n    }\n",
+    "owns": [
+      "navigate to the Magento admin reviews grid page",
+      "apply the reviews-grid status dropdown filter using a caller-supplied review status value",
+      "submit the grid search/filter action",
+      "read the grid header/body summary text and parse the site-reported '<n> records found' count into a typed integer"
+    ],
+    "does_not_own": [
+      "logging into the admin site",
+      "choosing which review status is relevant to the caller's task",
+      "computing aggregates beyond the single site-reported filtered count",
+      "returning raw page text or DOM instead of the parsed count"
+    ],
+    "input_contract": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "description": "Review status label to select in the reviews grid filter, e.g. 'Approved'."
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "output_contract": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string"
+        },
+        "record_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "summary_text": {
+          "type": "string",
+          "description": "Grid summary text from which the count was parsed."
+        },
+        "grid_url": {
+          "type": "string",
+          "description": "Final reviews grid URL used for acquisition."
+        }
+      },
+      "required": [
+        "status",
+        "record_count",
+        "summary_text",
+        "grid_url"
+      ],
+      "additionalProperties": false
+    },
+    "requires": [
+      "authenticated shopping_admin admin session in self.page"
+    ],
+    "provides": [
+      "filtered review-grid record count for a requested status label"
+    ],
+    "supported_patterns": [
+      "apply a single review-status filter on the All Reviews grid and read the site's reported total",
+      "obtain counts for statuses such as Approved using the same grid workflow"
+    ],
+    "guarantees": {
+      "collection_scope": "query",
+      "completeness": "conditional",
+      "supports_absence_proof": false,
+      "configuration": {
+        "kind": "none",
+        "supported_values": [],
+        "coupled_site_parameters_hidden": true
+      }
+    },
+    "acceptance_checks": [
+      "After applying the requested status filter and submitting search, the reviews grid page remains loaded and exposes summary text or body text containing a parseable '<number> records found' pattern.",
+      "Returned record_count is a non-negative integer parsed from site-rendered grid summary text, and returned status echoes the caller-supplied filter value.",
+      "If the filtered grid has zero results and the site renders '0 records found', the primitive returns record_count = 0 rather than treating the result as a failure."
+    ],
+    "source_evidence": [
+      {
+        "workflow_id": "task78_t277",
+        "template_id": "277",
+        "code_quote": "await page.goto('http://gcrsandbox410.redmond.corp.microsoft.com:7780/admin/review/product/index/', { waitUntil: 'domcontentloaded' }); ... await page.selectOption('#reviewGrid_filter_status', { label: 'Approved' }); ... const summaryTexts = await page.locator('.admin__data-grid-header .admin__control-support-text').allInnerTexts(); ... let m = summary.match(/(\\d+) records found/i); if (!m) m = bodyText.match(/(\\d+) records found/i);",
+        "explanation": "Generalized the hard-coded 'Approved' selection into a caller-supplied status while preserving the demonstrated grid navigation, filter submission, and count parsing behavior.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    ]
+  },
+  {
+    "primitive_id": "shopping_admin/get_admin_reviews_total_count_via_http_session",
+    "method": "get_admin_reviews_total_count_via_http_session",
+    "capability": "retrieve the total number of review records shown by the shopping admin All Reviews page using an authenticated admin HTTP session",
+    "method_code": "def get_admin_reviews_total_count_via_http_session(self, base_url: str, username: str, password: str) -> dict:\n    import html\n    import http.cookiejar\n    import re\n    import urllib.parse\n    import urllib.request\n\n    if not isinstance(base_url, str) or not base_url.strip():\n        raise ValueError(\"base_url must be a non-empty string\")\n    if not isinstance(username, str) or not username:\n        raise ValueError(\"username must be a non-empty string\")\n    if not isinstance(password, str) or not password:\n        raise ValueError(\"password must be a non-empty string\")\n\n    base_url = base_url.rstrip(\"/\")\n    start_url = base_url + \"/admin\"\n    reviews_url = base_url + \"/admin/review/product/index/\"\n\n    jar = http.cookiejar.CookieJar()\n    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))\n\n    login_resp = opener.open(start_url)\n    login_html = login_resp.read().decode(\"utf-8\", \"ignore\")\n    form_inputs = dict(\n        re.findall(\n            r'<input[^>]+name=[\"\\']([^\"\\']+)[\"\\'][^>]*value=[\"\\']([^\"\\']*)[\"\\']',\n            login_html,\n            re.I,\n        )\n    )\n    form_inputs[\"login[username]\"] = username\n    form_inputs[\"login[password]\"] = password\n\n    dashboard_req = urllib.request.Request(\n        start_url,\n        data=urllib.parse.urlencode(form_inputs).encode(),\n    )\n    dashboard_resp = opener.open(dashboard_req)\n    dashboard_html = dashboard_resp.read().decode(\"utf-8\", \"ignore\")\n    dashboard_text = re.sub(r\"<script.*?</script>|<style.*?</style>\", \" \", dashboard_html, flags=re.I | re.S)\n    dashboard_text = re.sub(r\"<[^>]+>\", \" \", dashboard_text)\n    dashboard_text = re.sub(r\"\\s+\", \" \", html.unescape(dashboard_text)).strip()\n    if \"Dashboard / Magento Admin\" not in dashboard_html and \"Dashboard\" not in dashboard_text:\n        raise RuntimeError(\"Login did not reach dashboard\")\n\n    reviews_resp = opener.open(reviews_url)\n    reviews_html = reviews_resp.read().decode(\"utf-8\", \"ignore\")\n    reviews_text = re.sub(r\"<script.*?</script>|<style.*?</style>\", \" \", reviews_html, flags=re.I | re.S)\n    reviews_text = re.sub(r\"<[^>]+>\", \" \", reviews_text)\n    reviews_text = re.sub(r\"\\s+\", \" \", html.unescape(reviews_text)).strip()\n\n    match = re.search(r\"(\\d+)\\s+records\\s+found\", reviews_text, re.I)\n    if not match:\n        raise RuntimeError(\"Could not find total review record count on All Reviews page\")\n\n    title_match = re.search(r\"<title>(.*?)</title>\", reviews_html, re.I | re.S)\n    page_title = html.unescape(title_match.group(1).strip()) if title_match else \"\"\n\n    return {\n        \"reviews_total_count\": int(match.group(1)),\n        \"reviews_url\": reviews_resp.geturl(),\n        \"reviews_status\": getattr(reviews_resp, \"status\", None),\n        \"page_title\": page_title,\n    }\n",
+    "owns": [
+      "establishing an authenticated admin HTTP session using the site's login form and cookies",
+      "submitting site-specific admin credentials to the /admin login endpoint",
+      "requesting the site-local All Reviews admin page at /admin/review/product/index/",
+      "parsing the returned HTML page text to extract the typed total review record count from the pager phrase '<n> records found'",
+      "returning the resolved reviews page URL and HTTP status alongside the typed count"
+    ],
+    "does_not_own": [
+      "deciding that the business question should be answered using review records rather than some other admin metric",
+      "formatting screenshots or final answer artifacts",
+      "returning raw HTML/page text as the primary product",
+      "proving that no reviews exist beyond what the page's displayed total states"
+    ],
+    "input_contract": {
+      "type": "object",
+      "properties": {
+        "base_url": {
+          "type": "string",
+          "description": "Base URL of the shopping admin deployment, e.g. http://host:port"
+        },
+        "username": {
+          "type": "string",
+          "description": "Admin username"
+        },
+        "password": {
+          "type": "string",
+          "description": "Admin password"
+        }
+      },
+      "required": [
+        "base_url",
+        "username",
+        "password"
+      ],
+      "additionalProperties": false
+    },
+    "output_contract": {
+      "type": "object",
+      "properties": {
+        "reviews_total_count": {
+          "type": "integer",
+          "description": "Integer parsed from the All Reviews page pager text '<n> records found'"
+        },
+        "reviews_url": {
+          "type": "string",
+          "description": "Resolved URL of the All Reviews page after request"
+        },
+        "reviews_status": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "HTTP status observed for the All Reviews page response"
+        },
+        "page_title": {
+          "type": "string",
+          "description": "HTML title of the reviews page when available"
+        }
+      },
+      "required": [
+        "reviews_total_count",
+        "reviews_url",
+        "reviews_status",
+        "page_title"
+      ],
+      "additionalProperties": false
+    },
+    "requires": [],
+    "provides": [
+      "authenticated acquisition of the All Reviews page total record count via site HTTP session"
+    ],
+    "supported_patterns": [
+      "log into a shopping_admin deployment and read the overall All Reviews count using the site's HTTP login flow",
+      "return page metadata alongside the typed total count"
+    ],
+    "guarantees": {
+      "collection_scope": "page",
+      "completeness": "conditional",
+      "supports_absence_proof": false,
+      "configuration": {
+        "kind": "none",
+        "supported_values": [],
+        "coupled_site_parameters_hidden": true
+      }
+    },
+    "acceptance_checks": [
+      "Authenticated request sequence reaches an admin dashboard page before requesting the reviews page.",
+      "Returned reviews page response is successful enough to parse and contains a pager phrase matching '<integer> records found'.",
+      "Output reviews_total_count equals the integer parsed from that pager phrase on the All Reviews page.",
+      "Returned reviews_url points to the site's admin reviews listing page rather than the login page."
+    ],
+    "source_evidence": [
+      {
+        "workflow_id": "task347_t248",
+        "template_id": "248",
+        "code_quote": "jar = http.cookiejar.CookieJar(); opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar)) ... resp = opener.open(START_URL) ... form_inputs[\"login[username]\"] = \"admin\"; form_inputs[\"login[password]\"] = \"admin1234\" ... dashboard_resp = opener.open(req) ... reviews_resp = opener.open(REVIEWS_URL) ... m = re.search(r'(\\d+)\\s+records\\s+found', reviews_text, re.I)",
+        "explanation": "Preserved the evidenced HTTP-session login and page-fetching mechanics instead of inventing a browser-form login flow, while generalizing hard-coded base URL and credentials into inputs and keeping the demonstrated All Reviews count parsing.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    ]
+  },
+  {
+    "primitive_id": "shopping_admin/get_pending_review_grid_summary",
+    "method": "get_pending_review_grid_summary",
+    "capability": "retrieve the Magento admin Pending Reviews grid total count from the shopping admin site after authenticating",
+    "method_code": "def get_pending_review_grid_summary(self, username: str, password: str) -> dict:\n    import http.cookiejar\n    import re\n    import urllib.parse\n    import urllib.request\n\n    if not isinstance(username, str) or not username:\n        raise ValueError(\"username must be a non-empty string\")\n    if not isinstance(password, str) or not password:\n        raise ValueError(\"password must be a non-empty string\")\n\n    base = \"http://GCRSANDBOX410.redmond.corp.microsoft.com:7780\"\n    login_url = base + \"/admin\"\n    pending_url = base + \"/admin/review/product/pending/\"\n\n    cj = http.cookiejar.CookieJar()\n    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))\n\n    resp = opener.open(login_url)\n    login_html = resp.read().decode(\"utf-8\", \"ignore\")\n    form_key_match = re.search(r'name=\"form_key\" type=\"hidden\" value=\"([^\"]+)\"', login_html)\n    if not form_key_match:\n        raise RuntimeError(\"Could not extract login form_key\")\n    form_key = form_key_match.group(1)\n\n    post = urllib.parse.urlencode(\n        {\n            \"form_key\": form_key,\n            \"login[username]\": username,\n            \"login[password]\": password,\n        }\n    ).encode()\n    login_resp = opener.open(login_url, post)\n    login_resp.read().decode(\"utf-8\", \"ignore\")\n\n    resp = opener.open(pending_url)\n    final_url = resp.geturl()\n    pending_html = resp.read().decode(\"utf-8\", \"ignore\")\n\n    m = re.search(r'id=\"reviewGrid-total-count\"[^>]*>\\s*(\\d+)\\s*<', pending_html)\n    if not m:\n        raise RuntimeError(\"Could not find reviewGrid-total-count on Pending Reviews page\")\n\n    return {\n        \"review_status\": \"pending\",\n        \"total_count\": int(m.group(1)),\n        \"page_url\": final_url,\n        \"authenticated\": True,\n    }\n",
+    "owns": [
+      "Magento admin login session establishment using the site's login form and hidden form_key",
+      "navigation to the site's Pending Reviews admin page",
+      "parsing the Pending Reviews page HTML to extract the typed grid total count from the reviewGrid-total-count element"
+    ],
+    "does_not_own": [
+      "choosing that only Pending reviews are relevant to the user task beyond using the demonstrated Pending Reviews page URL",
+      "formatting the count as the final answer payload",
+      "general raw HTML export or arbitrary page scraping outside this page's demonstrated summary element"
+    ],
+    "input_contract": {
+      "type": "object",
+      "properties": {
+        "username": {
+          "type": "string"
+        },
+        "password": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "username",
+        "password"
+      ],
+      "additionalProperties": false
+    },
+    "output_contract": {
+      "type": "object",
+      "properties": {
+        "review_status": {
+          "type": "string",
+          "enum": [
+            "pending"
+          ]
+        },
+        "total_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "page_url": {
+          "type": "string"
+        },
+        "authenticated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "review_status",
+        "total_count",
+        "page_url",
+        "authenticated"
+      ],
+      "additionalProperties": false
+    },
+    "requires": [],
+    "provides": [
+      "authenticated acquisition of the Pending Reviews page total count"
+    ],
+    "supported_patterns": [
+      "log into the shopping_admin site and read the Pending Reviews page total",
+      "use the page-specific Pending Reviews endpoint rather than the filterable All Reviews grid"
+    ],
+    "guarantees": {
+      "collection_scope": "page",
+      "completeness": "conditional",
+      "supports_absence_proof": false,
+      "configuration": {
+        "kind": "none",
+        "supported_values": [],
+        "coupled_site_parameters_hidden": true
+      }
+    },
+    "acceptance_checks": [
+      "Returns an authenticated result with review_status = 'pending' and page_url ending at the site's Pending Reviews admin page.",
+      "Parses a non-negative integer total_count from the page element with id 'reviewGrid-total-count'.",
+      "If the Pending Reviews page is reachable but contains zero records, returns total_count = 0 rather than failing.",
+      "Fails when authentication does not succeed or when the expected reviewGrid-total-count element cannot be found on the page."
+    ],
+    "source_evidence": [
+      {
+        "workflow_id": "task77_t277",
+        "template_id": "277",
+        "code_quote": "pending_url = base + '/admin/review/product/pending/' ... form_key = re.search(r'name=\"form_key\" type=\"hidden\" value=\"([^\"]+)\"', login_html).group(1) ... post = urllib.parse.urlencode({'form_key': form_key, 'login[username]': 'admin', 'login[password]': 'admin1234'}).encode() ... resp = opener.open(pending_url) ... m = re.search(r'id=\"reviewGrid-total-count\"[^>]*>\\s*(\\d+)\\s*<', pending_html)",
+        "explanation": "Preserved the narrower, directly evidenced page-specific Pending Reviews acquisition rather than folding it into a broader abstraction that would rely on unsupported equivalence claims across different review pages.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    ]
+  }
+]

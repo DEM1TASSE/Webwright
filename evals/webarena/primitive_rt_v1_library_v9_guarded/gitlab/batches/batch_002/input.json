@@ -1,0 +1,282 @@
+{
+  "site": "gitlab",
+  "build_mode": "parallel_initial",
+  "batch": [
+    {
+      "id": "task787_t316",
+      "task_id": 787,
+      "template_id": 316,
+      "task_type": "retrieve",
+      "intent": "Tell me the number of followers of the contributor who has the most commits to branch main",
+      "site": "gitlab",
+      "code": "import asyncio\nimport json\nimport os\nimport re\nimport shutil\nfrom pathlib import Path\nfrom playwright.async_api import async_playwright\n\nWORKSPACE = Path(os.environ.get('WORKSPACE_DIR', Path.cwd()))\nRUN_DIR = WORKSPACE / 'final_runs' / 'run_1'\nSS_DIR = RUN_DIR / 'screenshots'\nLOG_PATH = RUN_DIR / 'final_script_log.txt'\nGRAPH_URL = 'http://GCRSANDBOX410.redmond.corp.microsoft.com:8023/dehenne/awesome-visibility/-/graphs/master'\nPROFILE_URL = 'http://GCRSANDBOX410.redmond.corp.microsoft.com:8023/dehenne'\n\n\ndef log(msg: str):\n    with LOG_PATH.open('a', encoding='utf-8') as f:\n        f.write(msg + '\\n')\n    print(msg)\n\n\nasync def main():\n    RUN_DIR.mkdir(parents=True, exist_ok=True)\n    SS_DIR.mkdir(parents=True, exist_ok=True)\n    LOG_PATH.write_text('', encoding='utf-8')\n    shutil.copy2(WORKSPACE / 'final_script.py', RUN_DIR / 'final_script.py') if (WORKSPACE / 'final_script.py').exists() else None\n    final_answer = None\n    final_status = None\n\n    async with async_playwright() as p:\n        browser = await p.chromium.launch(headless=True)\n        context = await browser.new_context(viewport={'width': 1280, 'height': 1800})\n        page = await context.new_page()\n\n        resp = await page.goto(GRAPH_URL, wait_until='networkidle')\n        final_status = None if resp is None else resp.status\n        graph_title = await page.title()\n        log(f'step 1 action: opened contributors graph page {page.url} title={graph_title} status={final_status}')\n        await page.screenshot(path=str(SS_DIR / 'final_execution_1_graph_page.png'))\n\n        contributors = await page.locator('.contributors-charts .col-lg-6.col-12.gl-my-5').evaluate_all(\"\"\"\n            cards => cards.map(card => {\n              const name = card.querySelector('h4')?.innerText?.trim() || '';\n              const summary = card.querySelector('p')?.innerText?.trim() || '';\n              const m = summary.match(/(\\d+)\\s+commit/);\n              return {name, summary, commits: m ? Number(m[1]) : -1};\n            }).filter(x => x.name)\n        \"\"\")\n        log('parsed contributors: ' + json.dumps(contributors, ensure_ascii=False))\n        top = max(contributors, key=lambda x: x['commits']) if contributors else None\n        if not top:\n            raise RuntimeError('No contributors parsed from graph page')\n        log(f\"step 2 action: determined top contributor from graph data as {top['name']} with {top['commits']} commits\")\n\n        await page.goto(PROFILE_URL, wait_until='networkidle')\n        profile_title = await page.title()\n        body_text = await page.locator('body').inner_text()\n        if top['name'] not in body_text:\n            raise RuntimeError(f\"Expected contributor name {top['name']} not found on profile page {page.url}\")\n        log(f'step 3 action: opened contributor profile page {page.url} title={profile_title} and confirmed name visible')\n        await page.screenshot(path=str(SS_DIR / 'final_execution_2_profile_page.png'))\n\n        follower_link = page.locator('a[href$=\"/followers\"]').first\n        follower_text = (await follower_link.inner_text()).strip()\n        m = re.search(r'(\\d+)\\s+followers?', follower_text)\n        if not m:\n            raise RuntimeError(f'Could not parse follower count from text: {follower_text!r}')\n        followers = int(m.group(1))\n        final_answer = str(followers)\n        log(f'step 4 action: read follower count from profile page as {followers} using text {follower_text!r}')\n        await page.screenshot(path=str(SS_DIR / 'final_execution_3_followers_visible.png'))\n\n        (WORKSPACE / 'agent_response.json').write_text(json.dumps({\n            'task_type': 'RETRIEVE',\n            'status': 'SUCCESS',\n            'retrieved_data': [final_answer],\n            'error_details': None\n        }), encoding='utf-8')\n        (WORKSPACE / 'final_state.html').write_text(await page.content(), encoding='utf-8')\n        (WORKSPACE / 'final_state.json').write_text(json.dumps({\n            'final_url': page.url,\n            'html_path': 'final_state.html',\n            'document_status': final_status,\n            'answer': final_answer\n        }), encoding='utf-8')\n        log(f'step 5 action: wrote agent_response.json and final_state files with answer {final_answer}')\n        log(f'final response: {final_answer}')\n        await browser.close()\n\nasyncio.run(main())\n",
+      "record_path": "/home/t-demiwang/project/Code-Web-Skills/external/webwright-webarena-infra/evals/webarena/primitive_rt_v1_official_train_results/gitlab/task787_scratch.json"
+    },
+    {
+      "id": "task133_t322",
+      "task_id": 133,
+      "template_id": 322,
+      "task_type": "retrieve",
+      "intent": "How many commits did Eric make to a11yproject on 3/2?",
+      "site": "gitlab",
+      "code": "const fs = require('fs');\nconst path = require('path');\nconst { chromium } = require('/home/t-demiwang/openclaw/node_modules/playwright');\n\nconst WORKSPACE = process.cwd();\nconst RUN_DIR = path.join(WORKSPACE, 'final_runs', 'run_1');\nconst SCREENSHOTS_DIR = path.join(RUN_DIR, 'screenshots');\nconst LOG_PATH = path.join(RUN_DIR, 'final_script_log.txt');\nconst START_URL = 'http://GCRSANDBOX410.redmond.corp.microsoft.com:8023';\nconst SIGNIN_URL = START_URL + '/users/sign_in';\nconst PROJECT_URL = START_URL + '/a11yproject/a11yproject.com';\nconst COMMITS_URL = START_URL + '/a11yproject/a11yproject.com/-/commits/main';\n\nfs.mkdirSync(SCREENSHOTS_DIR, { recursive: true });\nfs.writeFileSync(LOG_PATH, '');\n\nfunction log(step, message) {\n  const line = `step ${step} action: ${message}`;\n  console.log(line);\n  fs.appendFileSync(LOG_PATH, line + '\\n');\n}\n\n(async() => {\n  let browser;\n  let documentStatus = null;\n  try {\n    browser = await chromium.launch({ headless: true });\n    const context = await browser.newContext({ viewport: { width: 1280, height: 1800 } });\n    const page = await context.newPage();\n\n    log(1, 'Open sign-in page from start URL and authenticate with provided credentials.');\n    let response = await page.goto(SIGNIN_URL, { waitUntil: 'domcontentloaded' });\n    documentStatus = response ? response.status() : null;\n    await page.fill('input[name=\"user[login]\"]', 'byteblaze');\n    await page.fill('input[name=\"user[password]\"]', 'hello1234');\n    await page.screenshot({ path: path.join(SCREENSHOTS_DIR, 'final_execution_1_login_page.png') });\n    await Promise.all([\n      page.waitForNavigation({ waitUntil: 'domcontentloaded' }),\n      page.click('button:has-text(\"Sign in\")')\n    ]);\n\n    log(2, 'Verify post-login dashboard and visible project listing including The A11Y Project / a11yproject.com.');\n    await page.screenshot({ path: path.join(SCREENSHOTS_DIR, 'final_execution_2_dashboard.png') });\n\n    log(3, 'Navigate to the a11yproject.com repository project page.');\n    response = await page.goto(PROJECT_URL, { waitUntil: 'domcontentloaded' });\n    documentStatus = response ? response.status() : documentStatus;\n    await page.screenshot({ path: path.join(SCREENSHOTS_DIR, 'final_execution_3_project_page.png') });\n\n    log(4, 'Open the repository commits history view for the main branch.');\n    response = await page.goto(COMMITS_URL, { waitUntil: 'domcontentloaded' });\n    documentStatus = response ? response.status() : documentStatus;\n    await page.screenshot({ path: path.join(SCREENSHOTS_DIR, 'final_execution_4_commits_page.png') });\n\n    const result = await page.evaluate(() => {\n      const bodyText = document.body.innerText;\n      const targetHeader = '02 Mar, 2023 3 commits';\n      const nextHeaderRegex = /\\n\\d{2} [A-Z][a-z]{2}, \\d{4} \\d+ commits?/g;\n      const start = bodyText.indexOf(targetHeader);\n      if (start === -1) {\n        return { found: false, count: null, sectionText: null };\n      }\n      const remaining = bodyText.slice(start + targetHeader.length);\n      const match = nextHeaderRegex.exec(remaining);\n      const endOffset = match ? match.index : remaining.length;\n      const sectionText = remaining.slice(0, endOffset).trim();\n      const lines = sectionText.split('\\n').map(x => x.trim()).filter(Boolean);\n      let count = 0;\n      for (const line of lines) {\n        if (/^Eric Bailey authored/.test(line)) count += 1;\n      }\n      return { found: true, count, sectionText, lines };\n    });\n\n    if (!result.found || result.count === null) {\n      throw new Error('Could not locate the 02 Mar, 2023 commits section on the commits page.');\n    }\n\n    log(5, `Count Eric Bailey authored commits under the 02 Mar, 2023 section. Computed count: ${result.count}.`);\n    fs.appendFileSync(LOG_PATH, 'evidence section:\\n' + result.sectionText + '\\n');\n    await page.screenshot({ path: path.join(SCREENSHOTS_DIR, 'final_execution_5_commit_evidence.png') });\n\n    const answer = String(result.count);\n    const agentResponse = {\n      task_type: 'RETRIEVE',\n      status: 'SUCCESS',\n      retrieved_data: [answer],\n      error_details: null\n    };\n    fs.writeFileSync(path.join(WORKSPACE, 'agent_response.json'), JSON.stringify(agentResponse));\n    fs.writeFileSync(path.join(WORKSPACE, 'final_state.html'), await page.content());\n    fs.writeFileSync(path.join(WORKSPACE, 'final_state.json'), JSON.stringify({\n      final_url: page.url(),\n      html_path: 'final_state.html',\n      document_status: documentStatus,\n      answer\n    }));\n    log(6, `Write agent_response.json, final_state.html, and final_state.json with final answer ${answer}.`);\n    fs.appendFileSync(LOG_PATH, `final answer: ${answer}\\n`);\n\n    await browser.close();\n  } catch (err) {\n    fs.appendFileSync(LOG_PATH, `ERROR: ${err.stack || err.message}\\n`);\n    if (browser) await browser.close();\n    process.exit(1);\n  }\n})();\n",
+      "record_path": "/home/t-demiwang/project/Code-Web-Skills/external/webwright-webarena-infra/evals/webarena/primitive_rt_v1_official_train_results/gitlab/task133_scratch.json"
+    }
+  ],
+  "extractions": [
+    {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task787_t316::get_repository_contributor_commit_stats_from_graph_page",
+          "proposed_method": "get_repository_contributor_commit_stats_from_graph_page",
+          "capability": "Extract contributor commit statistics from a GitLab repository contributors graph page into typed records.",
+          "owns": [
+            "Navigate to a GitLab repository contributors graph page",
+            "Parse contributor cards from the page DOM",
+            "Extract contributor display name",
+            "Extract contributor summary text",
+            "Parse commit count from summary text when present"
+          ],
+          "does_not_own": [
+            "Choosing which contributor is most relevant or has the maximum commits",
+            "Ranking or aggregating contributors beyond returning parsed records",
+            "Inferring repository or branch outside the supplied graph page URL",
+            "Returning raw DOM or page text without typed parsing"
+          ],
+          "input_contract": {
+            "graph_page_url": {
+              "type": "string",
+              "description": "Absolute GitLab repository contributors graph URL."
+            }
+          },
+          "output_contract": {
+            "contributors": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "summary": {
+                    "type": "string"
+                  },
+                  "commits": {
+                    "type": "integer",
+                    "description": "Parsed commit count, or -1 when the page text did not match the demonstrated commit-count pattern."
+                  }
+                }
+              }
+            }
+          },
+          "guarantees": {
+            "collection_scope": "page",
+            "completeness": "conditional",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "Returns one typed record per visible contributor card on the loaded graph page",
+            "Each returned record has a non-empty name",
+            "For cards whose summary contains an '<number> commit' pattern, commits is parsed as that integer",
+            "An empty contributors array is returned only when no contributor cards are present on the loaded page, not when DOM parsing fails"
+          ],
+          "source_evidence": {
+            "workflow_id": "task787_t316",
+            "template_id": "316",
+            "code_quote": "contributors = await page.locator('.contributors-charts .col-lg-6.col-12.gl-my-5').evaluate_all(\"\"\"\n    cards => cards.map(card => {\n      const name = card.querySelector('h4')?.innerText?.trim() || '';\n      const summary = card.querySelector('p')?.innerText?.trim() || '';\n      const m = summary.match(/(\\d+)\\s+commit/);\n      return {name, summary, commits: m ? Number(m[1]) : -1};\n    }).filter(x => x.name)\n\"\"\")",
+            "explanation": "The workflow demonstrates a reusable GitLab page-parsing operation on the repository contributors graph page. Hard-coded repository and branch values can be parameterized as the graph page URL. The task-specific step of selecting the max-commit contributor is excluded.",
+            "evidence_match_mode": "exact"
+          }
+        },
+        {
+          "candidate_id": "task787_t316::get_user_follower_count_from_profile_page",
+          "proposed_method": "get_user_follower_count_from_profile_page",
+          "capability": "Extract a GitLab user's follower count from their profile page.",
+          "owns": [
+            "Navigate to a GitLab user profile page",
+            "Locate the followers link on the profile page",
+            "Read the rendered followers link text",
+            "Parse integer follower count from the visible text"
+          ],
+          "does_not_own": [
+            "Discovering which user profile to inspect",
+            "Verifying that a profile belongs to a task-selected contributor by matching arbitrary body text",
+            "Returning unrelated profile metadata not demonstrated in the workflow"
+          ],
+          "input_contract": {
+            "profile_url": {
+              "type": "string",
+              "description": "Absolute GitLab user profile URL."
+            }
+          },
+          "output_contract": {
+            "follower_count": {
+              "type": "integer"
+            },
+            "followers_link_text": {
+              "type": "string",
+              "description": "Rendered text used to parse the count, such as '12 followers'."
+            }
+          },
+          "guarantees": {
+            "collection_scope": "page",
+            "completeness": "conditional",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "Finds an anchor whose href ends with '/followers' on the loaded profile page or reports acquisition failure",
+            "Parses a non-negative integer from rendered follower text matching '<number> follower' or '<number> followers'",
+            "Returns both the parsed integer and the source link text used for parsing",
+            "A zero value is accepted when the page visibly presents '0 followers'"
+          ],
+          "source_evidence": {
+            "workflow_id": "task787_t316",
+            "template_id": "316",
+            "code_quote": "follower_link = page.locator('a[href$=\"/followers\"]').first\nfollower_text = (await follower_link.inner_text()).strip()\nm = re.search(r'(\\d+)\\s+followers?', follower_text)\nfollowers = int(m.group(1))",
+            "explanation": "The workflow shows a reusable DOM-based GitLab profile capability that parses a typed follower count from stable rendered semantics. The hard-coded profile URL can be parameterized. The body-text name check is task-specific validation and not part of the capability.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        }
+      ]
+    },
+    {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task133_t322::list_branch_commits_grouped_by_day",
+          "proposed_method": "list_branch_commits_grouped_by_day",
+          "capability": "Retrieve the GitLab project branch commits page and parse its displayed day-grouped commit entries into typed records.",
+          "owns": [
+            "Navigate to a GitLab project branch commits history page using project path and branch name",
+            "Use authenticated page session to access the commits history view",
+            "Parse displayed commit groups headed by day labels like '02 Mar, 2023 3 commits'",
+            "Extract per-day summary count shown by GitLab for each visible day section",
+            "Extract visible commit entries within each parsed day section from page text",
+            "Extract displayed author identity from commit lines such as 'Eric Bailey authored'"
+          ],
+          "does_not_own": [
+            "Filtering to a specific author",
+            "Selecting a specific day as the answer target",
+            "Counting commits for one author on one day",
+            "Exhaustive traversal across additional commit history pages beyond the loaded page",
+            "Proof that no commits exist outside the currently loaded/visible commits page"
+          ],
+          "input_contract": {
+            "type": "object",
+            "properties": {
+              "project_path": {
+                "type": "string",
+                "description": "GitLab project path in namespace/project form, e.g. 'a11yproject/a11yproject.com'"
+              },
+              "branch_name": {
+                "type": "string",
+                "description": "Branch whose commits page should be opened, e.g. 'main'"
+              }
+            },
+            "required": [
+              "project_path",
+              "branch_name"
+            ]
+          },
+          "output_contract": {
+            "type": "object",
+            "properties": {
+              "project_path": {
+                "type": "string"
+              },
+              "branch_name": {
+                "type": "string"
+              },
+              "days": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "day_label": {
+                      "type": "string",
+                      "description": "Displayed GitLab day heading, e.g. '02 Mar, 2023'"
+                    },
+                    "displayed_commit_count": {
+                      "type": "integer",
+                      "description": "Count shown in the day header on the page"
+                    },
+                    "commits": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "author_display": {
+                            "type": "string",
+                            "description": "Displayed commit author identity parsed from visible text"
+                          },
+                          "entry_text": {
+                            "type": "string",
+                            "description": "Raw visible text for the commit entry as shown on the page section"
+                          },
+                          "day_label": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "author_display",
+                          "entry_text",
+                          "day_label"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "day_label",
+                    "displayed_commit_count",
+                    "commits"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "project_path",
+              "branch_name",
+              "days"
+            ]
+          },
+          "guarantees": {
+            "collection_scope": "page",
+            "completeness": "partial",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "Returns the branch commits page for the requested GitLab project and branch without acquisition failure",
+            "Every returned day record has a parsed day_label and displayed_commit_count from a visible GitLab day header",
+            "Every returned commit record belongs to exactly one returned day_label and includes a parsed author_display",
+            "If a visible commits page has no matching day sections or commit entries, returns an empty or smaller parsed collection rather than failing solely for lack of matches"
+          ],
+          "source_evidence": {
+            "workflow_id": "task133_t322",
+            "template_id": "322",
+            "code_quote": "const COMMITS_URL = START_URL + '/a11yproject/a11yproject.com/-/commits/main'; ... const bodyText = document.body.innerText; const targetHeader = '02 Mar, 2023 3 commits'; const nextHeaderRegex = /\\n\\d{2} [A-Z][a-z]{2}, \\d{4} \\d+ commits?/g; ... const lines = sectionText.split('\\n').map(x => x.trim()).filter(Boolean); ... if (/^Eric Bailey authored/.test(line)) count += 1;",
+            "explanation": "The workflow demonstrates a reusable site operation: opening a GitLab project's branch commits history page and parsing GitLab's visible day-grouped commit listing structure. The hard-coded project path, branch, target date, and target author are task-specific choices and can be parameterized away. The reusable boundary is the acquisition of visible day sections with their displayed commit counts and commit-entry author text from the commits page. Because the workflow only inspects the currently loaded commits page and does not paginate, completeness is page-scoped and partial.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        }
+      ]
+    }
+  ],
+  "catalog_index": [],
+  "retrieved_primitives": []
+}

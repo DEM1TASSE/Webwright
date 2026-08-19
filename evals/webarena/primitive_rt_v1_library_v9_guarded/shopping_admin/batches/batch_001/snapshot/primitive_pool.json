@@ -1,0 +1,400 @@
+[
+  {
+    "primitive_id": "shopping_admin/filter_customers_by_billing_phone_in_admin_grid",
+    "method": "filter_customers_by_billing_phone_in_admin_grid",
+    "capability": "Filter the Magento admin customer grid by billing phone number and return typed customer rows visible in the filtered result set.",
+    "method_code": "def filter_customers_by_billing_phone_in_admin_grid(self, billing_phone: str) -> dict:\n    import re\n\n    def _goto(url: str):\n        response = self.page.goto(url, wait_until=\"domcontentloaded\")\n        try:\n            self.page.wait_for_load_state(\"networkidle\", timeout=10000)\n        except Exception:\n            self.page.wait_for_timeout(1500)\n        return response\n\n    def _login_if_needed() -> None:\n        body_text = self.page.locator(\"body\").inner_text()\n        if re.search(r\"Username|Sign in|Login|password\", body_text, re.I):\n            username_candidates = [\n                self.page.get_by_label(\"Username\"),\n                self.page.locator('input[name=\"login[username]\"]'),\n                self.page.locator('input[name=\"username\"]'),\n                self.page.locator('#username'),\n                self.page.locator('input[type=\"email\"]'),\n                self.page.locator('input[type=\"text\"]'),\n            ]\n            password_candidates = [\n                self.page.get_by_label(\"Password\"),\n                self.page.locator('input[name=\"login[password]\"]'),\n                self.page.locator('input[name=\"password\"]'),\n                self.page.locator('input[type=\"password\"]'),\n            ]\n            for loc in username_candidates:\n                try:\n                    if loc.count() > 0:\n                        loc.first.fill(\"admin\")\n                        break\n                except Exception:\n                    pass\n            for loc in password_candidates:\n                try:\n                    if loc.count() > 0:\n                        loc.first.fill(\"admin1234\")\n                        break\n                except Exception:\n                    pass\n            login_buttons = [\n                self.page.get_by_role(\"button\", name=re.compile(r\"sign in|login\", re.I)),\n                self.page.locator('button[type=\"submit\"]'),\n                self.page.locator('.action-login'),\n            ]\n            for loc in login_buttons:\n                try:\n                    if loc.count() > 0:\n                        loc.first.click()\n                        break\n                except Exception:\n                    pass\n            try:\n                self.page.wait_for_load_state(\"networkidle\", timeout=10000)\n            except Exception:\n                self.page.wait_for_timeout(3000)\n\n    def _open_filters_if_needed() -> None:\n        filters_btn = self.page.get_by_role(\"button\", name=\"Filters\")\n        try:\n            if filters_btn.count() > 0:\n                filters_btn.first.click()\n                self.page.wait_for_timeout(800)\n        except Exception:\n            pass\n\n    def _parse_rows(phone_value: str) -> list:\n        row_texts = self.page.locator(\"tbody tr\").evaluate_all(\n            \"rows => rows.map(r => (r.innerText || '').trim()).filter(Boolean)\"\n        )\n        customers = []\n        for row_text in row_texts:\n            if phone_value not in row_text:\n                continue\n            parts = [part.strip() for part in row_text.split(\"\\t\") if part.strip()]\n            name = parts[0] if len(parts) > 0 else None\n            email = parts[1] if len(parts) > 1 else None\n            customers.append({\n                \"name\": name,\n                \"email\": email,\n                \"billing_phone\": phone_value,\n            })\n        return customers\n\n    _goto(\"http://gcrsandbox410.redmond.corp.microsoft.com:7780/admin\")\n    _login_if_needed()\n    _goto(\"http://gcrsandbox410.redmond.corp.microsoft.com:7780/admin/customer/index/\")\n\n    clear_all = self.page.get_by_role(\"button\", name=\"Clear all\")\n    try:\n        if clear_all.count() > 0:\n            clear_all.first.click()\n            try:\n                self.page.wait_for_load_state(\"networkidle\", timeout=10000)\n            except Exception:\n                self.page.wait_for_timeout(1000)\n    except Exception:\n        pass\n\n    _open_filters_if_needed()\n    phone_input = self.page.locator('input[name=\"billing_telephone\"]:visible').first\n    phone_input.fill(billing_phone)\n\n    apply_filters = self.page.get_by_role(\"button\", name=\"Apply Filters\")\n    if apply_filters.count() == 0:\n        raise RuntimeError(\"Apply Filters button not found on customer grid\")\n    apply_filters.first.click()\n    try:\n        self.page.wait_for_load_state(\"networkidle\", timeout=10000)\n    except Exception:\n        self.page.wait_for_timeout(1500)\n\n    return {\"customers\": _parse_rows(billing_phone)}",
+    "owns": [
+      "Navigating to the Magento admin customers grid",
+      "Authenticating to the admin site when a login form is presented",
+      "Clearing saved active customer filters in the grid when the UI exposes a Clear all control",
+      "Opening the Filters panel if needed",
+      "Filling the billing telephone filter field",
+      "Applying the filter through the site UI",
+      "Reading visible grid rows and parsing row text into typed customer records with name, email, and matched phone"
+    ],
+    "does_not_own": [
+      "Choosing which phone number to search for",
+      "Ranking or selecting among multiple returned customers beyond preserving visible row order",
+      "Proving site-wide absence beyond the currently acquired filtered grid result slice",
+      "Returning raw DOM or page text without parsing"
+    ],
+    "input_contract": {
+      "type": "object",
+      "properties": {
+        "billing_phone": {
+          "type": "string",
+          "description": "Phone number to enter into the customer grid billing telephone filter."
+        }
+      },
+      "required": [
+        "billing_phone"
+      ]
+    },
+    "output_contract": {
+      "type": "object",
+      "properties": {
+        "customers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "email": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "billing_phone": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "email",
+              "billing_phone"
+            ]
+          }
+        }
+      },
+      "required": [
+        "customers"
+      ]
+    },
+    "requires": [],
+    "provides": [
+      "authenticated shopping_admin admin session if login succeeds",
+      "customer rows visible in the filtered admin customer grid result"
+    ],
+    "supported_patterns": [
+      "Direct navigation to Magento admin customer grid",
+      "Optional login when session is unauthenticated",
+      "Optional clearing of persisted filters before applying a new billing telephone filter",
+      "Single filtered result-page acquisition of visible customer rows"
+    ],
+    "guarantees": {
+      "collection_scope": "query",
+      "completeness": "conditional",
+      "supports_absence_proof": false,
+      "configuration": {
+        "kind": "none",
+        "supported_values": [],
+        "coupled_site_parameters_hidden": true
+      }
+    },
+    "acceptance_checks": [
+      "After execution, the admin customer grid has had the billing telephone filter applied with the caller-supplied value.",
+      "Each returned record comes from a visible filtered grid row that contains the queried billing_phone value.",
+      "If no visible rows remain after filtering, the method returns {\"customers\": []} rather than failing solely because no match was found."
+    ],
+    "source_evidence": [
+      {
+        "workflow_id": "task209_t364",
+        "template_id": "364",
+        "code_quote": "if await page.get_by_role('button', name='Clear all').count(): await page.get_by_role('button', name='Clear all').click() ... phone_input = page.locator('input[name=\"billing_telephone\"]:visible') ... await phone_input.fill(PHONE) ... await page.get_by_role('button', name='Apply Filters').click() ... rows = await page.locator('tbody tr').evaluate_all(\"rows => rows.map(r => (r.innerText||'').trim()).filter(t => t)\") ... parts = [p for p in matching[0].split('\\t') if p.strip()]",
+        "explanation": "Generalized the hard-coded phone value into a method input while preserving the demonstrated customer-grid acquisition flow: optional login, optional filter reset, billing telephone filter application, and typed parsing of visible filtered rows.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    ]
+  },
+  {
+    "primitive_id": "shopping_admin/list_catalog_products_by_quantity_range_from_admin_grid",
+    "method": "list_catalog_products_by_quantity_range_from_admin_grid",
+    "capability": "Retrieve product records from the shopping admin catalog products grid filtered by inventory quantity range.",
+    "method_code": "def list_catalog_products_by_quantity_range_from_admin_grid(self, quantity_from: float, quantity_to: float) -> dict:\n    import re\n\n    def _goto(url: str):\n        response = self.page.goto(url, wait_until=\"domcontentloaded\")\n        try:\n            self.page.wait_for_load_state(\"networkidle\", timeout=10000)\n        except Exception:\n            self.page.wait_for_timeout(1500)\n        return response\n\n    def _login_if_needed() -> None:\n        body_text = self.page.locator(\"body\").inner_text()\n        if re.search(r\"Username|Sign in|Login|password\", body_text, re.I):\n            if self.page.locator('input[name=\"login[username]\"]').count() > 0:\n                self.page.locator('input[name=\"login[username]\"]').first.fill(\"admin\")\n            if self.page.locator('input[name=\"login[password]\"]').count() > 0:\n                self.page.locator('input[name=\"login[password]\"]').first.fill(\"admin1234\")\n            login_button = self.page.locator('button.action-login')\n            if login_button.count() > 0:\n                login_button.first.click()\n            else:\n                sign_in = self.page.get_by_role(\"button\", name=re.compile(r\"sign in|login\", re.I))\n                if sign_in.count() > 0:\n                    sign_in.first.click()\n            try:\n                self.page.wait_for_load_state(\"networkidle\", timeout=10000)\n            except Exception:\n                self.page.wait_for_timeout(3000)\n\n    def _parse_rows() -> list:\n        js = '''() => {\n            const rows = [];\n            const grid = document.querySelector('table[data-role=\"grid\"] tbody') || document.querySelector('table tbody');\n            if (!grid) return rows;\n            for (const tr of Array.from(grid.querySelectorAll('tr'))) {\n                const tds = Array.from(tr.querySelectorAll('td')).map(td => (td.innerText || td.textContent || '').trim());\n                if (tds.length >= 10 && tds[6] && tds[8]) {\n                    rows.push({\n                        name: tds[3] || '',\n                        sku: tds[6],\n                        quantity: tds[8],\n                        salable: tds[9] || ''\n                    });\n                }\n            }\n            return rows;\n        }'''\n        return self.page.evaluate(js)\n\n    if quantity_from > quantity_to:\n        raise ValueError(\"quantity_from must be less than or equal to quantity_to\")\n\n    _goto(\"http://gcrsandbox410.redmond.corp.microsoft.com:7780/admin\")\n    _login_if_needed()\n    _goto(\"http://gcrsandbox410.redmond.corp.microsoft.com:7780/admin/catalog/product/\")\n\n    filters_btn = self.page.get_by_role(\"button\", name=\"Filters\")\n    if filters_btn.count() > 0:\n        filters_btn.first.click()\n        self.page.wait_for_timeout(800)\n\n    qty_from_input = self.page.locator('input[name=\"qty[from]\"]').first\n    qty_to_input = self.page.locator('input[name=\"qty[to]\"]').first\n    qty_from_input.fill(str(quantity_from))\n    qty_to_input.fill(str(quantity_to))\n\n    apply_filters = self.page.get_by_role(\"button\", name=\"Apply Filters\")\n    if apply_filters.count() == 0:\n        raise RuntimeError(\"Apply Filters button not found on products grid\")\n    apply_filters.first.click()\n    try:\n        self.page.wait_for_load_state(\"networkidle\", timeout=10000)\n    except Exception:\n        self.page.wait_for_timeout(6000)\n\n    return {\"records\": _parse_rows()}",
+    "owns": [
+      "Navigate to the shopping admin catalog product grid page",
+      "Authenticate to the admin site when the login form is presented",
+      "Open the grid's Filters UI and populate the quantity range filter fields",
+      "Apply the site filter and wait for filtered grid results",
+      "Parse typed product records from the rendered grid table, including stable displayed fields demonstrated by the workflow",
+      "Return the records visible in the filtered grid page"
+    ],
+    "does_not_own": [
+      "Choosing the business-relevant quantity range for a particular task",
+      "Further post-filtering rows client-side beyond the site filter",
+      "Reducing records to only SKU values",
+      "Proving that no matching products exist outside the currently acquired grid page",
+      "Cross-page pagination traversal or full-result exhaustion"
+    ],
+    "input_contract": {
+      "type": "object",
+      "properties": {
+        "quantity_from": {
+          "type": "number",
+          "description": "Inclusive lower bound for the quantity filter"
+        },
+        "quantity_to": {
+          "type": "number",
+          "description": "Inclusive upper bound for the quantity filter"
+        }
+      },
+      "required": [
+        "quantity_from",
+        "quantity_to"
+      ]
+    },
+    "output_contract": {
+      "type": "object",
+      "properties": {
+        "records": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "sku": {
+                "type": "string"
+              },
+              "quantity": {
+                "type": "string",
+                "description": "Quantity text as displayed in the grid"
+              },
+              "salable": {
+                "type": "string",
+                "description": "Salable quantity text as displayed in the grid"
+              }
+            },
+            "required": [
+              "name",
+              "sku",
+              "quantity",
+              "salable"
+            ]
+          }
+        }
+      },
+      "required": [
+        "records"
+      ]
+    },
+    "requires": [],
+    "provides": [
+      "authenticated shopping_admin admin session if login succeeds",
+      "product records visible in the filtered admin catalog grid"
+    ],
+    "supported_patterns": [
+      "Direct navigation to Magento admin catalog product grid",
+      "Optional login when session is unauthenticated",
+      "Single filtered result-page acquisition using qty[from] and qty[to] controls",
+      "Typed parsing of visible product grid rows"
+    ],
+    "guarantees": {
+      "collection_scope": "page",
+      "completeness": "partial",
+      "supports_absence_proof": false,
+      "configuration": {
+        "kind": "none",
+        "supported_values": [],
+        "coupled_site_parameters_hidden": true
+      }
+    },
+    "acceptance_checks": [
+      "After applying the quantity range filters, the method returns one typed record per parsed visible grid row on the loaded results page.",
+      "Each returned record includes non-empty sku and quantity fields parsed from the products grid.",
+      "If the filtered grid shows no rows on the acquired page, the method returns {\"records\": []} rather than failing."
+    ],
+    "source_evidence": [
+      {
+        "workflow_id": "task187_t368",
+        "template_id": "368",
+        "code_quote": "await page.goto('http://.../admin/catalog/product/', wait_until='domcontentloaded') ... await page.locator('input[name=\"qty[from]\"]').fill('1') ... await page.locator('input[name=\"qty[to]\"]').fill('3') ... await page.get_by_role('button', name='Apply Filters').click() ... rows.push({name: tds[3], sku: tds[6], quantity: tds[8], salable: tds[9]});",
+        "explanation": "Generalized the hard-coded quantity bounds into inputs and preserved the demonstrated products-grid filtering and typed row parsing. The primitive returns the full evidenced record set from the visible filtered page rather than the workflow's SKU-only projection.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    ]
+  },
+  {
+    "primitive_id": "shopping_admin/list_reviews_by_created_date_range_from_reviews_grid",
+    "method": "list_reviews_by_created_date_range_from_reviews_grid",
+    "capability": "Retrieve review records visible in the shopping admin reviews grid after applying a created-date range filter.",
+    "method_code": "def list_reviews_by_created_date_range_from_reviews_grid(self, start_date: str, end_date: str) -> dict:\n    import re\n\n    def _goto(url: str):\n        response = self.page.goto(url, wait_until=\"domcontentloaded\")\n        try:\n            self.page.wait_for_load_state(\"networkidle\", timeout=10000)\n        except Exception:\n            self.page.wait_for_timeout(1500)\n        return response\n\n    def _login_if_needed() -> None:\n        body_text = self.page.locator(\"body\").inner_text()\n        if re.search(r\"Username|Sign in|Login|password\", body_text, re.I):\n            field_values = [\n                ('input[name=\"username\"]', 'admin'),\n                ('input[name=\"password\"]', 'admin1234'),\n                ('input[name=\"login[username]\"]', 'admin'),\n                ('input[name=\"login[password]\"]', 'admin1234'),\n            ]\n            for selector, value in field_values:\n                loc = self.page.locator(selector)\n                try:\n                    if loc.count() > 0:\n                        loc.first.fill(value)\n                except Exception:\n                    pass\n            sign_in = self.page.get_by_role(\"button\", name=re.compile(r\"sign in|login\", re.I))\n            if sign_in.count() > 0:\n                sign_in.first.click()\n            else:\n                submit = self.page.locator('button[type=\"submit\"]')\n                if submit.count() > 0:\n                    submit.first.click()\n            try:\n                self.page.wait_for_load_state(\"networkidle\", timeout=10000)\n            except Exception:\n                self.page.wait_for_timeout(1500)\n\n    def _parse_records() -> list:\n        js = '''() => {\n            const records = [];\n            const tbody = document.querySelector('table[data-role=\"grid\"] tbody') || document.querySelector('table tbody');\n            if (!tbody) return records;\n            const headers = Array.from(document.querySelectorAll('table thead th')).map(th => (th.innerText || th.textContent || '').trim().toLowerCase());\n            for (const tr of Array.from(tbody.querySelectorAll('tr'))) {\n                const cells = Array.from(tr.querySelectorAll('td')).map(td => (td.innerText || td.textContent || '').trim());\n                if (!cells.length) continue;\n                const record = { row_text: cells.join(' | ') };\n                for (let i = 0; i < Math.min(headers.length, cells.length); i++) {\n                    const h = headers[i];\n                    const v = cells[i];\n                    if (!h) continue;\n                    if (h.includes('created')) record.created_at = v;\n                    else if (h === 'id' || h.endsWith(' id')) record.review_id = v;\n                    else if (h.includes('title')) record.title = v;\n                    else if (h.includes('nickname')) record.nickname = v;\n                    else if (h.includes('review')) record.review_text = v;\n                    else if (h.includes('status')) record.status = v;\n                    else if (h.includes('sku')) record.sku = v;\n                    else if (h.includes('product')) record.product = v;\n                    else if (h.includes('visibility')) record.visibility = v;\n                    else if (h.includes('type')) record.review_type = v;\n                }\n                records.push(record);\n            }\n            return records;\n        }'''\n        return self.page.evaluate(js)\n\n    _goto(\"http://gcrsandbox410.redmond.corp.microsoft.com:7780/admin\")\n    _login_if_needed()\n    _goto(\"http://gcrsandbox410.redmond.corp.microsoft.com:7780/admin/review/product/index/\")\n\n    from_input = self.page.locator('input[name=\"created_at[from]\"]').first\n    to_input = self.page.locator('input[name=\"created_at[to]\"]').first\n    from_input.fill(start_date)\n    to_input.fill(end_date)\n\n    search_button = self.page.get_by_role(\"button\", name=\"Search\")\n    if search_button.count() == 0:\n        raise RuntimeError(\"Search button not found on reviews grid\")\n    search_button.first.click()\n    try:\n        self.page.wait_for_load_state(\"networkidle\", timeout=10000)\n    except Exception:\n        self.page.wait_for_timeout(1000)\n\n    body_text = self.page.locator(\"body\").inner_text()\n    count_match = re.search(r\"(\\d+) records found\", body_text)\n    summary_count = int(count_match.group(1)) if count_match else None\n\n    return {\n        \"records\": _parse_records(),\n        \"applied_filters\": {\n            \"start_date\": start_date,\n            \"end_date\": end_date,\n        },\n        \"summary_count\": summary_count,\n        \"source_page\": self.page.url,\n    }",
+    "owns": [
+      "Navigate to the shopping admin product reviews grid",
+      "Use admin-session-authenticated page access to the reviews grid",
+      "Fill the grid's created date from/to filter inputs",
+      "Submit the grid search",
+      "Parse typed review-grid row records visible after filtering",
+      "Return the displayed post-filter summary count as an objective site field alongside the records"
+    ],
+    "does_not_own": [
+      "Choosing the business period of interest such as May 2023",
+      "Computing a workflow-level answer by counting records instead of using the site's displayed total",
+      "Aggregating across multiple separate filter runs",
+      "Returning raw DOM or full page text"
+    ],
+    "input_contract": {
+      "type": "object",
+      "properties": {
+        "start_date": {
+          "type": "string",
+          "description": "Start of created-date filter in the admin UI's accepted format, as demonstrated by values like '5/1/2023'."
+        },
+        "end_date": {
+          "type": "string",
+          "description": "End of created-date filter in the admin UI's accepted format, as demonstrated by values like '5/31/2023'."
+        }
+      },
+      "required": [
+        "start_date",
+        "end_date"
+      ]
+    },
+    "output_contract": {
+      "type": "object",
+      "properties": {
+        "records": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "review_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "title": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "nickname": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "review_text": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "status": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "sku": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "product": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "visibility": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "review_type": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "created_at": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "row_text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "row_text"
+            ]
+          }
+        },
+        "applied_filters": {
+          "type": "object",
+          "properties": {
+            "start_date": {
+              "type": "string"
+            },
+            "end_date": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "start_date",
+            "end_date"
+          ]
+        },
+        "summary_count": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Displayed '<n> records found' total parsed from the filtered reviews grid, when present."
+        },
+        "source_page": {
+          "type": "string",
+          "description": "Reviews grid URL used for the query."
+        }
+      },
+      "required": [
+        "records",
+        "applied_filters",
+        "summary_count",
+        "source_page"
+      ]
+    },
+    "requires": [],
+    "provides": [
+      "authenticated shopping_admin admin session if login succeeds",
+      "review records visible in the filtered reviews grid page",
+      "parsed filtered review-grid summary total when the page displays it"
+    ],
+    "supported_patterns": [
+      "Direct navigation to Magento admin reviews grid",
+      "Optional login when session is unauthenticated",
+      "Single query using created_at[from] and created_at[to] filters",
+      "Visible-row acquisition from the filtered reviews grid page",
+      "Parsing the post-filter '<n> records found' summary as accompanying metadata"
+    ],
+    "guarantees": {
+      "collection_scope": "page",
+      "completeness": "partial",
+      "supports_absence_proof": false,
+      "configuration": {
+        "kind": "none",
+        "supported_values": [],
+        "coupled_site_parameters_hidden": true
+      }
+    },
+    "acceptance_checks": [
+      "After submitting the search, the reviews grid page remains loaded with the caller-supplied created date range applied.",
+      "The method returns typed records parsed from visible grid rows on the filtered page, plus the displayed summary_count when the page exposes a '/\\d+ records found/' summary.",
+      "If the filtered page shows zero visible rows, the method returns {\"records\": []} and may still return summary_count: 0 when that summary is displayed."
+    ],
+    "source_evidence": [
+      {
+        "workflow_id": "task348_t248",
+        "template_id": "248",
+        "code_quote": "await page.goto('http://.../admin/review/product/index/', { waitUntil: 'domcontentloaded' }); await page.fill('input[name=\"created_at[from]\"]', '5/1/2023'); await page.fill('input[name=\"created_at[to]\"]', '5/31/2023'); await page.getByRole('button', { name: 'Search' }).click(); ... const filteredBody = await page.locator('body').innerText(); const countMatch = filteredBody.match(/(\\d+) records found/);",
+        "explanation": "The source demonstrates created-date filtering on the reviews grid and objective post-filter summary parsing. To satisfy the primitive boundary, the generalized primitive returns visible typed review-grid records from the filtered page and preserves the displayed summary total as accompanying site metadata instead of making count aggregation the sole public capability.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    ]
+  }
+]

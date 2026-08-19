@@ -17,7 +17,10 @@ def test_build_jobs_reads_only_train_build_tasks():
         },
         "test": {"gitlab": [{"t2_task_ids": [4]}], "map": []},
     }
-    assert MODULE.build_jobs(split) == [("gitlab", 1), ("gitlab", 2), ("map", 3)]
+    assert MODULE.build_jobs(split) == [
+        ("gitlab", "retrieve", 1), ("gitlab", "retrieve", 2),
+        ("map", "retrieve", 3),
+    ]
 
 
 def test_only_benchmark_outcomes_are_resumable():

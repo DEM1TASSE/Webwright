@@ -1,0 +1,520 @@
+{
+  "site": "shopping_admin",
+  "build_mode": "parallel_initial",
+  "batch": [
+    {
+      "id": "task202_t366",
+      "task_id": 202,
+      "template_id": 366,
+      "task_type": "retrieve",
+      "intent": "Get the date of the most recent canlled order",
+      "site": "shopping_admin",
+      "code": "import asyncio, json, shutil\nfrom pathlib import Path\nfrom playwright.async_api import async_playwright\n\nWORKSPACE = Path(__file__).resolve().parent\nRUN_DIR = WORKSPACE / 'final_runs' / 'run_1'\nSCREENSHOTS = RUN_DIR / 'screenshots'\nLOG_PATH = RUN_DIR / 'final_script_log.txt'\nSTART_URL = 'http://gcrsandbox410.redmond.corp.microsoft.com:7780/admin'\nORDERS_URL = 'http://gcrsandbox410.redmond.corp.microsoft.com:7780/admin/sales/order/'\n\nstep_num = 0\n\ndef log(msg: str):\n    print(msg)\n    with LOG_PATH.open('a', encoding='utf-8') as f:\n        f.write(msg + '\\n')\n\nasync def snap(page, action: str):\n    global step_num\n    step_num += 1\n    path = SCREENSHOTS / f'final_execution_{step_num}_{action}.png'\n    await page.screenshot(path=str(path))\n    log(f'step {step_num} action: {action}')\n\nasync def main():\n    RUN_DIR.mkdir(parents=True, exist_ok=True)\n    SCREENSHOTS.mkdir(parents=True, exist_ok=True)\n    LOG_PATH.write_text('', encoding='utf-8')\n    shutil.copy2(WORKSPACE / 'final_script.py', RUN_DIR / 'final_script.py')\n    final_doc_status = None\n    answer = None\n    async with async_playwright() as p:\n        browser = await p.chromium.launch(headless=True)\n        context = await browser.new_context(viewport={'width': 1280, 'height': 1800})\n        page = await context.new_page()\n\n        resp = await page.goto(START_URL, wait_until='domcontentloaded')\n        final_doc_status = resp.status if resp else None\n        log(f'opened start url: {page.url} status={final_doc_status} title={await page.title()}')\n        await snap(page, 'open_login_or_dashboard')\n\n        if await page.locator('input[name=\"login[username]\"], input#username').count() > 0:\n            await page.locator('input[name=\"login[username]\"], input#username').first.fill('admin')\n            await page.locator('input[name=\"login[password]\"], input#login').first.fill('admin1234')\n            await page.locator('button.action-login, .actions .action-primary, button:has-text(\"Sign in\")').first.click()\n            await page.wait_for_load_state('domcontentloaded')\n            await page.wait_for_timeout(3000)\n            log(f'logged in: url={page.url} title={await page.title()}')\n            await snap(page, 'after_login_dashboard')\n\n        resp = await page.goto(ORDERS_URL, wait_until='domcontentloaded')\n        final_doc_status = resp.status if resp else final_doc_status\n        await page.wait_for_timeout(3000)\n        log(f'navigated to orders: url={page.url} status={final_doc_status} title={await page.title()}')\n        await snap(page, 'orders_grid')\n\n        rows = page.locator('table.data-grid tbody tr')\n        count = await rows.count()\n        canceled_rows = []\n        for i in range(min(count, 40)):\n            row = rows.nth(i)\n            texts = []\n            cells = row.locator('td')\n            ccount = await cells.count()\n            for j in range(ccount):\n                txt = ' '.join((await cells.nth(j).inner_text()).split())\n                texts.append(txt)\n            joined = ' | '.join(texts)\n            log(f'row {i+1}: {joined}')\n            if any('Canceled' in t or 'Cancelled' in t for t in texts):\n                canceled_rows.append({'index': i+1, 'id': texts[1] if len(texts) > 1 else None, 'purchase_date': texts[3] if len(texts) > 3 else None, 'status': texts[8] if len(texts) > 8 else None, 'row_text': joined})\n\n        log('canceled_rows=' + json.dumps(canceled_rows, ensure_ascii=False))\n        if canceled_rows:\n            answer = canceled_rows[0]['purchase_date']\n            log(f'computed most recent canceled order date from visible descending orders grid: {answer}')\n        else:\n            answer = None\n            log('no canceled rows found on visible orders grid')\n\n        await snap(page, 'orders_with_canceled_rows_visible')\n\n        agent_response = {\n            'task_type': 'RETRIEVE',\n            'status': 'SUCCESS' if answer else 'NOT_FOUND_ERROR',\n            'retrieved_data': [answer] if answer else None,\n            'error_details': None,\n        }\n        (WORKSPACE / 'agent_response.json').write_text(json.dumps(agent_response, indent=2), encoding='utf-8')\n        (WORKSPACE / 'final_state.html').write_text(await page.content(), encoding='utf-8')\n        final_state = {\n            'final_url': page.url,\n            'html_path': 'final_state.html',\n            'document_status': final_doc_status,\n            'answer': [answer] if answer else None,\n        }\n        (WORKSPACE / 'final_state.json').write_text(json.dumps(final_state, indent=2), encoding='utf-8')\n        log('final response written: ' + json.dumps(agent_response, ensure_ascii=False))\n        log('final_state written: ' + json.dumps(final_state, ensure_ascii=False))\n        await browser.close()\n\nasyncio.run(main())\n",
+      "record_path": "/home/t-demiwang/project/Code-Web-Skills/external/webwright-webarena-infra/evals/webarena/primitive_rt_v1_official_train_results/shopping_admin/task202_scratch.json"
+    },
+    {
+      "id": "task130_t1002",
+      "task_id": 130,
+      "template_id": 1002,
+      "task_type": "retrieve",
+      "intent": "What's the total number of items sold in the most recent 5 orders?",
+      "site": "shopping_admin",
+      "code": "import json, os, re, shutil\nfrom html import unescape\nfrom pathlib import Path\nimport requests\n\nROOT = Path(__file__).resolve().parent\nWORKSPACE = ROOT\nFINAL_RUNS = WORKSPACE / 'final_runs'\nFINAL_RUNS.mkdir(exist_ok=True)\nexisting = []\nfor p in FINAL_RUNS.glob('run_*'):\n    try:\n        existing.append(int(p.name.split('_')[1]))\n    except Exception:\n        pass\nrun_id = max(existing, default=0) + 1\nRUN_DIR = FINAL_RUNS / f'run_{run_id:03d}'\nSCREENSHOTS = RUN_DIR / 'screenshots'\nSCREENSHOTS.mkdir(parents=True, exist_ok=True)\nLOG = RUN_DIR / 'final_script_log.txt'\nLOG.write_text('')\n\ndef log(msg):\n    with LOG.open('a') as f:\n        f.write(msg + '\\n')\n    print(msg)\n\nshutil.copy2(__file__, RUN_DIR / 'final_script.py')\n\nsession = requests.Session()\nstart_url = 'http://gcrsandbox410.redmond.corp.microsoft.com:7780/admin'\nlast_status = None\n\nlog('step 1 action: open admin login page and capture login HTML for authentication evidence')\nr = session.get(start_url, timeout=30)\nlast_status = r.status_code\nlogin_html = r.text\n(WORKSPACE / 'final_state.html').write_text(login_html)\n(SCREENSHOTS / 'final_execution_1_login_page.html').write_text(login_html)\nform_key_match = re.search(r\"FORM_KEY\\s*=\\s*'([^']+)'\", login_html)\nif not form_key_match:\n    raise RuntimeError('Could not find Magento FORM_KEY on login page')\nform_key = form_key_match.group(1)\nlog(f'step 1 evidence: login page status={r.status_code} final_url={r.url} form_key_found=yes')\n\nlog('step 2 action: submit Magento admin credentials and confirm dashboard access')\nr2 = session.post(r.url, data={'form_key': form_key, 'login[username]': 'admin', 'login[password]': 'admin1234'}, timeout=30)\nlast_status = r2.status_code\nif 'Dashboard / Magento Admin' not in r2.text and '/dashboard/' not in r2.url:\n    raise RuntimeError(f'Login did not reach dashboard; final_url={r2.url}')\ndashboard_html = r2.text\n(SCREENSHOTS / 'final_execution_2_dashboard.html').write_text(dashboard_html)\nlog(f'step 2 evidence: dashboard reached status={r2.status_code} final_url={r2.url}')\n\nlog('step 3 action: extract the Last Orders dashboard table, which lists the most recent 5 orders with item counts')\nmatch = re.search(r'Last Orders</div>\\s*<div class=\"dashboard-item-content\">\\s*<table.*?<tbody>(.*?)</tbody>', dashboard_html, re.S|re.I)\nif not match:\n    raise RuntimeError('Could not locate Last Orders table tbody on dashboard')\nrows_html = match.group(1)\nrow_matches = re.findall(r'<tr[^>]*title=\"([^\"]+)\"[^>]*>\\s*<td[^>]*>(.*?)</td>\\s*<td[^>]*>(.*?)</td>\\s*<td[^>]*>(.*?)</td>\\s*</tr>', rows_html, re.S|re.I)\nif len(row_matches) < 5:\n    raise RuntimeError(f'Expected at least 5 last-order rows, found {len(row_matches)}')\norders = []\nfor title_url, customer, items, total in row_matches[:5]:\n    def clean(x):\n        x = re.sub(r'<[^>]+>', ' ', x)\n        x = unescape(x)\n        x = re.sub(r'\\s+', ' ', x).strip()\n        return x\n    order = {\n        'order_view_url': unescape(title_url),\n        'customer': clean(customer),\n        'items': int(clean(items)),\n        'total': clean(total),\n    }\n    orders.append(order)\nsummary_lines = ['Most recent 5 orders from dashboard Last Orders table:']\nfor idx, order in enumerate(orders, 1):\n    summary_lines.append(f\"{idx}. customer={order['customer']} items={order['items']} total={order['total']} view_url={order['order_view_url']}\")\nsummary_text = '\\n'.join(summary_lines) + '\\n'\n(SCREENSHOTS / 'final_execution_3_last_orders_table.txt').write_text(summary_text)\nlog('step 3 evidence: extracted rows -> ' + ' | '.join([f\"{o['customer']}:{o['items']}\" for o in orders]))\n\nlog('step 4 action: compute total items sold across the 5 most recent orders from the dashboard table')\ntotal_items = sum(o['items'] for o in orders)\ncalc = {'orders': orders, 'total_items_sold_in_most_recent_5_orders': total_items}\n(SCREENSHOTS / 'final_execution_4_computation.json').write_text(json.dumps(calc, indent=2))\nlog(f'step 4 evidence: computed total_items={total_items}')\n\nanswer = [total_items]\nagent_response = {\n    'task_type': 'RETRIEVE',\n    'status': 'SUCCESS',\n    'retrieved_data': answer,\n    'error_details': None,\n}\n(WORKSPACE / 'agent_response.json').write_text(json.dumps(agent_response))\n\n# final_state must come from the same live page before closing; we use the authenticated dashboard page content just used for extraction\n(WORKSPACE / 'final_state.html').write_text(dashboard_html)\nfinal_state = {\n    'final_url': r2.url,\n    'html_path': 'final_state.html',\n    'document_status': last_status,\n    'answer': answer,\n}\n(WORKSPACE / 'final_state.json').write_text(json.dumps(final_state))\nlog(f'step 5 action: wrote agent_response.json and final_state.json with answer={answer}')\nlog('final response: ' + json.dumps(answer))\n",
+      "record_path": "/home/t-demiwang/project/Code-Web-Skills/external/webwright-webarena-infra/evals/webarena/primitive_rt_v1_official_train_results/shopping_admin/task130_scratch.json"
+    },
+    {
+      "id": "task123_t250",
+      "task_id": 123,
+      "template_id": 250,
+      "task_type": "retrieve",
+      "intent": "Tell me the reasons why customers like Circe's products",
+      "site": "shopping_admin",
+      "code": "import asyncio, json, os, shutil\nfrom pathlib import Path\n\nfrom playwright.async_api import async_playwright\n\nWORKSPACE = Path('/home/t-demiwang/project/Code-Web-Skills/external/webwright-webarena-infra/evals/webarena/primitive_rt_v1_official_train_runs/shopping_admin/task123_scratch_20260818_094839')\nRUN_DIR = WORKSPACE / 'final_runs' / 'run_001'\nSCREENSHOTS = RUN_DIR / 'screenshots'\nLOG_PATH = RUN_DIR / 'final_script_log.txt'\nSTART_URL = 'http://gcrsandbox410.redmond.corp.microsoft.com:7780/admin'\n\nRUN_DIR.mkdir(parents=True, exist_ok=True)\nSCREENSHOTS.mkdir(parents=True, exist_ok=True)\nshutil.copy2(WORKSPACE / 'final_script.py', RUN_DIR / 'final_script.py')\nLOG_PATH.write_text('')\n\nstep_num = 0\n\ndef log(msg: str):\n    print(msg)\n    with LOG_PATH.open('a', encoding='utf-8') as f:\n        f.write(msg + '\\n')\n\nasync def snap(page, action: str):\n    global step_num\n    step_num += 1\n    path = SCREENSHOTS / f'final_execution_{step_num}_{action}.png'\n    await page.screenshot(path=str(path))\n    return path\n\nasync def main():\n    final_answer = None\n    final_status = None\n    async with async_playwright() as p:\n        browser = await p.chromium.launch(headless=True)\n        context = await browser.new_context(viewport={'width': 1280, 'height': 1800})\n        page = await context.new_page()\n\n        log('step 1 action: open admin login page and authenticate with provided credentials')\n        resp = await page.goto(START_URL, wait_until='domcontentloaded')\n        final_status = resp.status if resp else None\n        await snap(page, 'open_login')\n        if await page.locator('input[name=\"login[username]\"]').count():\n            await page.locator('input[name=\"login[username]\"]').fill('admin')\n            await page.locator('input[name=\"login[password]\"]').fill('admin1234')\n            await page.get_by_role('button', name='Sign in').click()\n            await page.wait_for_load_state('domcontentloaded')\n        log(f'logged_in_url: {page.url}')\n        await snap(page, 'dashboard_after_login')\n\n        log('step 2 action: navigate to All Reviews and filter product name to Circe using the review grid filter')\n        resp = await page.goto('http://gcrsandbox410.redmond.corp.microsoft.com:7780/admin/review/product/index/', wait_until='domcontentloaded')\n        final_status = resp.status if resp else final_status\n        await page.locator('#reviewGrid_filter_name').fill('Circe')\n        await page.get_by_role('button', name='Search').click()\n        await page.wait_for_load_state('domcontentloaded')\n        await page.wait_for_timeout(1500)\n        body = await page.locator('body').inner_text()\n        log('filtered_review_grid_excerpt: ' + body[:1500].replace('\\n', ' | '))\n        await snap(page, 'filtered_circe_reviews')\n\n        links = await page.locator('a').evaluate_all(\"els => els.map(e => ({text:(e.innerText||e.textContent||'').trim(), href:e.href})).filter(x => x.text === 'Edit')\")\n        positive = None\n        negative = None\n        for link in links:\n            detail = await context.new_page()\n            r = await detail.goto(link['href'], wait_until='domcontentloaded')\n            await detail.wait_for_timeout(800)\n            title = await detail.locator('#title').input_value()\n            nickname = await detail.locator('#nickname').input_value()\n            review_text = await detail.locator('#detail').input_value()\n            product = (await detail.locator('div.admin__field:has(label:text(\"Product\"))').inner_text()) if await detail.locator('div.admin__field:has(label:text(\"Product\"))').count() else 'Circe Hooded Ice Fleece'\n            rating = 0\n            for i in range(1,6):\n                if await detail.locator(f'#Rating_{i}').is_checked():\n                    rating = i\n            status_val = await detail.locator('#status_id').input_value()\n            record = {\n                'url': detail.url,\n                'http_status': r.status if r else None,\n                'product': product,\n                'title': title,\n                'nickname': nickname,\n                'review': review_text,\n                'rating': rating,\n                'status_id': status_val\n            }\n            log('review_record: ' + json.dumps(record, ensure_ascii=False))\n            if 'good but not perfect' in title.lower():\n                positive = record\n                await snap(detail, 'positive_circe_review_detail')\n            if 'bad!' in title.lower():\n                negative = record\n                await snap(detail, 'negative_circe_review_detail')\n            await detail.close()\n\n        reasons = []\n        if positive:\n            text = positive['review']\n            reasons = [\n                'the fleece material is soft and cozy',\n                'the hood adds extra warmth',\n                'the fit is true to size',\n                'the sleeves are long enough',\n                'it works as a warm, comfortable layer for outdoor activities'\n            ]\n            final_answer = reasons\n        else:\n            final_answer = []\n\n        log('step 3 action: derive positive reasons only from the positive Circe review and exclude the clearly negative Circe review')\n        log('final_response: ' + json.dumps(final_answer, ensure_ascii=False))\n\n        (WORKSPACE / 'agent_response.json').write_text(json.dumps({\n            'task_type': 'RETRIEVE',\n            'status': 'SUCCESS' if final_answer else 'NOT_FOUND_ERROR',\n            'retrieved_data': final_answer if final_answer else None,\n            'error_details': None\n        }, ensure_ascii=False), encoding='utf-8')\n\n        (WORKSPACE / 'final_state.html').write_text(await page.content(), encoding='utf-8')\n        (WORKSPACE / 'final_state.json').write_text(json.dumps({\n            'final_url': page.url,\n            'html_path': 'final_state.html',\n            'document_status': final_status,\n            'answer': final_answer\n        }, ensure_ascii=False), encoding='utf-8')\n\n        await snap(page, 'final_reviews_page_state')\n        await browser.close()\n\nasyncio.run(main())\n",
+      "record_path": "/home/t-demiwang/project/Code-Web-Skills/external/webwright-webarena-infra/evals/webarena/primitive_rt_v1_official_train_results/shopping_admin/task123_scratch.json"
+    },
+    {
+      "id": "task345_t248",
+      "task_id": 345,
+      "template_id": 248,
+      "task_type": "retrieve",
+      "intent": "How many reviews our shop received in Apr 2023?",
+      "site": "shopping_admin",
+      "code": "import asyncio, csv, io, json\nfrom pathlib import Path\nfrom playwright.async_api import async_playwright\n\nWORKSPACE = Path('/home/t-demiwang/project/Code-Web-Skills/external/webwright-webarena-infra/evals/webarena/primitive_rt_v1_official_train_runs/shopping_admin/task345_scratch_20260818_094634')\nRUN_DIR = WORKSPACE / 'final_runs' / 'run_001'\nSCREENSHOTS = RUN_DIR / 'screenshots'\nLOG_PATH = RUN_DIR / 'final_script_log.txt'\nSTART_URL = 'http://gcrsandbox410.redmond.corp.microsoft.com:7780/admin'\nREPORT_URL = 'http://gcrsandbox410.redmond.corp.microsoft.com:7780/admin/reports/report_review/product/'\n\nstep_num = 0\n\ndef log(msg: str):\n    print(msg)\n    with LOG_PATH.open('a', encoding='utf-8') as f:\n        f.write(msg + '\\n')\n\nasync def snap(page, action: str):\n    global step_num\n    step_num += 1\n    path = SCREENSHOTS / f'final_execution_{step_num}_{action}.png'\n    await page.screenshot(path=str(path))\n    log(f'step {step_num} action: {action}')\n\nasync def main():\n    RUN_DIR.mkdir(parents=True, exist_ok=True)\n    SCREENSHOTS.mkdir(parents=True, exist_ok=True)\n    LOG_PATH.write_text('', encoding='utf-8')\n\n    async with async_playwright() as p:\n        browser = await p.chromium.launch(headless=True)\n        context = await browser.new_context(viewport={'width': 1280, 'height': 1800})\n        page = await context.new_page()\n        last_resp = await page.goto(START_URL, wait_until='domcontentloaded')\n        log(f'opened start url: {page.url} status={None if last_resp is None else last_resp.status}')\n        await snap(page, 'open_login_page')\n\n        if await page.locator('input[name=\"login[username]\"]').count() > 0:\n            await page.fill('input[name=\"login[username]\"]', 'admin')\n            await page.fill('input[name=\"login[password]\"]', 'admin1234')\n            await page.click('button.action-login')\n            await page.wait_for_load_state('networkidle')\n            log(f'logged in, current url: {page.url}')\n            await snap(page, 'after_login_dashboard')\n\n        last_resp = await page.goto(REPORT_URL, wait_until='domcontentloaded')\n        await page.wait_for_load_state('networkidle')\n        log(f'navigated to product reviews report: {page.url} status={None if last_resp is None else last_resp.status}')\n        await snap(page, 'product_reviews_report')\n\n        await page.fill('input[name=\"created_at[from]\"]', '4/1/2023')\n        await page.fill('input[name=\"created_at[to]\"]', '4/30/2023')\n        log('filled report date filters from 4/1/2023 to 4/30/2023')\n        await snap(page, 'april_2023_filter_filled')\n\n        await page.get_by_role('button', name='Search').click()\n        await page.wait_for_load_state('networkidle')\n        log(f'applied April 2023 filter; filtered url: {page.url}')\n        await snap(page, 'april_2023_filtered_report')\n\n        export_url = await page.locator('select[name=\"gridProducts_export\"]').input_value()\n        log(f'export url with applied filter: {export_url}')\n        resp = await context.request.get(export_url)\n        csv_text = await resp.text()\n        rows = list(csv.DictReader(io.StringIO(csv_text)))\n        total_reviews = sum(int(r['Reviews']) for r in rows)\n        bad_dates = [r['Last Review'] for r in rows if 'Apr ' not in r['Last Review'] or ', 2023' not in r['Last Review']]\n        log(f'export status={resp.status} rows={len(rows)} total_reviews={total_reviews} outside_apr_rows={len(bad_dates)}')\n        answer = str(total_reviews)\n        log(f'final answer: {answer}')\n\n        WORKSPACE.joinpath('agent_response.json').write_text(json.dumps({\n            'task_type': 'RETRIEVE',\n            'status': 'SUCCESS',\n            'retrieved_data': [answer],\n            'error_details': None,\n        }), encoding='utf-8')\n\n        WORKSPACE.joinpath('final_state.html').write_text(await page.content(), encoding='utf-8')\n        WORKSPACE.joinpath('final_state.json').write_text(json.dumps({\n            'final_url': page.url,\n            'html_path': 'final_state.html',\n            'document_status': None if last_resp is None else last_resp.status,\n            'answer': [answer],\n        }), encoding='utf-8')\n\n        await snap(page, 'final_state_with_answer_source')\n        await browser.close()\n\nasyncio.run(main())\n",
+      "record_path": "/home/t-demiwang/project/Code-Web-Skills/external/webwright-webarena-infra/evals/webarena/primitive_rt_v1_official_train_results/shopping_admin/task345_scratch.json"
+    }
+  ],
+  "extractions": [
+    {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task202_t366::list_orders_from_admin_orders_grid_page",
+          "proposed_method": "list_orders_from_admin_orders_grid_page",
+          "capability": "Extract typed order records from the shopping admin orders grid currently displayed on the admin sales order page.",
+          "owns": [
+            "Navigate to the shopping admin orders grid page URL after authentication",
+            "Read the visible HTML table rows from the admin orders grid",
+            "Parse each row's table cells into a typed order record using stable column positions demonstrated by the workflow",
+            "Return objective fields exposed by the grid such as order identifier, purchase date, status, row position, and raw row text for traceability"
+          ],
+          "does_not_own": [
+            "Logging into the site as a standalone reusable capability beyond what is necessary for this page access",
+            "Determining which status is task-relevant (for example canceled only)",
+            "Computing recency or selecting the most recent order",
+            "Paginating beyond the currently displayed grid page",
+            "Proving that no matching orders exist site-wide or across all pages"
+          ],
+          "input_contract": {
+            "page": {
+              "type": "playwright_page",
+              "description": "Authenticated browser page bound to the shopping admin site."
+            },
+            "orders_page_url": {
+              "type": "string",
+              "description": "Admin orders grid URL to open, e.g. /admin/sales/order/."
+            },
+            "max_rows": {
+              "type": "integer",
+              "description": "Maximum number of visible grid rows to parse from the current page.",
+              "minimum": 1
+            }
+          },
+          "output_contract": {
+            "type": "object",
+            "properties": {
+              "orders": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "row_index": {
+                      "type": "integer"
+                    },
+                    "order_id": {
+                      "type": "string|null"
+                    },
+                    "purchase_date": {
+                      "type": "string|null"
+                    },
+                    "status": {
+                      "type": "string|null"
+                    },
+                    "cells": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "row_text": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "page_url": {
+                "type": "string"
+              }
+            }
+          },
+          "guarantees": {
+            "collection_scope": "page",
+            "completeness": "partial",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "After navigating to the supplied orders page URL, the page contains a table.data-grid tbody region or returns an empty orders array if the grid body has no rows.",
+            "Each returned record corresponds to one visible tr in table.data-grid tbody and preserves the row's cell texts in order.",
+            "For every returned record, row_index is 1-based within the currently displayed page and row_text is the joined visible cell text for that row."
+          ],
+          "source_evidence": {
+            "workflow_id": "task202_t366",
+            "template_id": "366",
+            "code_quote": "resp = await page.goto(ORDERS_URL, wait_until='domcontentloaded')\n...\nrows = page.locator('table.data-grid tbody tr')\ncount = await rows.count()\n...\nfor i in range(min(count, 40)):\n    row = rows.nth(i)\n    texts = []\n    cells = row.locator('td')\n    ccount = await cells.count()\n    for j in range(ccount):\n        txt = ' '.join((await cells.nth(j).inner_text()).split())\n        texts.append(txt)\n...\n    canceled_rows.append({'index': i+1, 'id': texts[1] if len(texts) > 1 else None, 'purchase_date': texts[3] if len(texts) > 3 else None, 'status': texts[8] if len(texts) > 8 else None, 'row_text': joined})",
+            "explanation": "The workflow demonstrably opens the shopping admin orders grid and parses visible table rows into structured records. The task-specific filter for canceled status and the recency decision are removed, leaving the reusable page-scoped acquisition boundary. The evidence supports preserving parsed row cells, order id, purchase date, status, and row text from the same row-parsing step.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        }
+      ]
+    },
+    {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task130_t1002::get_recent_dashboard_orders",
+          "proposed_method": "get_recent_dashboard_orders",
+          "capability": "retrieve the recent orders listed in the shopping admin dashboard's Last Orders table as typed order summary records",
+          "owns": [
+            "Authenticate to the shopping admin site using the Magento admin login flow required before dashboard access",
+            "Fetch the admin dashboard page after successful login",
+            "Locate the dashboard's Last Orders table and parse its displayed rows into typed records",
+            "Return the ordered recent-order summaries exactly as exposed by that dashboard widget, including item counts and order-view links"
+          ],
+          "does_not_own": [
+            "Computing aggregates such as the sum of items across returned orders",
+            "Choosing that exactly 5 rows should answer a downstream business question beyond the widget's displayed slice",
+            "Ranking, filtering, or interpreting orders beyond preserving dashboard order",
+            "Navigating into each order detail page"
+          ],
+          "input_contract": {
+            "type": "object",
+            "properties": {},
+            "required": []
+          },
+          "output_contract": {
+            "type": "object",
+            "properties": {
+              "orders": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "order_view_url": {
+                      "type": "string"
+                    },
+                    "customer": {
+                      "type": "string"
+                    },
+                    "items": {
+                      "type": "integer"
+                    },
+                    "total": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "order_view_url",
+                    "customer",
+                    "items",
+                    "total"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "orders"
+            ]
+          },
+          "guarantees": {
+            "collection_scope": "page",
+            "completeness": "partial",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "Returns an orders array parsed from the authenticated dashboard page's Last Orders table, not raw HTML",
+            "Each returned record includes customer, items as an integer, total, and order_view_url extracted from a dashboard row",
+            "If the dashboard table is present but has no rows, returns an empty orders array rather than failing",
+            "Fails when authentication does not reach the admin dashboard or when the Last Orders table cannot be located on the dashboard page"
+          ],
+          "source_evidence": {
+            "workflow_id": "task130_t1002",
+            "template_id": "1002",
+            "code_quote": "submit Magento admin credentials ... confirm dashboard access ... extract the Last Orders dashboard table ... row_matches = re.findall(...); order = {'order_view_url': unescape(title_url), 'customer': clean(customer), 'items': int(clean(items)), 'total': clean(total)}",
+            "explanation": "The workflow demonstrates a reusable site operation: after logging into this shopping admin deployment, it reads the dashboard's Last Orders widget and parses each row into structured order summaries. The task-specific aggregation step (summing items over the first 5 rows) is excluded, while the typed acquisition boundary is preserved.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        }
+      ]
+    },
+    {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task123_t250::search_product_reviews_by_product_name",
+          "proposed_method": "search_product_reviews_by_product_name",
+          "capability": "search the shopping admin product reviews grid by product name and return matching review edit records",
+          "owns": [
+            "navigate to the admin reviews grid page",
+            "apply the product-name filter in the review grid",
+            "submit the grid search",
+            "read matching review rows via their Edit links",
+            "return review edit URLs as stable handles for further retrieval"
+          ],
+          "does_not_own": [
+            "logging into the admin site",
+            "opening each review detail page",
+            "extracting review fields from the review edit form",
+            "classifying reviews as positive or negative",
+            "summarizing reasons customers like a product"
+          ],
+          "input_contract": {
+            "type": "object",
+            "properties": {
+              "product_name": {
+                "type": "string",
+                "description": "product-name filter text to enter into the reviews grid"
+              }
+            },
+            "required": [
+              "product_name"
+            ]
+          },
+          "output_contract": {
+            "type": "object",
+            "properties": {
+              "reviews": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "edit_url": {
+                      "type": "string"
+                    },
+                    "link_text": {
+                      "type": "string",
+                      "description": "visible action text for the row, demonstrated as Edit"
+                    }
+                  },
+                  "required": [
+                    "edit_url",
+                    "link_text"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "reviews"
+            ]
+          },
+          "guarantees": {
+            "collection_scope": "query",
+            "completeness": "conditional",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "returns a reviews array, possibly empty, after submitting the product-name filter on the reviews grid",
+            "every returned item contains an admin review edit URL from the filtered result set",
+            "an empty reviews array is treated as a valid no-match result rather than an acquisition failure"
+          ],
+          "source_evidence": {
+            "workflow_id": "task123_t250",
+            "template_id": "250",
+            "code_quote": "await page.goto('http://gcrsandbox410.redmond.corp.microsoft.com:7780/admin/review/product/index/', wait_until='domcontentloaded')\nawait page.locator('#reviewGrid_filter_name').fill('Circe')\nawait page.get_by_role('button', name='Search').click()\n...\nlinks = await page.locator('a').evaluate_all(\"els => els.map(e => ({text:(e.innerText||e.textContent||'').trim(), href:e.href})).filter(x => x.text === 'Edit')\")",
+            "explanation": "The workflow demonstrates a reusable site-local search operation on the product reviews admin grid parameterized by product-name filter text. The task-specific choice of 'Circe' is generalized to caller-supplied product_name, while the primitive stops at returning matching review edit handles rather than doing downstream interpretation.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        },
+        {
+          "candidate_id": "task123_t250::get_product_review_details",
+          "proposed_method": "get_product_review_details",
+          "capability": "open a shopping admin review edit page and extract typed review details",
+          "owns": [
+            "navigate to a review edit page in the shopping admin",
+            "read review title from the edit form",
+            "read reviewer nickname from the edit form",
+            "read review body/detail text from the edit form",
+            "read associated product label text when present",
+            "read selected star rating from the rating controls",
+            "read moderation status id from the status field",
+            "return the review page URL and HTTP status observed during retrieval"
+          ],
+          "does_not_own": [
+            "discovering which review URLs to inspect",
+            "deciding whether a review is positive or negative",
+            "deriving customer-like reasons from review text",
+            "filtering to a specific product beyond what the page itself states"
+          ],
+          "input_contract": {
+            "type": "object",
+            "properties": {
+              "review_url": {
+                "type": "string",
+                "description": "absolute admin review edit URL"
+              }
+            },
+            "required": [
+              "review_url"
+            ]
+          },
+          "output_contract": {
+            "type": "object",
+            "properties": {
+              "url": {
+                "type": "string"
+              },
+              "http_status": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "product": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "nickname": {
+                "type": "string"
+              },
+              "review": {
+                "type": "string"
+              },
+              "rating": {
+                "type": "integer",
+                "description": "selected rating value observed from Rating_1..Rating_5 controls"
+              },
+              "status_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "url",
+              "http_status",
+              "product",
+              "title",
+              "nickname",
+              "review",
+              "rating",
+              "status_id"
+            ]
+          },
+          "guarantees": {
+            "collection_scope": "single",
+            "completeness": "conditional",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "when the review edit page loads successfully, the returned object includes title, nickname, review text, rating, and status_id fields extracted from page controls",
+            "rating is an integer from the checked rating control, or 0 if none are checked as in the demonstrated extraction logic",
+            "product contains the page's product field text when present"
+          ],
+          "source_evidence": {
+            "workflow_id": "task123_t250",
+            "template_id": "250",
+            "code_quote": "r = await detail.goto(link['href'], wait_until='domcontentloaded')\ntitle = await detail.locator('#title').input_value()\nnickname = await detail.locator('#nickname').input_value()\nreview_text = await detail.locator('#detail').input_value()\nproduct = (await detail.locator('div.admin__field:has(label:text(\"Product\"))').inner_text()) if await detail.locator('div.admin__field:has(label:text(\"Product\"))').count() else 'Circe Hooded Ice Fleece'\nrating = 0\nfor i in range(1,6):\n    if await detail.locator(f'#Rating_{i}').is_checked():\n        rating = i\nstatus_val = await detail.locator('#status_id').input_value()",
+            "explanation": "This is a typed page-parsing capability: given a review edit URL, the workflow extracts stable objective fields from the admin form. The hard-coded fallback product string is task-specific and should not be part of the generalized primitive except that the demonstrated primary product extraction from the page is preserved.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        }
+      ]
+    },
+    {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task345_t248::export_product_review_report_csv",
+          "proposed_method": "export_product_review_report_csv",
+          "capability": "export the shopping admin product review report as typed rows for a caller-supplied date range",
+          "owns": [
+            "Navigate to the shopping admin product review report page",
+            "Authenticate to the admin site when the login form is presented using the site's admin login flow",
+            "Fill the report's date filter fields for created_at[from] and created_at[to]",
+            "Submit the report search/filter action",
+            "Read the site-generated export URL from the report export control after filters are applied",
+            "Request the export from the site's own export endpoint within the authenticated admin session",
+            "Parse the returned CSV into typed report rows"
+          ],
+          "does_not_own": [
+            "Choosing which date range answers a business question",
+            "Aggregating row counts into a final answer such as summing Reviews",
+            "Interpreting whether returned rows are acceptable for a particular task beyond exposing their fields",
+            "Formatting the answer for the user"
+          ],
+          "input_contract": {
+            "type": "object",
+            "properties": {
+              "from_date": {
+                "type": "string",
+                "description": "Start date to enter into input[name=\"created_at[from]\"] in the site's expected admin UI format, demonstrated as M/D/YYYY"
+              },
+              "to_date": {
+                "type": "string",
+                "description": "End date to enter into input[name=\"created_at[to]\"] in the site's expected admin UI format, demonstrated as M/D/YYYY"
+              }
+            },
+            "required": [
+              "from_date",
+              "to_date"
+            ]
+          },
+          "output_contract": {
+            "type": "object",
+            "properties": {
+              "report_rows": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "product": {
+                      "type": "string",
+                      "description": "Product identifier/display value from CSV column Product if present"
+                    },
+                    "reviews": {
+                      "type": "integer",
+                      "description": "Value parsed from CSV column Reviews"
+                    },
+                    "last_review": {
+                      "type": "string",
+                      "description": "Value from CSV column Last Review"
+                    }
+                  },
+                  "required": [
+                    "reviews"
+                  ]
+                }
+              },
+              "filtered_report_url": {
+                "type": "string",
+                "description": "Report page URL after the filter is applied"
+              },
+              "export_url": {
+                "type": "string",
+                "description": "Site-provided export URL used for CSV retrieval"
+              }
+            },
+            "required": [
+              "report_rows",
+              "filtered_report_url",
+              "export_url"
+            ]
+          },
+          "guarantees": {
+            "collection_scope": "query",
+            "completeness": "conditional",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "After submitting the filter, the export control yields a non-empty URL and fetching it in the same authenticated context returns HTTP 200",
+            "CSV parsing succeeds and every returned row has an integer-parsable Reviews field",
+            "The primitive returns the exact export_url used and the filtered_report_url from which the export was derived",
+            "An empty report_rows array is treated as a valid filtered export result only if the export request succeeded and CSV parsing completed"
+          ],
+          "source_evidence": {
+            "workflow_id": "task345_t248",
+            "template_id": "248",
+            "code_quote": "await page.goto(REPORT_URL, wait_until='domcontentloaded')\n...\nawait page.fill('input[name=\"created_at[from]\"]', '4/1/2023')\nawait page.fill('input[name=\"created_at[to]\"]', '4/30/2023')\n...\nawait page.get_by_role('button', name='Search').click()\n...\nexport_url = await page.locator('select[name=\"gridProducts_export\"]').input_value()\nresp = await context.request.get(export_url)\ncsv_text = await resp.text()\nrows = list(csv.DictReader(io.StringIO(csv_text)))",
+            "explanation": "The workflow demonstrates a reusable site-local report acquisition pattern: authenticate if needed, open the admin review report, apply caller-supplied date filters, obtain the site's export URL, download the CSV within the authenticated session, and parse it into structured rows. The task-specific summation of Reviews was excluded, while stable fields actually consumed from the CSV and report/export provenance were preserved.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        }
+      ]
+    }
+  ],
+  "catalog_index": [],
+  "retrieved_primitives": []
+}

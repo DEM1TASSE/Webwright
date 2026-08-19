@@ -1,0 +1,141 @@
+{
+  "decision": "CANDIDATES",
+  "candidates": [
+    {
+      "candidate_id": "task359_t206::authenticate_customer_via_graphql",
+      "proposed_method": "authenticate_customer_via_graphql",
+      "capability": "authenticate a shopping-site customer account via the site's GraphQL API and obtain a bearer token for subsequent authenticated site requests",
+      "owns": [
+        "Submitting the site's GraphQL generateCustomerToken mutation with customer email and password",
+        "Parsing the GraphQL response to extract the customer token",
+        "Returning a bearer token suitable for Authorization headers on this site's authenticated GraphQL calls"
+      ],
+      "does_not_own": [
+        "Choosing which account credentials to use for a task",
+        "Performing UI login flows",
+        "Using the token to retrieve any specific business object such as orders"
+      ],
+      "input_contract": {
+        "email": {
+          "type": "string",
+          "description": "Customer account email address"
+        },
+        "password": {
+          "type": "string",
+          "description": "Customer account password"
+        }
+      },
+      "output_contract": {
+        "token": {
+          "type": "string",
+          "description": "Customer bearer token returned by the site's GraphQL generateCustomerToken mutation"
+        }
+      },
+      "guarantees": {
+        "collection_scope": "not_applicable",
+        "completeness": "not_applicable",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "none",
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "Returns a non-empty token string extracted from data.generateCustomerToken.token",
+        "Returned token is usable as a Bearer token in the site's authenticated GraphQL requests"
+      ],
+      "source_evidence": {
+        "workflow_id": "task359_t206",
+        "template_id": "206",
+        "code_quote": "token_query = 'mutation{generateCustomerToken(email:\"%s\", password:\"%s\"){token}}' % (EMAIL, PASSWORD)\ntoken_resp = await context.request.post(GRAPHQL_URL, data={'query': token_query})\ntoken_json = await token_resp.json()\ntoken = token_json['data']['generateCustomerToken']['token']",
+        "explanation": "The workflow demonstrates a site-local authentication mechanism through the shopping site's GraphQL endpoint, independent of the task-specific order lookup. Hard-coded credentials can be parameterized as inputs while preserving the same reusable site operation.",
+        "evidence_match_mode": "exact"
+      }
+    },
+    {
+      "candidate_id": "task359_t206::list_customer_orders_by_number",
+      "proposed_method": "list_customer_orders_by_number",
+      "capability": "retrieve the authenticated customer's order records from the shopping site's GraphQL API filtered by order number match",
+      "owns": [
+        "Issuing an authenticated GraphQL customer orders query against the shopping site",
+        "Applying the site's order-number filter parameter in the GraphQL query",
+        "Parsing returned order items into typed order records including identity, date, status, totals, and result count metadata"
+      ],
+      "does_not_own": [
+        "Authenticating the customer session if no bearer token is provided",
+        "Deciding which order number to search for",
+        "Selecting only the first result for a task answer",
+        "Formatting the retrieved order date for the user"
+      ],
+      "input_contract": {
+        "customer_token": {
+          "type": "string",
+          "description": "Bearer token for an authenticated customer account"
+        },
+        "order_number_match": {
+          "type": "string",
+          "description": "Order number match string supplied to orders(filter:{number:{match:...}})"
+        }
+      },
+      "output_contract": {
+        "orders": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "number": {
+                "type": "string",
+                "description": "Order number"
+              },
+              "order_date": {
+                "type": "string",
+                "description": "Order creation timestamp as returned by the site"
+              },
+              "status": {
+                "type": "string",
+                "description": "Order status label"
+              },
+              "grand_total_value": {
+                "type": "number",
+                "description": "Grand total numeric value"
+              },
+              "grand_total_currency": {
+                "type": "string",
+                "description": "Grand total currency code"
+              }
+            }
+          },
+          "description": "Order records returned in customer.orders.items for the authenticated customer and query"
+        },
+        "total_count": {
+          "type": "integer",
+          "description": "Total count reported by customer.orders.total_count for this filtered query"
+        }
+      },
+      "guarantees": {
+        "collection_scope": "query",
+        "completeness": "conditional",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "none",
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "Response parses successfully from data.customer.orders",
+        "Every returned order record includes number, order_date, and status fields",
+        "total_count is present and is consistent with the returned filtered query scope",
+        "If no orders match, returns an empty orders array rather than failing"
+      ],
+      "source_evidence": {
+        "workflow_id": "task359_t206",
+        "template_id": "206",
+        "code_quote": "orders_query = '{customer{firstname lastname email orders(filter:{number:{match:\"148\"}}){items{number order_date status total{grand_total{value currency}}} total_count}}}'\norders_resp = await context.request.post(GRAPHQL_URL, data={'query': orders_query}, headers={'Authorization': f'Bearer {token}'})\norders_json = await orders_resp.json()\norder = orders_json['data']['customer']['orders']['items'][0]",
+        "explanation": "The workflow demonstrates a reusable authenticated order-search capability on the shopping site: query the current customer's orders with a caller-supplied order-number match and parse structured order records. The current task uses only the first item's order_date, but the evidence exposes richer stable fields and the query-level total_count, so those are preserved in the generalized boundary.",
+        "evidence_match_mode": "exact"
+      }
+    }
+  ]
+}

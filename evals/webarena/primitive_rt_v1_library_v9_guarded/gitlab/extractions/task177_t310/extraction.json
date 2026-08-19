@@ -1,0 +1,185 @@
+{
+  "decision": "CANDIDATES",
+  "candidates": [
+    {
+      "candidate_id": "task177_t310::search_dashboard_issues",
+      "proposed_method": "search_dashboard_issues",
+      "capability": "Search the authenticated GitLab dashboard issues listing with site-supported filters and return typed issue-summary records parsed from the HTML results page.",
+      "owns": [
+        "Authenticating to GitLab via the sign-in form using authenticity_token and session cookies",
+        "Constructing and requesting the GitLab dashboard issues URL with assignee_username, state, and search query parameters",
+        "Parsing the issues results HTML for issue links matching GitLab issue URL shape",
+        "Extracting per-result updated timestamp from nearby datetime markup when present",
+        "Deduplicating repeated issue links within the returned page by stable issue href",
+        "Returning typed summary records from the page rather than raw HTML"
+      ],
+      "does_not_own": [
+        "Choosing which query terms to search for",
+        "Selecting only the latest result among returned matches",
+        "Determining semantic relevance beyond the site's own filters and the parsed returned records",
+        "Fetching the full issue detail page",
+        "Interpreting issue closed/open state from the issue detail page",
+        "Proving that no matching issue exists outside the returned results page"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "assignee_username": {
+            "type": "string",
+            "description": "GitLab username used in the dashboard assignee filter."
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "opened",
+              "closed",
+              "all"
+            ],
+            "description": "Issue state filter supported by the dashboard issues page."
+          },
+          "search_query": {
+            "type": "string",
+            "description": "Free-text query sent to the dashboard issues search parameter."
+          }
+        },
+        "required": [
+          "assignee_username",
+          "state",
+          "search_query"
+        ]
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "issue_path": {
+                  "type": "string",
+                  "description": "Relative GitLab issue path such as /group/project/-/issues/123."
+                },
+                "issue_url": {
+                  "type": "string",
+                  "description": "Absolute URL of the issue result, if normalized by the primitive."
+                },
+                "updated_at": {
+                  "type": "string",
+                  "description": "Timestamp string extracted from a datetime attribute near the result, when present."
+                },
+                "result_text": {
+                  "type": "string",
+                  "description": "Visible text snippet parsed from the result region around the issue link."
+                }
+              },
+              "required": [
+                "issue_path",
+                "result_text"
+              ]
+            }
+          }
+        },
+        "required": [
+          "results"
+        ]
+      },
+      "guarantees": {
+        "collection_scope": "page",
+        "completeness": "partial",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "none",
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "Returns a results array, possibly empty, without surfacing raw HTML/DOM as the primary output.",
+        "Every returned record has an issue_path matching the demonstrated GitLab issue path shape and no duplicate stable issue identity appears more than once in the array.",
+        "When an updated_at value is present, it was parsed from a datetime attribute on the returned results page rather than invented by the workflow."
+      ],
+      "source_evidence": {
+        "workflow_id": "task177_t310",
+        "template_id": "310",
+        "code_quote": "issues_path = f'/dashboard/issues?assignee_username={USERNAME}&state=all&search=homepage+content'\nurl, status, body = get(urljoin(BASE, issues_path))\n...\nfor m in re.finditer(r'href=\"([^\"]+/-/issues/\\d+)\"', body):\n    href = m.group(1)\n    ...\n    clean = ' '.join(html.unescape(re.sub(r'<[^>]+>', ' ', snippet)).split())\n    ...\n    dt = re.search(r'datetime=\"([^\"]+)\"', snippet)\n    rows.append({'href': href, 'datetime': dt.group(1) if dt else '', 'snippet': clean})\n...\nif r['href'] not in seen:\n    seen.add(r['href'])",
+        "explanation": "The workflow demonstrates a reusable authenticated HTML acquisition boundary on GitLab's dashboard issues page: caller-supplied assignee, state, and search query are sent to the site; issue result records are parsed into structured fields; duplicate results on the page are removed by stable href. Task-specific logic such as keyword choice, picking the latest issue, and final closed/open determination was excluded.",
+        "evidence_match_mode": "attributed_nonverbatim"
+      }
+    },
+    {
+      "candidate_id": "task177_t310::get_issue_detail_state",
+      "proposed_method": "get_issue_detail_state",
+      "capability": "Fetch a GitLab issue detail page and parse basic typed issue details including title and whether the issue is closed from visible page content.",
+      "owns": [
+        "Requesting an issue detail page within the authenticated GitLab session",
+        "Parsing the HTML title from the issue page",
+        "Converting the page HTML to visible text for state detection",
+        "Detecting whether the issue is closed based on visible page text",
+        "Returning typed issue detail fields instead of raw page text"
+      ],
+      "does_not_own": [
+        "Finding candidate issue URLs to inspect",
+        "Ranking multiple issues by recency",
+        "Guaranteeing robust interpretation of every possible workflow state beyond the demonstrated closed-state check",
+        "Editing or mutating the issue"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "issue_url": {
+            "type": "string",
+            "description": "Absolute GitLab issue URL to fetch."
+          }
+        },
+        "required": [
+          "issue_url"
+        ]
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "issue_title": {
+            "type": "string",
+            "description": "Parsed issue title, with surrounding page title decoration removed when possible."
+          },
+          "issue_url": {
+            "type": "string",
+            "description": "Final fetched issue URL."
+          },
+          "is_closed": {
+            "type": "boolean",
+            "description": "True when the visible issue page text indicates the issue is closed."
+          }
+        },
+        "required": [
+          "issue_title",
+          "issue_url",
+          "is_closed"
+        ]
+      },
+      "guarantees": {
+        "collection_scope": "single",
+        "completeness": "complete",
+        "supports_absence_proof": true,
+        "configuration": {
+          "kind": "none",
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "If the issue page is fetched successfully, the returned issue_url equals the final fetched URL and issue_title is a non-empty string.",
+        "The primitive always returns a boolean is_closed derived from the fetched issue page content, not null or omitted.",
+        "A fetch/parsing failure is distinguishable from a valid parsed record; successful output is not represented by raw HTML."
+      ],
+      "source_evidence": {
+        "workflow_id": "task177_t310",
+        "template_id": "310",
+        "code_quote": "final_url, document_status, final_html = get(urljoin(BASE, top['href']))\ntext = ' '.join(html.unescape(re.sub(r'<[^>]+>', ' ', final_html)).split())\nis_closed = ' closed ' in f' {text.lower()} '\ntitle_m = re.search(r'<title>(.*?)</title>', final_html, re.S)\ntitle = html.unescape(title_m.group(1)) if title_m else top['href']\nanswer = [{'issue_title': title.split('(#')[0].strip(), 'issue_url': final_url, 'is_closed': is_closed}]",
+        "explanation": "The workflow demonstrates a reusable issue-detail retrieval operation on GitLab: given an issue URL, it fetches the page and parses stable typed fields from it. The generalization removes the workflow's dependence on a previously selected top result while preserving the demonstrated title and closed-state extraction boundary.",
+        "evidence_match_mode": "exact"
+      }
+    }
+  ]
+}

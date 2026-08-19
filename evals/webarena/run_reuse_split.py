@@ -29,7 +29,7 @@ def resumable_result(record):
 
 def build_jobs(split):
     return [
-        (site, task_id)
+        (site, row.get("task_type", split.get("task_type", "retrieve")), task_id)
         for site, rows in split["train"].items()
         for row in rows
         for task_id in row["build_task_ids"]
@@ -61,6 +61,9 @@ def main():
     ap.add_argument("--results-root", required=True)
     ap.add_argument("--model-config", required=True)
     ap.add_argument("--eval-python", required=True)
+    ap.add_argument("--webarena-tasks")
+    ap.add_argument("--webarena-root")
+    ap.add_argument("--vanilla-task-interface", action="store_true")
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--per-site-workers", type=int, default=1)
     ap.add_argument("--timeout", type=int, default=900)
@@ -73,8 +76,8 @@ def main():
     jobs = build_jobs(split)
     if args.task_id:
         selected = set(args.task_id)
-        jobs = [job for job in jobs if job[1] in selected]
-        missing = selected - {task_id for _, task_id in jobs}
+        jobs = [job for job in jobs if job[2] in selected]
+        missing = selected - {task_id for _, _, task_id in jobs}
         if missing:
             raise SystemExit(f"tasks outside TRAIN build set: {sorted(missing)}")
 
@@ -86,8 +89,10 @@ def main():
 
     active = set()
     active_lock = threading.Lock()
+    stop_requested = threading.Event()
 
     def stop_active(*_):
+        stop_requested.set()
         with active_lock:
             pids = list(active)
         for pid in pids:
@@ -100,7 +105,7 @@ def main():
     signal.signal(signal.SIGTERM, stop_active)
 
     def run(job):
-        site, task_id = job
+        site, task_type, task_id = job
         results = Path(args.results_root) / site
         runs = Path(args.runs_root) / site
         result = results / f"task{task_id}_scratch.json"
@@ -119,6 +124,17 @@ def main():
             "--model-config", args.model_config, "--eval-python", args.eval_python,
             "--timeout", str(args.timeout), "--allow-any-task",
         ]
+        if args.webarena_tasks and args.webarena_root:
+            cmd += ["--webarena-tasks", args.webarena_tasks,
+                    "--webarena-root", args.webarena_root]
+        if task_type == "navigate":
+            if not args.webarena_tasks or not args.webarena_root:
+                return {"site": site, "task_id": task_id, "status": "process_error",
+                        "returncode": 2, "correct": None, "steps": None,
+                        "timed_out": False,
+                        "stderr": "Navigate requires --webarena-tasks and --webarena-root"}
+            if args.vanilla_task_interface:
+                cmd.append("--vanilla-task-interface")
         if result.exists():
             cmd.append("--force")
         proc = subprocess.Popen(
@@ -142,6 +158,8 @@ def main():
     def run_lane(lane):
         rows = []
         for job in lane:
+            if stop_requested.is_set():
+                break
             row = run(job)
             with print_lock:
                 print(json.dumps(row, ensure_ascii=False), flush=True)

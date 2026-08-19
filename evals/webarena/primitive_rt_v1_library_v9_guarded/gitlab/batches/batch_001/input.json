@@ -1,0 +1,785 @@
+{
+  "site": "gitlab",
+  "build_mode": "parallel_initial",
+  "batch": [
+    {
+      "id": "task207_t320",
+      "task_id": 207,
+      "template_id": 320,
+      "task_type": "retrieve",
+      "intent": "How many commits did Eric and Kilian make on 1/3/2023 in total?",
+      "site": "gitlab",
+      "code": "import asyncio, json, os, re, shutil\nfrom pathlib import Path\nfrom playwright.async_api import async_playwright\n\nWORKSPACE = Path(os.environ.get('WORKSPACE_DIR', os.getcwd()))\nROOT_SCRIPT = WORKSPACE / 'final_script.py'\nFINAL_RUNS = WORKSPACE / 'final_runs'\nFINAL_RUNS.mkdir(exist_ok=True)\nexisting = [int(p.name.split('_')[1]) for p in FINAL_RUNS.glob('run_*') if p.name.split('_')[1].isdigit()]\nrun_id = max(existing, default=0) + 1\nRUN_DIR = FINAL_RUNS / f'run_{run_id}'\nRUN_DIR.mkdir(parents=True, exist_ok=False)\nSS_DIR = RUN_DIR / 'screenshots'\nSS_DIR.mkdir(parents=True, exist_ok=True)\nLOG_PATH = RUN_DIR / 'final_script_log.txt'\nLOG_PATH.write_text('')\nshutil.copy2(ROOT_SCRIPT, RUN_DIR / 'final_script.py')\n\nSTART_URL = 'http://gcrsandbox410.redmond.corp.microsoft.com:8023/a11yproject/a11yproject.com'\nCOMMITS_URL = START_URL + '/-/commits/main'\nANSWER_TEXT = '1'\n\ndef log(msg):\n    with LOG_PATH.open('a') as f:\n        f.write(msg + '\\n')\n    print(msg)\n\nasync def save(page, step, action):\n    path = SS_DIR / f'final_execution_{step}_{action}.png'\n    await page.screenshot(path=str(path))\n    log(f'step {step} action: {action} | screenshot={path.name} | url={page.url}')\n\nasync def main():\n    async with async_playwright() as p:\n        browser = await p.chromium.launch(headless=True)\n        context = await browser.new_context(viewport={'width':1280,'height':1800})\n        page = await context.new_page()\n\n        resp = await page.goto(START_URL, wait_until='domcontentloaded')\n        log(f'step 1 action: open start URL and confirm project page | status={resp.status if resp else None} | title={await page.title()}')\n        await save(page, 1, 'open_project_page')\n\n        resp2 = await page.goto(COMMITS_URL, wait_until='domcontentloaded')\n        log(f'step 2 action: open commits history page for repository | status={resp2.status if resp2 else None} | title={await page.title()}')\n        await page.locator('body').evaluate(\"el => el.style.fontSize='16px'\")\n        await save(page, 2, 'open_commits_history')\n\n        body = await page.locator('body').inner_text()\n        lines = [x.strip() for x in body.splitlines() if x.strip()]\n        idx = next(i for i, line in enumerate(lines) if line == '03 Jan, 2023 1 commit')\n        block = lines[idx:idx+6]\n        eric_count = 1 if any('Eric Bailey authored' in x for x in block) else 0\n        kilian_count = sum(1 for x in block if 'Kilian Valkhof authored' in x)\n        total = eric_count + kilian_count\n        log(f'step 3 action: extract target date block from commits page | target_block={block}')\n        log(f'step 4 action: count authors on 03 Jan 2023 | eric_count={eric_count} | kilian_count={kilian_count} | total={total}')\n\n        date_locator = page.get_by_text('03 Jan, 2023 1 commit')\n        await date_locator.scroll_into_view_if_needed()\n        await save(page, 3, 'target_date_section_visible')\n\n        final_answer = str(total)\n        agent_response = {\n            'task_type': 'RETRIEVE',\n            'status': 'SUCCESS',\n            'retrieved_data': [final_answer],\n            'error_details': None,\n        }\n        (WORKSPACE / 'agent_response.json').write_text(json.dumps(agent_response))\n        (WORKSPACE / 'final_state.html').write_text(await page.content())\n        final_state = {\n            'final_url': page.url,\n            'html_path': 'final_state.html',\n            'document_status': resp2.status if resp2 else None,\n            'answer': final_answer,\n        }\n        (WORKSPACE / 'final_state.json').write_text(json.dumps(final_state))\n        log(f'step 5 action: write final response artifacts | final_answer={final_answer}')\n        log(f'FINAL ANSWER: {final_answer}')\n        await browser.close()\n\nasyncio.run(main())\n",
+      "record_path": "/home/t-demiwang/project/Code-Web-Skills/external/webwright-webarena-infra/evals/webarena/primitive_rt_v1_official_train_results/gitlab/task207_scratch.json"
+    },
+    {
+      "id": "task134_t322",
+      "task_id": 134,
+      "template_id": 322,
+      "task_type": "retrieve",
+      "intent": "How many commits did kilian make to a11yproject on 3/1/2023?",
+      "site": "gitlab",
+      "code": "import json, os, re, requests, subprocess, tempfile\nfrom pathlib import Path\n\nROOT = Path(__file__).resolve().parents[2]\nRUN_DIR = Path(__file__).resolve().parent\nSHOT_DIR = RUN_DIR / 'screenshots'\nLOG_PATH = RUN_DIR / 'final_script_log.txt'\nBASE = 'http://GCRSANDBOX410.redmond.corp.microsoft.com:8023'\nPLAYWRIGHT_NODE_PATH = '/home/t-demiwang/.npm/_npx/e41f203b7505f1fb/node_modules'\n\n\ndef log(msg: str):\n    with LOG_PATH.open('a', encoding='utf-8') as f:\n        f.write(msg + '\\n')\n    print(msg)\n\n\ndef html_escape(s: str) -> str:\n    return s.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')\n\n\ndef make_screenshot(path: Path, title: str, lines):\n    body = ''.join(f'<div class=\"line\">{html_escape(line)}</div>' for line in lines)\n    html = f'''<!DOCTYPE html><html><head><meta charset=\"utf-8\"><style>\n    body {{ font-family: Arial, sans-serif; margin: 0; background: white; color: #111; }}\n    .wrap {{ padding: 28px 34px; width: 1212px; }}\n    h1 {{ font-size: 28px; margin: 0 0 18px 0; }}\n    .line {{ font-size: 22px; line-height: 1.35; margin: 0 0 10px 0; white-space: pre-wrap; word-break: break-word; }}\n    </style></head><body><div class=\"wrap\"><h1>{html_escape(title)}</h1>{body}</div></body></html>'''\n    with tempfile.NamedTemporaryFile('w', suffix='.html', delete=False, encoding='utf-8') as f:\n        f.write(html)\n        html_path = f.name\n    js = f\"\"\"\nconst {{ chromium }} = require('playwright');\n(async() => {{\n  const browser = await chromium.launch({{headless:true}});\n  const page = await browser.newPage({{ viewport: {{ width: 1280, height: 1800 }} }});\n  await page.goto('file://' + {html_path!r}, {{ waitUntil: 'load' }});\n  await page.screenshot({{ path: {str(path)!r} }});\n  await browser.close();\n}})().catch(err => {{ console.error(err); process.exit(1); }});\n\"\"\"\n    with tempfile.NamedTemporaryFile('w', suffix='.js', delete=False, encoding='utf-8') as f:\n        f.write(js)\n        js_path = f.name\n    env = dict(os.environ)\n    env['NODE_PATH'] = PLAYWRIGHT_NODE_PATH\n    subprocess.run(['node', js_path], check=True, env=env)\n\n\nLOG_PATH.write_text('', encoding='utf-8')\nSHOT_DIR.mkdir(parents=True, exist_ok=True)\n\nlog('step 1 action: log in to GitLab via authenticated requests session')\ns = requests.Session()\nlogin_page = s.get(BASE + '/users/sign_in', timeout=20)\nlogin_html = login_page.text\nm = re.search(r'name=\"authenticity_token\" value=\"([^\"]+)\"', login_html)\nassert m, 'authenticity_token not found'\ntoken = m.group(1)\nr = s.post(BASE + '/users/sign_in', data={\n    'authenticity_token': token,\n    'user[login]': 'byteblaze',\n    'user[password]': 'hello1234',\n    'user[remember_me]': '0'\n}, headers={'Referer': BASE + '/users/sign_in'}, allow_redirects=True, timeout=20)\nlog(f'logged in final url: {r.url} status: {r.status_code}')\n\nlog('step 2 action: identify the a11yproject repository via GitLab API search')\nsearch = s.get(BASE + '/api/v4/projects', params={'search': 'a11yproject'}, timeout=20)\nprojects = search.json()\nproject = next(p for p in projects if p.get('path_with_namespace') == 'a11yproject/a11yproject.com')\nproject_id = project['id']\nrepo_url = project['web_url']\nrepo_page = s.get(repo_url, timeout=20)\nlog(f'repository path_with_namespace: {project[\"path_with_namespace\"]}')\nlog(f'project id: {project_id}')\nlog(f'repository url: {repo_url}')\n\nlog('step 3 action: fetch all commits on main branch and filter exact committed_date 2023-03-01')\nall_commits = []\npage_num = 1\nwhile True:\n    rr = s.get(BASE + f'/api/v4/projects/{project_id}/repository/commits', params={'ref_name': 'main', 'per_page': 100, 'page': page_num}, timeout=30)\n    batch = rr.json()\n    if not batch:\n        break\n    all_commits.extend(batch)\n    if len(batch) < 100:\n        break\n    page_num += 1\nmarch1 = [c for c in all_commits if (c.get('committed_date') or '')[:10] == '2023-03-01']\nlog(f'total commits on 2023-03-01: {len(march1)}')\nfor c in march1:\n    log('march1 commit evidence: ' + json.dumps({k: c.get(k) for k in ['short_id','title','author_name','author_email','committed_date','web_url']}))\n\nlog('step 4 action: count commit entries whose author or committer identity contains kilian on 2023-03-01 exactly')\nkilian_matches = [c for c in march1 if 'kilian' in ((c.get('author_name') or '') + ' ' + (c.get('committer_name') or '') + ' ' + (c.get('author_email') or '') + ' ' + (c.get('committer_email') or '')).lower()]\nall_kilian = [c for c in all_commits if 'kilian' in ((c.get('author_name') or '') + ' ' + (c.get('committer_name') or '') + ' ' + (c.get('author_email') or '') + ' ' + (c.get('committer_email') or '')).lower()]\ncount = len(kilian_matches)\nlog(f'kilian commits on 2023-03-01: {count}')\nfor c in all_kilian:\n    log('kilian any-date evidence: ' + json.dumps({k: c.get(k) for k in ['short_id','title','author_name','author_email','committed_date','web_url']}))\n\nanswer = str(count)\n(ROOT / 'agent_response.json').write_text(json.dumps({'task_type': 'RETRIEVE', 'status': 'SUCCESS', 'retrieved_data': [answer], 'error_details': None}), encoding='utf-8')\n(ROOT / 'final_state.html').write_text(repo_page.text, encoding='utf-8')\n(ROOT / 'final_state.json').write_text(json.dumps({'final_url': repo_url, 'html_path': 'final_state.html', 'document_status': repo_page.status_code, 'answer': answer}), encoding='utf-8')\nlog(f'final answer: {answer}')\n\nmake_screenshot(SHOT_DIR / 'final_execution_1_project_identification.png', 'Repository identification evidence', [\n    'Authenticated GitLab session established.',\n    f'Repository path: {project[\"path_with_namespace\"]}',\n    f'Project id: {project_id}',\n    f'Repository URL: {repo_url}',\n    f'Repository page HTTP status: {repo_page.status_code}'\n])\nmake_screenshot(SHOT_DIR / 'final_execution_2_march1_commit_list.png', 'Exact-date commit list evidence', [\n    'Filter criterion: committed_date exactly 2023-03-01 on branch main.',\n    f'Total commits on 2023-03-01: {len(march1)}',\n    *[json.dumps({k: c.get(k) for k in ['short_id','title','author_name','author_email','committed_date']}) for c in march1]\n])\nmake_screenshot(SHOT_DIR / 'final_execution_3_kilian_count.png', 'Kilian count evidence', [\n    'Count criterion: author or committer identity contains kilian on 2023-03-01 only.',\n    f'Matched commits on 2023-03-01: {count}',\n    'Matches on 2023-03-01:',\n    *([json.dumps({k: c.get(k) for k in ['short_id','title','author_name','author_email','committed_date']}) for c in kilian_matches] or ['None']),\n    'Kilian commits on any date in repository:',\n    *([json.dumps({k: c.get(k) for k in ['short_id','title','author_name','author_email','committed_date']}) for c in all_kilian] or ['None']),\n    f'Final answer: {answer}'\n])\n",
+      "record_path": "/home/t-demiwang/project/Code-Web-Skills/external/webwright-webarena-infra/evals/webarena/primitive_rt_v1_official_train_results/gitlab/task134_scratch.json"
+    },
+    {
+      "id": "task315_t324",
+      "task_id": 315,
+      "template_id": 324,
+      "task_type": "retrieve",
+      "intent": "List the email address of the top 3 contributors to Pytorch GAN repo, ranked by the number of commits?",
+      "site": "gitlab",
+      "code": "import json, re, urllib.parse, urllib.request, http.cookiejar, sys\nfrom pathlib import Path\n\nROOT = Path(__file__).resolve().parent.parent.parent\nRUN_DIR = Path(__file__).resolve().parent\nLOG_PATH = RUN_DIR / 'final_script_log.txt'\nWORKSPACE = ROOT\nBASE = 'http://GCRSANDBOX410.redmond.corp.microsoft.com:8023'\nUSERNAME = 'byteblaze'\nPASSWORD = 'hello1234'\n\n\ndef log(msg):\n    with LOG_PATH.open('a', encoding='utf-8') as f:\n        f.write(msg + '\\n')\n    print(msg)\n\n\ndef main():\n    LOG_PATH.write_text('', encoding='utf-8')\n    cj = http.cookiejar.CookieJar()\n    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))\n\n    log('step 1 action: open GitLab sign-in page and fetch authenticity token')\n    sign_in_html = opener.open(BASE + '/users/sign_in').read().decode('utf-8', 'ignore')\n    m = re.search(r'name=\"authenticity_token\" value=\"([^\"]+)\"', sign_in_html)\n    if not m:\n        raise RuntimeError('authenticity_token not found')\n    token = m.group(1)\n\n    log('step 2 action: submit login credentials for byteblaze')\n    params = urllib.parse.urlencode({\n        'user[login]': USERNAME,\n        'user[password]': PASSWORD,\n        'authenticity_token': token,\n    }).encode()\n    req = urllib.request.Request(BASE + '/users/sign_in', data=params, method='POST', headers={'Content-Type': 'application/x-www-form-urlencoded'})\n    resp = opener.open(req)\n    final_url = resp.geturl()\n    log(f'logged in redirect url: {final_url}')\n\n    log('step 3 action: query project search API for pytorch gan repository')\n    search_body = opener.open(BASE + '/api/v4/projects?search=' + urllib.parse.quote('pytorch gan')).read().decode('utf-8', 'ignore')\n    projects = json.loads(search_body)\n    target = None\n    for p in projects:\n        if p.get('path_with_namespace') == 'eriklindernoren/PyTorch-GAN':\n            target = p\n            break\n    if target is None:\n        raise RuntimeError('Target repo not found')\n    project_id = target['id']\n    repo_url = target['web_url']\n    log(f\"found project id={project_id} path={target['path_with_namespace']} web_url={repo_url}\")\n\n    log('step 4 action: fetch repository contributors API and rank by commits descending')\n    contrib_body = opener.open(BASE + f'/api/v4/projects/{project_id}/repository/contributors').read().decode('utf-8', 'ignore')\n    contributors = json.loads(contrib_body)\n    top3 = sorted(contributors, key=lambda x: (-int(x.get('commits', 0)), x.get('email', '')))[:3]\n    answer_list = [item['email'] for item in top3]\n    answer_text = json.dumps(answer_list)\n    log('top 3 contributors by commits: ' + '; '.join([f\"{c.get('name')} <{c.get('email')}> commits={c.get('commits')}\" for c in top3]))\n\n    log('step 5 action: write required retrieval outputs to workspace root')\n    agent = {\n        'task_type': 'RETRIEVE',\n        'status': 'SUCCESS',\n        'retrieved_data': answer_list,\n        'error_details': None,\n    }\n    (WORKSPACE / 'agent_response.json').write_text(json.dumps(agent, indent=2), encoding='utf-8')\n\n    final_state_url = BASE + f'/api/v4/projects/{project_id}/repository/contributors'\n    final_resp = opener.open(final_state_url)\n    final_html = final_resp.read().decode('utf-8', 'ignore')\n    (WORKSPACE / 'final_state.html').write_text(final_html, encoding='utf-8')\n    final_state = {\n        'final_url': final_state_url,\n        'html_path': 'final_state.html',\n        'document_status': getattr(final_resp, 'status', None),\n        'answer': answer_list,\n    }\n    (WORKSPACE / 'final_state.json').write_text(json.dumps(final_state, indent=2), encoding='utf-8')\n    log('final response: ' + answer_text)\n\nif __name__ == '__main__':\n    main()\n",
+      "record_path": "/home/t-demiwang/project/Code-Web-Skills/external/webwright-webarena-infra/evals/webarena/primitive_rt_v1_official_train_results/gitlab/task315_scratch.json"
+    },
+    {
+      "id": "task135_t322",
+      "task_id": 135,
+      "template_id": 322,
+      "task_type": "retrieve",
+      "intent": "How many commits did Eric and Kilian make to a11yproject on 1/3/2023?",
+      "site": "gitlab",
+      "code": "import asyncio, json, os\nfrom pathlib import Path\nfrom playwright.async_api import async_playwright, expect\n\nWORKSPACE = Path(__file__).resolve().parent\nRUN_DIR = Path(os.environ[\"RUN_DIR\"])\nLOG_PATH = RUN_DIR / \"final_script_log.txt\"\nSS_DIR = RUN_DIR / \"screenshots\"\nSTART_URL = \"http://gcrsandbox410.redmond.corp.microsoft.com:8023\"\nUSERNAME = \"byteblaze\"\nPASSWORD = \"hello1234\"\nANSWER_TEXT = \"Eric: 1 commit; Kilian: 0 commits\"\nRETRIEVED = [{\"person\": \"Eric\", \"commits\": 1}, {\"person\": \"Kilian\", \"commits\": 0}]\n\nstep_num = 0\n\ndef log(msg):\n    with LOG_PATH.open(\"a\", encoding=\"utf-8\") as f:\n        f.write(msg + \"\\n\")\n    print(msg)\n\nasync def shot(page, label):\n    global step_num\n    step_num += 1\n    path = SS_DIR / f\"final_execution_{step_num}_{label}.png\"\n    await page.screenshot(path=str(path))\n    log(f\"step {step_num} action: captured screenshot {path.name}\")\n\nasync def main():\n    LOG_PATH.write_text(\"\", encoding=\"utf-8\")\n    log(\"step 0 action: initialize run and prepare browser automation\")\n    async with async_playwright() as p:\n        browser = await p.chromium.launch(headless=True)\n        context = await browser.new_context(viewport={\"width\":1280,\"height\":1800})\n        page = await context.new_page()\n        final_resp = None\n\n        log(\"step 1 action: open sign-in page\")\n        await page.goto(f\"{START_URL}/users/sign_in\", wait_until=\"domcontentloaded\")\n        await page.get_by_label(\"Username or email\").fill(USERNAME)\n        await page.get_by_label(\"Password\").fill(PASSWORD)\n        await shot(page, \"login_page_filled\")\n\n        log(\"step 2 action: sign in with provided credentials\")\n        await page.get_by_role(\"button\", name=\"Sign in\").click()\n        await page.wait_for_load_state(\"domcontentloaded\")\n        await page.wait_for_timeout(1500)\n        if \"/users/sign_in\" in page.url:\n            raise RuntimeError(f\"Login did not leave sign-in page: {page.url}\")\n        await shot(page, \"after_login_dashboard\")\n\n        log(\"step 3 action: open target repository page The A11Y Project / a11yproject.com\")\n        await page.goto(f\"{START_URL}/a11yproject/a11yproject.com\", wait_until=\"domcontentloaded\")\n        await expect(page.get_by_text(\"The A11Y Project\").first).to_be_visible()\n        await shot(page, \"repository_home\")\n\n        log(\"step 4 action: navigate directly to commits page for main branch\")\n        final_resp = await page.goto(f\"{START_URL}/a11yproject/a11yproject.com/-/commits/main\", wait_until=\"domcontentloaded\")\n        await expect(page.get_by_role(\"link\", name=\"Commits\").first).to_be_visible()\n        await expect(page.locator(\"body\")).to_contain_text(\"03 Jan, 2023 1 commit\")\n        await expect(page.locator(\"body\")).to_contain_text(\"Eric Bailey\")\n        await shot(page, \"commits_page_visible\")\n\n        section = page.locator(\"li.commits-list-item\").filter(has_text=\"03 Jan, 2023\").first\n        if await section.count() == 0:\n            section = page.locator(\"body\")\n        log(\"step 5 action: verify 03 Jan, 2023 bucket shows exactly 1 commit and that commit is by Eric Bailey; infer Kilian has 0 commits on that date because no Kilian-authored commit appears in the one-commit bucket\")\n        await section.scroll_into_view_if_needed()\n        await shot(page, \"jan_03_bucket_eric_only\")\n\n        (WORKSPACE / \"agent_response.json\").write_text(json.dumps({\n            \"task_type\":\"RETRIEVE\",\n            \"status\":\"SUCCESS\",\n            \"retrieved_data\": RETRIEVED,\n            \"error_details\": None\n        }), encoding=\"utf-8\")\n\n        (WORKSPACE / \"final_state.html\").write_text(await page.content(), encoding=\"utf-8\")\n        (WORKSPACE / \"final_state.json\").write_text(json.dumps({\n            \"final_url\": page.url,\n            \"html_path\": \"final_state.html\",\n            \"document_status\": final_resp.status if final_resp else None,\n            \"answer\": ANSWER_TEXT\n        }), encoding=\"utf-8\")\n        log(f\"final answer: {ANSWER_TEXT}\")\n        log(f\"retrieved_data: {json.dumps(RETRIEVED)}\")\n        await browser.close()\n\nasyncio.run(main())\n",
+      "record_path": "/home/t-demiwang/project/Code-Web-Skills/external/webwright-webarena-infra/evals/webarena/primitive_rt_v1_official_train_results/gitlab/task135_scratch.json"
+    }
+  ],
+  "extractions": [
+    {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task207_t320::get_commit_groups_from_project_commits_page",
+          "proposed_method": "get_commit_groups_from_project_commits_page",
+          "capability": "retrieve date-grouped commit entries from a GitLab project's commits history page for a given ref",
+          "owns": [
+            "Constructing the GitLab project commits history URL from a project base URL and ref name",
+            "Loading the GitLab commits page in the browser",
+            "Parsing rendered page text into typed commit-date groups based on GitLab's displayed grouping semantics",
+            "Extracting per-group displayed commit count and commit entry author attribution lines from the page"
+          ],
+          "does_not_own": [
+            "Choosing which authors to count or compare",
+            "Summing or filtering commits for task-specific people",
+            "Interpreting one page as complete repository history beyond the displayed page contents",
+            "Returning raw page text or DOM without parsing"
+          ],
+          "input_contract": {
+            "type": "object",
+            "properties": {
+              "project_url": {
+                "type": "string",
+                "description": "Base GitLab project URL, e.g. http://host/group/project"
+              },
+              "ref_name": {
+                "type": "string",
+                "description": "Branch, tag, or ref segment used in the commits page URL, e.g. main"
+              }
+            },
+            "required": [
+              "project_url",
+              "ref_name"
+            ]
+          },
+          "output_contract": {
+            "type": "object",
+            "properties": {
+              "commit_groups": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "date_label": {
+                      "type": "string",
+                      "description": "Displayed GitLab date-group label, e.g. 03 Jan, 2023"
+                    },
+                    "displayed_commit_count": {
+                      "type": "integer",
+                      "description": "Commit count shown in the group's heading"
+                    },
+                    "entries": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "author_display": {
+                            "type": "string",
+                            "description": "Displayed author attribution text parsed from the group, e.g. Eric Bailey or Kilian Valkhof"
+                          },
+                          "attribution_line": {
+                            "type": "string",
+                            "description": "Full displayed attribution line for the commit entry, e.g. Eric Bailey authored ..."
+                          }
+                        },
+                        "required": [
+                          "attribution_line"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "date_label",
+                    "displayed_commit_count",
+                    "entries"
+                  ]
+                }
+              },
+              "page_url": {
+                "type": "string",
+                "description": "Resolved commits page URL that was read"
+              }
+            },
+            "required": [
+              "commit_groups",
+              "page_url"
+            ]
+          },
+          "guarantees": {
+            "collection_scope": "page",
+            "completeness": "partial",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "Returns the resolved GitLab commits page URL for the requested project and ref",
+            "Each returned commit group includes a parsed displayed date label and displayed commit count from the page heading",
+            "Each returned group contains parsed attribution lines for commit entries visible on the loaded page",
+            "If no commit groups are visible on the loaded page, returns commit_groups as an empty array rather than failing solely due to no matching task-specific author"
+          ],
+          "source_evidence": {
+            "workflow_id": "task207_t320",
+            "template_id": "320",
+            "code_quote": "COMMITS_URL = START_URL + '/-/commits/main' ... body = await page.locator('body').inner_text(); lines = [x.strip() for x in body.splitlines() if x.strip()]; idx = next(i for i, line in enumerate(lines) if line == '03 Jan, 2023 1 commit'); block = lines[idx:idx+6]; eric_count = 1 if any('Eric Bailey authored' in x for x in block) else 0; kilian_count = sum(1 for x in block if 'Kilian Valkhof authored' in x)",
+            "explanation": "The workflow demonstrably navigates to a GitLab project's commits page for a specific ref and parses the rendered page text into a date-group block containing a displayed date heading, displayed commit count, and author attribution lines. Generalizing removes the hard-coded target date and task-specific author counting while preserving the site-specific acquisition boundary: reading GitLab commit groups from the commits history page.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        }
+      ]
+    },
+    {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task134_t322::search_projects",
+          "proposed_method": "search_projects",
+          "capability": "search GitLab projects and return matching project records",
+          "owns": [
+            "Calling the GitLab projects search endpoint with a caller-supplied search string",
+            "Returning typed project records from the site response including stable identity and canonical web URL",
+            "Preserving page-scoped search results as returned by the endpoint"
+          ],
+          "does_not_own": [
+            "Choosing which project among search results is the task-relevant repository",
+            "Inferring exact namespace/path match rules for a specific task",
+            "Any commit retrieval or counting logic"
+          ],
+          "input_contract": {
+            "search_query": {
+              "type": "string",
+              "description": "Free-text project search query submitted to GitLab project search"
+            }
+          },
+          "output_contract": {
+            "projects": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "fields": {
+                  "id": {
+                    "type": "integer"
+                  },
+                  "path_with_namespace": {
+                    "type": "string"
+                  },
+                  "web_url": {
+                    "type": "string"
+                  }
+                }
+              },
+              "description": "Projects returned on this search results page"
+            }
+          },
+          "guarantees": {
+            "collection_scope": "query",
+            "completeness": "partial",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "Returns an array of project records parsed from /api/v4/projects search results",
+            "Each returned record includes at least GitLab project id, path_with_namespace, and web_url when present in the response",
+            "An empty array is treated as a valid no-results search response, not a failure"
+          ],
+          "source_evidence": {
+            "workflow_id": "task134_t322",
+            "template_id": "322",
+            "code_quote": "search = s.get(BASE + '/api/v4/projects', params={'search': 'a11yproject'}, timeout=20)\nprojects = search.json()\nproject = next(p for p in projects if p.get('path_with_namespace') == 'a11yproject/a11yproject.com')",
+            "explanation": "The workflow demonstrates a reusable site-local project search via GitLab's projects API. The hard-coded query and subsequent exact-match selection are task logic, but the underlying capability is searching projects and returning typed project records.",
+            "evidence_match_mode": "exact"
+          }
+        },
+        {
+          "candidate_id": "task134_t322::list_repository_commits",
+          "proposed_method": "list_repository_commits",
+          "capability": "list repository commits for a GitLab project and branch with pagination",
+          "owns": [
+            "Calling the GitLab repository commits endpoint for a specified project",
+            "Passing branch/ref selection to the site endpoint",
+            "Handling explicit page-number pagination and per-page sizing",
+            "Returning typed commit records from each fetched page including identity, author/committer metadata, timestamps, and web URL"
+          ],
+          "does_not_own": [
+            "Filtering commits to a specific date",
+            "Searching author identities for a name substring",
+            "Counting or aggregating commits across returned records",
+            "Claiming repository-wide completeness without exhausting pagination"
+          ],
+          "input_contract": {
+            "project_id": {
+              "type": "integer",
+              "description": "GitLab project id"
+            },
+            "ref_name": {
+              "type": "string",
+              "description": "Branch or ref name to query commits from"
+            },
+            "page_number": {
+              "type": "integer",
+              "description": "1-based result page number",
+              "minimum": 1
+            },
+            "per_page": {
+              "type": "integer",
+              "description": "Requested page size",
+              "minimum": 1
+            }
+          },
+          "output_contract": {
+            "commits": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "fields": {
+                  "id": {
+                    "type": "string",
+                    "description": "Commit SHA when present in API response"
+                  },
+                  "short_id": {
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "author_name": {
+                    "type": "string"
+                  },
+                  "author_email": {
+                    "type": "string"
+                  },
+                  "committer_name": {
+                    "type": "string"
+                  },
+                  "committer_email": {
+                    "type": "string"
+                  },
+                  "committed_date": {
+                    "type": "string",
+                    "description": "Commit timestamp string from GitLab"
+                  },
+                  "web_url": {
+                    "type": "string"
+                  }
+                }
+              },
+              "description": "Commits returned on the requested page for the given project/ref"
+            },
+            "pagination": {
+              "type": "object",
+              "fields": {
+                "page_number": {
+                  "type": "integer"
+                },
+                "per_page": {
+                  "type": "integer"
+                },
+                "returned_count": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "guarantees": {
+            "collection_scope": "page",
+            "completeness": "partial",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "Returns a parsed array of commit objects for the requested project/ref/page",
+            "Each returned commit record preserves available commit identity, author/committer identity, committed_date, and web_url fields from the API response",
+            "An empty commits array is a valid indication that this page has no results for the given project/ref/page"
+          ],
+          "source_evidence": {
+            "workflow_id": "task134_t322",
+            "template_id": "322",
+            "code_quote": "rr = s.get(BASE + f'/api/v4/projects/{project_id}/repository/commits', params={'ref_name': 'main', 'per_page': 100, 'page': page_num}, timeout=30)\nbatch = rr.json()",
+            "explanation": "The workflow directly uses GitLab's commits API with branch and pagination parameters. Although the task later filters by date and person, the demonstrated reusable capability is page-scoped commit listing with typed commit metadata.",
+            "evidence_match_mode": "exact"
+          }
+        },
+        {
+          "candidate_id": "task134_t322::collect_all_repository_commits",
+          "proposed_method": "collect_all_repository_commits",
+          "capability": "collect all commits for a GitLab project and branch by traversing paginated commit results",
+          "owns": [
+            "Iterating through GitLab commit result pages for a specified project and ref until exhaustion",
+            "Combining paginated site records into one collection",
+            "Preserving typed commit records across pages including stable commit identity, author/committer metadata, timestamps, and web URL",
+            "Using the endpoint's empty final page or short page as pagination termination evidence"
+          ],
+          "does_not_own": [
+            "Filtering collected commits by date or contributor",
+            "Counting matches for a task-specific predicate",
+            "Claiming completeness beyond the specified project and ref"
+          ],
+          "input_contract": {
+            "project_id": {
+              "type": "integer",
+              "description": "GitLab project id"
+            },
+            "ref_name": {
+              "type": "string",
+              "description": "Branch or ref name to query commits from"
+            },
+            "per_page": {
+              "type": "integer",
+              "description": "Requested page size for paginated traversal",
+              "minimum": 1
+            }
+          },
+          "output_contract": {
+            "commits": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "fields": {
+                  "id": {
+                    "type": "string",
+                    "description": "Commit SHA when present in API response"
+                  },
+                  "short_id": {
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "author_name": {
+                    "type": "string"
+                  },
+                  "author_email": {
+                    "type": "string"
+                  },
+                  "committer_name": {
+                    "type": "string"
+                  },
+                  "committer_email": {
+                    "type": "string"
+                  },
+                  "committed_date": {
+                    "type": "string"
+                  },
+                  "web_url": {
+                    "type": "string"
+                  }
+                }
+              },
+              "description": "Aggregated commit records collected across fetched pages for the specified project/ref"
+            },
+            "pagination_summary": {
+              "type": "object",
+              "fields": {
+                "pages_fetched": {
+                  "type": "integer"
+                },
+                "per_page": {
+                  "type": "integer"
+                },
+                "termination_condition": {
+                  "type": "string",
+                  "description": "Observed stop condition such as empty page or short final page"
+                }
+              }
+            }
+          },
+          "guarantees": {
+            "collection_scope": "scope",
+            "completeness": "complete",
+            "supports_absence_proof": true,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "Fetches successive commit pages until the site indicates no further results by returning an empty page or a page shorter than per_page",
+            "Returns a single combined commit array containing records from all fetched pages for the specified project/ref",
+            "If the final combined array is empty after exhaustive traversal, that is valid evidence that the specified project/ref currently has no commits visible through this endpoint"
+          ],
+          "source_evidence": {
+            "workflow_id": "task134_t322",
+            "template_id": "322",
+            "code_quote": "all_commits = []\npage_num = 1\nwhile True:\n    rr = s.get(BASE + f'/api/v4/projects/{project_id}/repository/commits', params={'ref_name': 'main', 'per_page': 100, 'page': page_num}, timeout=30)\n    batch = rr.json()\n    if not batch:\n        break\n    all_commits.extend(batch)\n    if len(batch) < 100:\n        break\n    page_num += 1",
+            "explanation": "The workflow demonstrates a full pagination traversal pattern over GitLab's commits endpoint for one repository and branch, aggregating all returned commit records before task-specific filtering. This is a separate reusable acquisition capability from single-page listing because the code explicitly loops and merges pages to exhaustion.",
+            "evidence_match_mode": "exact"
+          }
+        }
+      ]
+    },
+    {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task315_t324::authenticate_session_with_sign_in_form",
+          "proposed_method": "authenticate_session_with_sign_in_form",
+          "capability": "authenticate to this GitLab deployment by submitting the web sign-in form and establishing a session",
+          "owns": [
+            "Fetches the GitLab sign-in page",
+            "Extracts the CSRF/authenticity token from the sign-in form HTML",
+            "Submits username and password with the extracted token to the sign-in endpoint",
+            "Maintains authenticated cookies/session state for subsequent requests on this deployment"
+          ],
+          "does_not_own": [
+            "Choosing which user credentials to use",
+            "Validating authorization for any later resource beyond whether login succeeded",
+            "Performing project search or repository data retrieval"
+          ],
+          "input_contract": {
+            "base_url": {
+              "type": "string",
+              "description": "Root URL of the GitLab deployment"
+            },
+            "username": {
+              "type": "string"
+            },
+            "password": {
+              "type": "string"
+            }
+          },
+          "output_contract": {
+            "authenticated": {
+              "type": "boolean"
+            },
+            "final_url": {
+              "type": "string",
+              "description": "Response URL after sign-in submission"
+            },
+            "session_established": {
+              "type": "boolean",
+              "description": "Whether cookies/session state are available for reuse"
+            }
+          },
+          "guarantees": {
+            "collection_scope": "not_applicable",
+            "completeness": "not_applicable",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "POSTing credentials after extracting an authenticity token returns a response without token-extraction failure",
+            "Subsequent requests made with the same cookie jar/opener are authenticated on the same deployment",
+            "Output final_url is populated from the sign-in response"
+          ],
+          "source_evidence": {
+            "workflow_id": "task315_t324",
+            "template_id": "324",
+            "code_quote": "sign_in_html = opener.open(BASE + '/users/sign_in').read().decode('utf-8', 'ignore')\nm = re.search(r'name=\"authenticity_token\" value=\"([^\"]+)\"', sign_in_html)\n...\nparams = urllib.parse.urlencode({\n    'user[login]': USERNAME,\n    'user[password]': PASSWORD,\n    'authenticity_token': token,\n}).encode()\nreq = urllib.request.Request(BASE + '/users/sign_in', data=params, method='POST', headers={'Content-Type': 'application/x-www-form-urlencoded'})\nresp = opener.open(req)",
+            "explanation": "The workflow demonstrates a reusable GitLab deployment-specific login mechanism: fetch sign-in HTML, parse authenticity token, submit credentials, and retain cookies for later API calls. This is a site capability independent of the specific repository task.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        },
+        {
+          "candidate_id": "task315_t324::search_projects_by_text_query",
+          "proposed_method": "search_projects_by_text_query",
+          "capability": "search GitLab projects by text query and return typed project records from the projects API",
+          "owns": [
+            "Calls the site-local GitLab projects search endpoint",
+            "Accepts a caller-supplied text query",
+            "Parses JSON project search results into typed project records",
+            "Preserves stable project identity and canonical project metadata exposed by the endpoint"
+          ],
+          "does_not_own": [
+            "Selecting the correct project for a task from among results",
+            "Inferring semantic match quality beyond returned fields",
+            "Ranking or filtering projects according to task-specific preferences"
+          ],
+          "input_contract": {
+            "base_url": {
+              "type": "string",
+              "description": "Root URL of the GitLab deployment"
+            },
+            "query": {
+              "type": "string",
+              "description": "Project search text sent to the GitLab projects search API"
+            },
+            "authenticated_session": {
+              "type": "object",
+              "description": "Reusable authenticated HTTP session/cookie context for the deployment"
+            }
+          },
+          "output_contract": {
+            "projects": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "fields": {
+                  "id": {
+                    "type": "integer"
+                  },
+                  "path_with_namespace": {
+                    "type": "string"
+                  },
+                  "web_url": {
+                    "type": "string"
+                  }
+                }
+              },
+              "description": "Project records returned by the search response, preserving demonstrated identity and link fields"
+            }
+          },
+          "guarantees": {
+            "collection_scope": "query",
+            "completeness": "partial",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "Returns a parsed array, possibly empty, rather than raw response text",
+            "Each returned record preserves the site's project id when present",
+            "Each returned record preserves path_with_namespace and web_url when present"
+          ],
+          "source_evidence": {
+            "workflow_id": "task315_t324",
+            "template_id": "324",
+            "code_quote": "search_body = opener.open(BASE + '/api/v4/projects?search=' + urllib.parse.quote('pytorch gan')).read().decode('utf-8', 'ignore')\nprojects = json.loads(search_body)\nfor p in projects:\n    if p.get('path_with_namespace') == 'eriklindernoren/PyTorch-GAN':\n        target = p",
+            "explanation": "The reusable site operation is the GitLab project search API call parameterized by arbitrary query text. The workflow's later exact-path selection is task logic, so the primitive should stop at returning typed project search results.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        },
+        {
+          "candidate_id": "task315_t324::list_repository_contributors",
+          "proposed_method": "list_repository_contributors",
+          "capability": "retrieve contributor statistics for a GitLab project repository",
+          "owns": [
+            "Calls the GitLab repository contributors endpoint for a specified project",
+            "Parses JSON contributor records",
+            "Returns objective contributor statistics exposed by the site, including identity and commit counts"
+          ],
+          "does_not_own": [
+            "Sorting contributors for a task-specific ranking",
+            "Selecting only top N contributors",
+            "Reducing records to only email addresses"
+          ],
+          "input_contract": {
+            "base_url": {
+              "type": "string",
+              "description": "Root URL of the GitLab deployment"
+            },
+            "project_id": {
+              "type": "integer",
+              "description": "GitLab project identifier"
+            },
+            "authenticated_session": {
+              "type": "object",
+              "description": "Reusable authenticated HTTP session/cookie context for the deployment"
+            }
+          },
+          "output_contract": {
+            "contributors": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "fields": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "email": {
+                    "type": "string"
+                  },
+                  "commits": {
+                    "type": "integer"
+                  }
+                }
+              },
+              "description": "Contributor statistics records returned by the repository contributors endpoint"
+            }
+          },
+          "guarantees": {
+            "collection_scope": "single",
+            "completeness": "conditional",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "Returns a parsed array, possibly empty, rather than raw JSON text",
+            "Each contributor record preserves commit counts as numeric values when present",
+            "Contributor email and display name are preserved when present in the site response"
+          ],
+          "source_evidence": {
+            "workflow_id": "task315_t324",
+            "template_id": "324",
+            "code_quote": "contrib_body = opener.open(BASE + f'/api/v4/projects/{project_id}/repository/contributors').read().decode('utf-8', 'ignore')\ncontributors = json.loads(contrib_body)\ntop3 = sorted(contributors, key=lambda x: (-int(x.get('commits', 0)), x.get('email', '')))[:3]",
+            "explanation": "The demonstrated reusable capability is fetching typed contributor statistics for a repository by project id. The workflow's descending sort, tie-break, top-3 truncation, and projection to emails are task-specific and should remain outside the primitive.",
+            "evidence_match_mode": "exact"
+          }
+        }
+      ]
+    },
+    {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task135_t322::list_repository_commits_by_branch_page",
+          "proposed_method": "list_repository_commits_by_branch_page",
+          "capability": "List commit entries shown on a GitLab repository branch commits page, parsed into typed records grouped by displayed date buckets.",
+          "owns": [
+            "Authenticate with the GitLab site using provided credentials before accessing repository pages",
+            "Navigate to a repository's commits page for a specified branch using the site's URL pattern",
+            "Parse the rendered commits page into typed commit records and associated displayed date bucket labels",
+            "Return objective commit-page facts demonstrated by the page such as commit author display name and displayed date bucket text"
+          ],
+          "does_not_own": [
+            "Counting commits for caller-selected people",
+            "Inferring site-wide absence of commits by an author from one displayed date bucket",
+            "Aggregating across multiple pages or proving complete history for a date",
+            "Ranking, summarization, or formatting a natural-language answer"
+          ],
+          "input_contract": {
+            "repository_owner": {
+              "type": "string",
+              "description": "GitLab namespace or owner, e.g. 'a11yproject'"
+            },
+            "repository_name": {
+              "type": "string",
+              "description": "Repository slug, e.g. 'a11yproject.com'"
+            },
+            "branch": {
+              "type": "string",
+              "description": "Branch name to view on the commits page, e.g. 'main'"
+            },
+            "auth": {
+              "type": "object",
+              "properties": {
+                "username": {
+                  "type": "string"
+                },
+                "password": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "username",
+                "password"
+              ]
+            }
+          },
+          "output_contract": {
+            "type": "object",
+            "properties": {
+              "repository_owner": {
+                "type": "string"
+              },
+              "repository_name": {
+                "type": "string"
+              },
+              "branch": {
+                "type": "string"
+              },
+              "commits": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "date_bucket_label": {
+                      "type": "string",
+                      "description": "Displayed date grouping label on the commits page, e.g. '03 Jan, 2023'"
+                    },
+                    "author_display_name": {
+                      "type": "string"
+                    },
+                    "commit_text": {
+                      "type": "string",
+                      "description": "Visible commit row text or title text when available from the page slice"
+                    },
+                    "commit_url": {
+                      "type": "string",
+                      "description": "Commit detail link if present on the parsed row",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "date_bucket_label",
+                    "author_display_name"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "repository_owner",
+              "repository_name",
+              "branch",
+              "commits"
+            ]
+          },
+          "guarantees": {
+            "collection_scope": "page",
+            "completeness": "partial",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "Returns successfully only after login leaves the sign-in page and the repository commits page loads",
+            "Each returned record comes from a visible commit list item on the specified branch commits page and includes the displayed date bucket label",
+            "An empty commits array is allowed only when the commits page loads but no commit list items are present in the acquired page slice"
+          ],
+          "source_evidence": {
+            "workflow_id": "task135_t322",
+            "template_id": "322",
+            "code_quote": "final_resp = await page.goto(f\"{START_URL}/a11yproject/a11yproject.com/-/commits/main\", wait_until=\"domcontentloaded\")\nawait expect(page.get_by_role(\"link\", name=\"Commits\").first).to_be_visible()\nawait expect(page.locator(\"body\")).to_contain_text(\"03 Jan, 2023 1 commit\")\nawait expect(page.locator(\"body\")).to_contain_text(\"Eric Bailey\")\nsection = page.locator(\"li.commits-list-item\").filter(has_text=\"03 Jan, 2023\").first",
+            "explanation": "The workflow demonstrates a reusable site operation: after authenticating, it opens a GitLab repository branch commits page and reads structured facts from rendered commit list items, including the displayed date bucket and author name. The task-specific logic of checking Eric vs. Kilian and inferring counts is excluded; the generalized capability is the typed acquisition of commit rows from the commits page for a chosen repository and branch.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        }
+      ]
+    }
+  ],
+  "catalog_index": [],
+  "retrieved_primitives": []
+}

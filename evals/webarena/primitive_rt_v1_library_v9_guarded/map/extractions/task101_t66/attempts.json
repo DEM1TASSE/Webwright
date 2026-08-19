@@ -1,0 +1,260 @@
+[
+  {
+    "attempt": 1,
+    "proposal": {
+      "decision": "CANDIDATES",
+      "candidates": [
+        {
+          "candidate_id": "task101_t66::search_places_by_query",
+          "proposed_method": "search_places_by_query",
+          "capability": "search the map site for places by a caller-supplied free-text query and parse the sidebar results into typed place records",
+          "owns": [
+            "Constructing the site search URL as /search?query=<encoded query>",
+            "Loading the search results page on this map deployment",
+            "Reading and parsing #sidebar_content search results text into typed place-result records",
+            "Returning site-exposed place identity fields and location/display fields actually visible in the parsed result slice"
+          ],
+          "does_not_own": [
+            "Choosing which queries to issue for a task",
+            "Deciding whether returned places satisfy a business/category constraint such as being a restaurant chain location",
+            "Ranking across multiple separate queries",
+            "Computing nearest distance client-side",
+            "Proving site-wide absence of matching places from one query result slice"
+          ],
+          "input_contract": {
+            "query": {
+              "type": "string",
+              "description": "Free-text search query to submit to the site's /search page"
+            }
+          },
+          "output_contract": {
+            "records": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "address_or_location": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "detail_text": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "result_rank": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                }
+              }
+            }
+          },
+          "guarantees": {
+            "collection_scope": "query",
+            "completeness": "partial",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "Given a query, the primitive navigates to a /search?query= URL and returns a parsed array of sidebar result records or an empty array if the sidebar shows no results",
+            "Each returned record includes the displayed name text and preserves result order as result_rank",
+            "An empty result is distinguishable from page-load/parsing failure"
+          ],
+          "source_evidence": {
+            "workflow_id": "task101_t66",
+            "template_id": "66",
+            "code_quote": "await page.goto(base + '/search?query=' + encodeURIComponent('University of Pittsburgh') ...);\nconst upittText = await sidebarText(page);\n...\nawait page.goto(base + '/search?query=' + encodeURIComponent('In-N-Out Burger') ...);\nconst innoutBurgerText = await sidebarText(page);",
+            "explanation": "The workflow repeatedly performs the same site-local search operation with different caller-substitutable query strings, then captures sidebar text from #sidebar_content. This demonstrates a reusable query-scoped search primitive. The hard-coded queries are task logic and should be parameterized away; the reusable boundary is the site's search page plus parsing of displayed result records.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        },
+        {
+          "candidate_id": "task101_t66::search_places_across_queries_deduplicated",
+          "proposed_method": "search_places_across_queries_deduplicated",
+          "capability": "issue multiple caller-supplied search queries against the map site, combine the returned place records, and deduplicate them by stable displayed identity/location fields",
+          "owns": [
+            "Looping over multiple site search queries supplied by the caller",
+            "Invoking the site-local /search acquisition for each query",
+            "Combining result sets from those queries",
+            "Deduplicating overlapping records using stable displayed identity/location fields from the site while preserving provenance of which queries matched"
+          ],
+          "does_not_own": [
+            "Selecting the specific query list for a task",
+            "Deciding task-specific category inclusion or exclusion after acquisition",
+            "Choosing nearest/all/vicinity answer strategy",
+            "Computing walking distance when the site has not returned it in the acquired search records",
+            "Claiming exhaustive discovery of all candidates on the site"
+          ],
+          "input_contract": {
+            "queries": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "description": "Ordered list of free-text queries to issue against the site's search page"
+            }
+          },
+          "output_contract": {
+            "records": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "address_or_location": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "detail_text": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "matched_queries": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "source_result_ranks": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "guarantees": {
+            "collection_scope": "scope",
+            "completeness": "conditional",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "none",
+              "supported_values": [],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "For N input queries, the primitive performs N site searches and returns the union of parsed records",
+            "If the same displayed place appears in multiple query results, it appears once in output with matched_queries indicating all queries that returned it",
+            "If all queries return no results, the primitive returns an empty array rather than failing"
+          ],
+          "source_evidence": {
+            "workflow_id": "task101_t66",
+            "template_id": "66",
+            "code_quote": "await page.goto(base + '/search?query=' + encodeURIComponent('In-N-Out Pittsburgh') ...);\n...\nawait page.goto(base + '/search?query=' + encodeURIComponent('In-N-Out Burger') ...);\n...\nawait page.goto(base + '/search?query=' + encodeURIComponent('In-N-Out') ...);",
+            "explanation": "The workflow demonstrates a multi-query acquisition pattern: it issues several search queries intended to find the same candidate set from the site. Even though the script does not implement explicit deduplication, the developer instruction requires extracting this reusable acquisition core separately when multiple place searches are issued in a loop/pattern before downstream task decisions. The generalizable capability is bounded multi-query search-and-merge over the same site-local search mechanism, with deduplication by stable displayed identity/location.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        },
+        {
+          "candidate_id": "task101_t66::get_walking_route_between_places",
+          "proposed_method": "get_walking_route_between_places",
+          "capability": "submit the map site's directions form for walking between two caller-supplied places and parse the resulting route summary from the sidebar",
+          "owns": [
+            "Navigating to the site's /directions page",
+            "Filling the route origin and destination fields with caller-supplied place strings",
+            "Selecting the site's walking routing mode as the semantic transport option",
+            "Submitting the route request through the site's directions UI",
+            "Reading and parsing route summary text from #sidebar_content on the resulting directions page"
+          ],
+          "does_not_own": [
+            "Choosing which origin and destination should be routed for a task",
+            "Inferring a correct destination from unrelated search results",
+            "Claiming mutation/edit capability on the site",
+            "Guaranteeing a route exists for arbitrary endpoints beyond what the site returns"
+          ],
+          "input_contract": {
+            "origin": {
+              "type": "string",
+              "description": "Place/address string to use as route start"
+            },
+            "destination": {
+              "type": "string",
+              "description": "Place/address string to use as route end"
+            },
+            "transport_mode": {
+              "type": "string",
+              "enum": [
+                "walking"
+              ],
+              "description": "Semantic routing mode demonstrated by the workflow"
+            }
+          },
+          "output_contract": {
+            "route": {
+              "type": "object",
+              "properties": {
+                "origin_submitted": {
+                  "type": "string"
+                },
+                "destination_submitted": {
+                  "type": "string"
+                },
+                "transport_mode": {
+                  "type": "string",
+                  "enum": [
+                    "walking"
+                  ]
+                },
+                "summary_text": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "distance_text": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "duration_text": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "final_url": {
+                  "type": "string"
+                }
+              },
+              "nullable": true
+            }
+          },
+          "guarantees": {
+            "collection_scope": "single",
+            "completeness": "conditional",
+            "supports_absence_proof": false,
+            "configuration": {
+              "kind": "semantic_enum",
+              "supported_values": [
+                "walking"
+              ],
+              "coupled_site_parameters_hidden": true
+            }
+          },
+          "acceptance_checks": [
+            "The primitive reaches the /directions page, submits a route request with the provided origin and destination, and returns parsed directions-page output",
+            "If a route summary is displayed, the returned object preserves the sidebar summary text and any parsed distance/duration strings",
+            "If the site shows no route result, the primitive returns a structured no-route outcome distinct from interaction failure"
+          ],
+          "source_evidence": {
+            "workflow_id": "task101_t66",
+            "template_id": "66",
+            "code_quote": "await page.goto(base + '/directions' ...);\nawait page.locator('#route_from').nth(1).fill('University of Pittsburgh, 4200 Fifth Avenue, Pittsburgh, PA');\nawait page.locator('#route_to').nth(1).fill('In-n-Out Trail, Guilford Township, PA');\nawait page.locator('select.routing_engines').nth(1).selectOption('2');\nawait page.locator('.routing_go').nth(1).click();\n...\nconst directionsText = await sidebarText(page);",
+            "explanation": "The workflow successfully demonstrates the site-local directions workflow using the UI: origin and destination are filled, walking mode is selected via a site-specific control, the route is submitted, and route output is read from the sidebar. The specific endpoints are task-specific and should be parameterized. The low-level routing engine code '2' is hidden behind a semantic 'walking' mode because the site coupling belongs inside the primitive.",
+            "evidence_match_mode": "attributed_nonverbatim"
+          }
+        }
+      ]
+    },
+    "errors": []
+  }
+]

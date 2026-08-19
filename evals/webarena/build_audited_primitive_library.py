@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import yaml
@@ -22,10 +23,22 @@ def main():
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--dataset", required=True)
     parser.add_argument("--output", required=True)
-    parser.add_argument("--batch-size", type=int, default=8)
+    parser.add_argument("--batch-size", type=int, default=4)
+    parser.add_argument(
+        "--workers", type=int, default=16,
+        help="Parallel workflow-extraction and independent induction-batch workers.",
+    )
+    parser.add_argument(
+        "--site-workers", type=int, default=4,
+        help="Websites to build concurrently; consolidation remains serial within each website.",
+    )
     parser.add_argument("--seed", type=int, default=20260810)
     parser.add_argument("--sites", nargs="*", help="Optional site subset for resumable builds")
     parser.add_argument("--max-attempts", type=int, default=3)
+    parser.add_argument(
+        "--max-output-tokens", type=int, default=24000,
+        help="Maximum tokens for each extraction/update/quality response.",
+    )
     parser.add_argument(
         "--force-consolidation", action="store_true",
         help="Reuse accepted extraction/batch snapshots but rerun consolidation and rendering.",
@@ -51,9 +64,10 @@ def main():
                 raise ValueError(f"{path}: site mismatch")
             by_site[site].append(workflow)
     summary = {"status": "candidate", "promoted": False, "sites": {}}
-    for site, workflows in sorted(by_site.items()):
-        if args.sites and site not in set(args.sites):
-            continue
+    selected = [(site, workflows) for site, workflows in sorted(by_site.items())
+                if not args.sites or site in set(args.sites)]
+
+    def build_one(site, workflows):
         existing_index = Path(args.output) / site / "final_candidate" / "index.json"
         if (existing_index.exists() and not args.force_consolidation
                 and args.rebuild_from_batch is None):
@@ -61,24 +75,46 @@ def main():
             write_candidate_review(
                 existing_index.parent, site=site, primitives=existing.get("primitives") or []
             )
-            summary["sites"][site] = {
+            return site, {
                 "site": site, "status": existing.get("status", "candidate"),
                 "resumed": True, "package": str(existing_index.parent / "package.py"),
             }
-            continue
         result = build_audited_site_library(
             site=site, workflows=workflows, output=Path(args.output) / site,
             batch_size=args.batch_size, seed=args.seed,
-            llm_fn=lambda system, user: llm_json(system, user, max_tokens=24000),
+            llm_fn=lambda system, user: llm_json(
+                system, user, max_tokens=args.max_output_tokens
+            ),
             max_attempts=args.max_attempts,
             rebuild_from_batch=args.rebuild_from_batch,
+            max_workers=args.workers,
         )
-        summary["sites"][site] = result
+        return site, result
+
+    failures = {}
+    with ThreadPoolExecutor(max_workers=max(1, min(args.site_workers, len(selected) or 1))) as pool:
+        futures = {pool.submit(build_one, site, workflows): site
+                   for site, workflows in selected}
+        for future in as_completed(futures):
+            site = futures[future]
+            try:
+                _, result = future.result()
+                summary["sites"][site] = result
+            except Exception as exc:
+                failures[site] = f"{type(exc).__name__}: {exc}"
+                summary["sites"][site] = {
+                    "site": site, "status": "failed", "error": failures[site],
+                }
+    if failures:
+        summary["status"] = "partial_failure"
+    summary["sites"] = dict(sorted(summary["sites"].items()))
     Path(args.output).mkdir(parents=True, exist_ok=True)
     (Path(args.output) / "summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
     print(json.dumps(summary, ensure_ascii=False))
+    if failures:
+        raise RuntimeError(f"site builds failed: {failures}")
 
 
 if __name__ == "__main__":
