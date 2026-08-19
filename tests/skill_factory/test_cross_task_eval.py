@@ -263,6 +263,9 @@ def test_direct_primitive_router_does_not_require_scratch_plan(tmp_path):
         if system.startswith("Route site primitives"):
             seen.update(system=system, user=user)
             return {"decision": "adapt", "primitive_ids": ["map/search"],
+                    "primitive_calls": [{"primitive_id": "map/search", "bindings": {
+                        "base_url": "runtime.base_url", "query": "task.place_query",
+                    }, "closed_acquisition": "place lookup"}],
                     "reason": "useful acquisition", "remaining_gap": ["filter"],
                     "task_structure": "single_stage"}
         if system.startswith("Classify exactly one structural property"):
@@ -282,13 +285,16 @@ def test_direct_primitive_router_does_not_require_scratch_plan(tmp_path):
         }
 
     out = E.retrieve_direct_primitives(
-        "find a place", tmp_path, site="map", llm_fn=fake_llm,
+        "find a place", tmp_path, site="map",
+        runtime_context={"available_bindings": ["runtime.base_url"]}, llm_fn=fake_llm,
     )
     assert out.decision == "adapt"
     assert [item["primitive_id"] for item in out.primitives] == ["map/search"]
     assert "Do not require or mention a scratch plan" in seen["system"]
     assert "scratch_plan" not in seen["user"]
     assert "contract refinement" in seen["verifier_system"]
+    assert "runtime.base_url" in seen["user"]
+    assert "runtime.base_url" in seen["verifier_user"]
     assert "nearest pharmacy from fully named CMU" in seen["risk_system"]
     assert out.contract_verdict["verdict"] == "accept"
 
@@ -457,7 +463,7 @@ def test_deterministic_guard_rejects_population_reducers_over_partial_collection
     )
 
 
-def test_deterministic_guard_allows_population_reducer_with_explicit_all_pages_mode():
+def test_deterministic_guard_requires_actual_all_pages_binding_not_schema_support():
     orders = {
         "primitive_id": "shopping/orders/list_authenticated_customer_orders_graphql",
         "input_contract": {"properties": {"retrieval_mode": {
@@ -466,9 +472,54 @@ def test_deterministic_guard_allows_population_reducer_with_explicit_all_pages_m
         "output_contract": {"properties": {"orders": {"type": "array"}}},
         "guarantees": {"completeness": "conditional"},
     }
+    task = "What is the date when I made my first purchase on this site?"
+    assert "exhaustive" in E.deterministic_direct_contract_guard(
+        task, [orders], site="shopping",
+        proposal={"primitive_calls": [{"primitive_id": orders["primitive_id"],
+                                        "bindings": {"retrieval_mode": "single_page",
+                                                     "page_number": 1}}]},
+    )
     assert E.deterministic_direct_contract_guard(
-        "What is the date when I made my first purchase on this site?", [orders], site="shopping"
+        task, [orders], site="shopping",
+        proposal={"primitive_calls": [{"primitive_id": orders["primitive_id"],
+                                        "bindings": {"retrieval_mode": "all_pages",
+                                                     "page_number": 1}}]},
     ) is None
+
+
+def test_minimal_proposal_prunes_partial_fallbacks_and_unused_auth():
+    complete = {
+        "primitive_id": "shopping/orders/graphql", "feature": "orders",
+        "requires": [], "provides": ["orders.graphql"],
+        "guarantees": {"completeness": "conditional", "collection_scope": "query"},
+    }
+    partial = {
+        "primitive_id": "shopping/orders/html", "feature": "orders",
+        "requires": ["customer.authenticated"], "provides": ["orders.page"],
+        "guarantees": {"completeness": "partial", "collection_scope": "page"},
+    }
+    auth = {
+        "primitive_id": "shopping/auth/login", "feature": "auth",
+        "requires": [], "provides": ["customer.authenticated"],
+        "guarantees": {"completeness": "conditional", "collection_scope": "single"},
+    }
+    proposal = {
+        "decision": "adapt",
+        "primitive_ids": [complete["primitive_id"], partial["primitive_id"], auth["primitive_id"]],
+        "primitive_calls": [
+            {"primitive_id": complete["primitive_id"],
+             "bindings": {"retrieval_mode": "all_pages", "page_number": 1}},
+            {"primitive_id": partial["primitive_id"], "bindings": {}},
+            {"primitive_id": auth["primitive_id"], "bindings": {}},
+        ],
+    }
+    out = E.minimize_direct_primitive_proposal(
+        "What is the date of my first order?", proposal, [complete, partial, auth],
+    )
+    assert out["primitive_ids"] == [complete["primitive_id"]]
+    assert [call["primitive_id"] for call in out["primitive_calls"]] == [
+        complete["primitive_id"]
+    ]
 
 
 def test_reads_valid_primitive_execution_events(tmp_path):

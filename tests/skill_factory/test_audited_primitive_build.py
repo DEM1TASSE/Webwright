@@ -542,6 +542,19 @@ def test_gate_allows_count_directly_reported_by_site_grid():
     assert not any("record aggregation" in error for error in errors)
 
 
+def test_gate_requires_typed_seconds_when_duration_text_is_exposed():
+    value = primitive()
+    value["output_contract"] = {
+        "type": "object", "properties": {"duration_text": {"type": "string"}},
+    }
+    errors = validate_primitive(value, site="gitlab", workflows={"w1": WORKFLOWS[0]})
+    assert "duration_text requires typed duration_seconds in the output contract" in errors
+
+    value["output_contract"]["properties"]["duration_seconds"] = {"type": "number"}
+    errors = validate_primitive(value, site="gitlab", workflows={"w1": WORKFLOWS[0]})
+    assert "duration_text requires typed duration_seconds in the output contract" not in errors
+
+
 def test_gate_rejects_unsafe_or_underspecified_guarantees():
     value = primitive()
     value["guarantees"]["supports_absence_proof"] = True

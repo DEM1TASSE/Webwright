@@ -540,7 +540,9 @@ def configure_router_model(model_config):
     configure_llm(model)
 
 
-def verify_direct_primitive_contract(task, proposal, selected, *, llm_fn=None):
+def verify_direct_primitive_contract(
+    task, proposal, selected, *, runtime_context=None, llm_fn=None,
+):
     """Verify a proposed direct reuse plan against selected primitive contracts."""
     if llm_fn is None:
         from webwright.skill_factory.llm import llm_json as llm_fn
@@ -552,8 +554,12 @@ def verify_direct_primitive_contract(task, proposal, selected, *, llm_fn=None):
     return llm_fn(
         "Verify one proposed primitive reuse plan as a contract refinement of at least one "
         "closed website-acquisition sub-operation. Do not require the primitives to solve the "
-        "whole task. Check exactly three obligations: (1) input_reachability: every selected "
-        "primitive input needed by the proposal is available from the task or an earlier "
+        "whole task. The supplied runtime_context lists bindings provided by the runner; their "
+        "values do not need to appear in the natural-language task. Keep runtime bindings, "
+        "semantic task inputs, and requires/provides state preconditions distinct. API-internal "
+        "authentication does not establish a browser-session state unless the contract says so. "
+        "Check exactly three obligations: (1) input_reachability: every selected primitive input "
+        "needed by the proposal is available from runtime_context, the task, or an earlier "
         "selected output, without leaving an internal site identifier/configuration gap; "
         "(2) guarantee_sufficiency: the primitive guarantees are strong enough for the claim "
         "made for the specific local acquisition it replaces, not necessarily for the final task. "
@@ -584,12 +590,97 @@ def verify_direct_primitive_contract(task, proposal, selected, *, llm_fn=None):
         "\"closed_acquisition\":\"pass|fail\"},"
         "\"closed_acquisitions\":[\"...\"],\"reason\":\"...\"}. ACCEPT requires all "
         "three checks to pass and at least one specific closed acquisition.",
-        json.dumps({"task": task, "proposal": proposal,
+        json.dumps({"task": task, "runtime_context": runtime_context or {}, "proposal": proposal,
                     "selected_contracts": contracts}, ensure_ascii=False),
     )
 
 
-def deterministic_direct_contract_guard(task, selected, *, site, exposure_risk=None):
+def _direct_call_bindings(proposal, primitive_id):
+    for call in (proposal or {}).get("primitive_calls") or []:
+        if (isinstance(call, dict)
+                and str(call.get("primitive_id") or "") == str(primitive_id)):
+            bindings = call.get("bindings") or {}
+            return bindings if isinstance(bindings, dict) else {}
+    return {}
+
+
+def _schema_keys(value):
+    keys = set()
+    if isinstance(value, dict):
+        properties = value.get("properties")
+        if isinstance(properties, dict):
+            keys.update(str(key).lower() for key in properties)
+        for child in value.values():
+            keys.update(_schema_keys(child))
+    elif isinstance(value, list):
+        for child in value:
+            keys.update(_schema_keys(child))
+    return keys
+
+
+def _task_has_population_reducer(task):
+    text = str(task).lower()
+    return bool(re.search(
+        r"\b(all|total number|how many|most(?:\s+recent)?|least|highest|lowest|top|"
+        r"first|last|earliest|latest|nearest|closest|nearby|within|at most|"
+        r"key aspects?|common themes?|recurring themes?)\b",
+        text,
+    )) or bool(re.search(
+        r"\b(find|list|show(?:\s+me)?)\b[^.!?]*\b(items|products|reviews|orders|contributors)\b",
+        text,
+    ))
+
+
+def _proves_complete_collection(primitive, proposal=None):
+    guarantees = primitive.get("guarantees") or {}
+    if guarantees.get("completeness") == "complete":
+        return True
+    if guarantees.get("completeness") != "conditional":
+        return False
+    bindings = _direct_call_bindings(proposal, primitive.get("primitive_id"))
+    return bindings.get("retrieval_mode") == "all_pages" and bindings.get("page_number") == 1
+
+
+def minimize_direct_primitive_proposal(task, proposal, candidates):
+    """Remove contract-dominated fallbacks without inventing semantic capabilities."""
+    proposal = dict(proposal or {})
+    by_id = {str(item.get("primitive_id")): item for item in candidates}
+    ids = []
+    for value in proposal.get("primitive_ids") or []:
+        pid = str(value)
+        if pid in by_id and pid not in ids:
+            ids.append(pid)
+
+    if _task_has_population_reducer(task):
+        complete_features = {
+            str(by_id[pid].get("feature") or "")
+            for pid in ids if _proves_complete_collection(by_id[pid], proposal)
+        }
+        if complete_features:
+            ids = [pid for pid in ids if not (
+                str(by_id[pid].get("feature") or "") in complete_features
+                and (by_id[pid].get("guarantees") or {}).get("completeness") == "partial"
+                and (by_id[pid].get("guarantees") or {}).get("collection_scope") in {"page", "query"}
+            )]
+
+    required_states = set().union(*(
+        set(by_id[pid].get("requires") or []) for pid in ids
+    )) if ids else set()
+    ids = [pid for pid in ids if not (
+        str(by_id[pid].get("feature") or "").lower() in {"auth", "authentication"}
+        and set(by_id[pid].get("provides") or []).isdisjoint(required_states)
+    )]
+    proposal["primitive_ids"] = ids
+    proposal["primitive_calls"] = [
+        call for call in proposal.get("primitive_calls") or []
+        if isinstance(call, dict) and str(call.get("primitive_id") or "") in ids
+    ]
+    return proposal
+
+
+def deterministic_direct_contract_guard(
+    task, selected, *, site, exposure_risk=None, proposal=None,
+):
     """Reject a few explicit pre-planning hazards without pretending to understand semantics.
 
     The LLM still proposes reuse. This guard only enforces facts present in the task wording and
@@ -601,19 +692,6 @@ def deterministic_direct_contract_guard(task, selected, *, site, exposure_risk=N
     if (exposure_risk or {}).get("chained_open_world") is True:
         return "unresolved chained acquisition cannot be late-bound in a one-shot prompt"
 
-    def schema_keys(value):
-        keys = set()
-        if isinstance(value, dict):
-            properties = value.get("properties")
-            if isinstance(properties, dict):
-                keys.update(str(key).lower() for key in properties)
-            for child in value.values():
-                keys.update(schema_keys(child))
-        elif isinstance(value, list):
-            for child in value:
-                keys.update(schema_keys(child))
-        return keys
-
     collection_keys = {
         "results", "records", "orders", "reviews", "items", "places", "candidates",
         "rows", "commits", "issues", "products", "contributors", "review_details",
@@ -621,40 +699,19 @@ def deterministic_direct_contract_guard(task, selected, *, site, exposure_risk=N
     }
     selected_collections = [
         primitive for primitive in selected
-        if schema_keys(primitive.get("output_contract") or {}) & collection_keys
+        if _schema_keys(primitive.get("output_contract") or {}) & collection_keys
     ]
     if re.search(r"\b(items?|units?)\s+sold\b", text):
         outputs = set().union(*(
-            schema_keys(primitive.get("output_contract") or {}) for primitive in selected
+            _schema_keys(primitive.get("output_contract") or {}) for primitive in selected
         )) if selected else set()
         if not outputs & {"quantity", "qty", "ordered_quantity", "order_quantity"}:
             return "items sold requires quantity facts; line-item cardinality is insufficient"
 
-    population_reducer = bool(re.search(
-        r"\b(all|total number|how many|most(?:\s+recent)?|least|highest|lowest|top|"
-        r"first|last|earliest|latest|nearest|closest|nearby|within|at most|"
-        r"key aspects?|common themes?|recurring themes?)\b",
-        text,
-    )) or bool(re.search(
-        r"\b(find|list|show(?:\s+me)?)\b[^.!?]*\b(items|products|reviews|orders|contributors)\b",
-        text,
-    ))
-
-    def proves_complete_collection(primitive):
-        guarantees = primitive.get("guarantees") or {}
-        if guarantees.get("completeness") == "complete":
-            return True
-        # A conditional contract can still close a population acquisition when it exposes an
-        # explicit all-pages mode. The caller must select that mode; a large page_size alone is
-        # not a completeness proof.
-        input_contract = primitive.get("input_contract") or {}
-        retrieval_mode = (input_contract.get("properties") or {}).get("retrieval_mode") or {}
-        return guarantees.get("completeness") == "conditional" and "all_pages" in (
-            retrieval_mode.get("enum") or []
-        )
+    population_reducer = _task_has_population_reducer(task)
 
     if population_reducer and selected_collections and not any(
-        proves_complete_collection(primitive) for primitive in selected_collections
+        _proves_complete_collection(primitive, proposal) for primitive in selected_collections
     ):
         return "task requires exhaustive candidate acquisition but selected collection is partial"
 
@@ -691,7 +748,9 @@ def classify_direct_exposure_risk(task, candidates, proposed_ids, *, llm_fn=None
     )
 
 
-def retrieve_direct_primitives(task, library, *, site, max_primitives=5, llm_fn=None):
+def retrieve_direct_primitives(
+    task, library, *, site, max_primitives=5, runtime_context=None, llm_fn=None,
+):
     """Metadata-first primitive routing without a scratch-first plan."""
     from webwright.skill_factory.audited_primitive_retrieve import retrieve_audited_primitives
     if llm_fn is None:
@@ -744,12 +803,23 @@ def retrieve_direct_primitives(task, library, *, site, max_primitives=5, llm_fn=
             "restriction: evaluate ordinary local contract usefulness. When it is true, candidate "
             "selection will be handled by a separate late-bound gate, so propose every locally useful "
             "primitive and do not force SKIP solely because the task is chained. Never infer capabilities "
-            "absent from metadata. Select at most five. Return JSON "
-            "{\"decision\":\"use|adapt|skip\",\"primitive_ids\":[],\"reason\":\"...\","
-            "\"remaining_gap\":[]}. No patches field is needed in direct mode.",
-            json.dumps({"task": current_task, "exposure_risk": risk,
+            "absent from metadata. Select the MINIMUM sufficient set: one canonical primitive "
+            "per acquisition role plus only dependencies required by requires/provides. Do not "
+            "add weaker HTML/page fallbacks when a selected typed acquisition closes the same "
+            "role. runtime_context lists runner-provided inputs; bind them without requiring "
+            "their values in the task text. For every selected primitive declare concrete planned "
+            "bindings. A conditional collection proves completeness only when this call explicitly "
+            "binds retrieval_mode=all_pages and page_number=1. Select at most five. Return JSON "
+            "{\"decision\":\"use|adapt|skip\",\"primitive_ids\":[],"
+            "\"primitive_calls\":[{\"primitive_id\":\"...\",\"bindings\":{},"
+            "\"closed_acquisition\":\"...\"}],\"reason\":\"...\","
+            "\"remaining_gap\":[]}. primitive_ids and primitive_calls must name the same set. "
+            "No patches field is needed in direct mode.",
+            json.dumps({"task": current_task, "runtime_context": runtime_context or {},
+                        "exposure_risk": risk,
                         "candidates": candidates}, ensure_ascii=False),
         )
+        proposal = minimize_direct_primitive_proposal(current_task, proposal, candidates)
         proposed_ids = [str(x) for x in (proposal or {}).get("primitive_ids") or []]
         is_chained = risk.get("chained_open_world") is True
         if is_chained:
@@ -775,7 +845,7 @@ def retrieve_direct_primitives(task, library, *, site, max_primitives=5, llm_fn=
         proposed = [selected_by_id[pid] for pid in (proposal or {}).get("primitive_ids") or []
                     if pid in selected_by_id]
         guard_reason = deterministic_direct_contract_guard(
-            current_task, proposed, site=site, exposure_risk=risk,
+            current_task, proposed, site=site, exposure_risk=risk, proposal=proposal,
         )
         if guard_reason:
             proposal = dict(proposal or {})
@@ -785,7 +855,7 @@ def retrieve_direct_primitives(task, library, *, site, max_primitives=5, llm_fn=
 
     def verify(current_task, proposal, selected):
         return verify_direct_primitive_contract(
-            current_task, proposal, selected, llm_fn=llm_fn,
+            current_task, proposal, selected, runtime_context=runtime_context, llm_fn=llm_fn,
         )
 
     retrieval = retrieve_audited_primitives(
@@ -862,6 +932,14 @@ def run_one(args, split, dataset, config):
 
     url = resolve_url(task, config)
     credentials = credentials_for(task, config)
+    runtime_context = {
+        "available_bindings": ["runtime.base_url", "runtime.browser_page"],
+        "available_states": [],
+    }
+    if credentials:
+        runtime_context["available_bindings"].extend([
+            "runtime.credentials.username", "runtime.credentials.password",
+        ])
     login = ""
     if credentials:
         login = (f"\nIf login is required, use username `{credentials.get('username', '')}` "
@@ -957,6 +1035,7 @@ def run_one(args, split, dataset, config):
             scratch_plan=scratch_plan,
         ) if args.scratch_first else retrieve_direct_primitives(
             task["intent"], args.candidate_library, site=site, max_primitives=5,
+            runtime_context=runtime_context,
         ))
         primitive_hint = render_audited_primitive_hint(
             retrieval, include_code=not args.primitive_metadata_only,

@@ -20,6 +20,7 @@ class AuditedRetrieval:
     scratch_plan: dict | None = None
     patches: list[dict] = field(default_factory=list)
     contract_verdict: dict = field(default_factory=dict)
+    proposal: dict = field(default_factory=dict)
 
     @property
     def sources(self):
@@ -230,6 +231,7 @@ def retrieve_audited_primitives(
         reason=str(raw.get("reason") or ""),
         remaining_gap=[str(x) for x in raw.get("remaining_gap") or [] if isinstance(x, str)],
         scratch_plan=scratch_plan, patches=patches, contract_verdict=contract_verdict,
+        proposal=raw,
     )
 
 
@@ -255,6 +257,16 @@ def render_audited_primitive_hint(
         lines.insert(3, "Contract verifier: " + json.dumps(
             result.contract_verdict, ensure_ascii=False, sort_keys=True
         ))
+    selected_ids = {item["primitive_id"] for item in result.primitives}
+    planned_calls = [
+        call for call in result.proposal.get("primitive_calls") or []
+        if isinstance(call, dict) and str(call.get("primitive_id") or "") in selected_ids
+    ]
+    if planned_calls:
+        lines.insert(3, "Planned invocation bindings (resolve runtime/task placeholders, preserve "
+                     "literal contract modes): " + json.dumps(
+                         planned_calls, ensure_ascii=False, sort_keys=True
+                     ))
     if result.scratch_plan:
         lines[3:3] = [
             "Apply only the approved local patches below. Do not redesign, replace, or reorder "
@@ -329,4 +341,5 @@ def write_audited_retrieval(path: str | Path, result: AuditedRetrieval, *, task:
         "retrieved": result.sources, "reason": result.reason,
         "remaining_gap": result.remaining_gap, "scratch_plan": result.scratch_plan,
         "patches": result.patches, "contract_verdict": result.contract_verdict,
+        "proposal": result.proposal,
     }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

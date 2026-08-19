@@ -170,7 +170,60 @@ collection 当成了可供全局 reducer 使用的候选全集。典型错误包
 ### 无效 E2E 尝试（不计入结果）
 
 2026-08-19 00:11 UTC 尝试以纯 GCR、总并发 4 启动 15 个 scratch。15/15 均在第一次模型请求
-前以 step 0 退出，`runtime_errors.jsonl` 一致记录 OpenAI Responses API `401 invalid_api_key`。
+前以 step 0 退出，`runtime_errors.jsonl` 一致记录 public OpenAI Responses API `401`。后续对比
+V9 有效 trajectory 确认：V9 使用 `gpt-5.4` + `https://gateway.phyagi.net/api/responses`，
+而本次命令遗漏 gateway model modifier，错误回退到 `gpt-4o` + public endpoint。同一 key
+对 gateway 的最小请求返回 HTTP 200，所以 key 未失效，根因是试验启动配置漂移。
+
 GCR Shopping/Admin/GitLab/Map 在启动前 HTTP 检查均为 200，因此这不是站点超时，也不是算法
 regression。无效产物保留在 `primitive_router_v10_dev_{runs,results}` 供审计，但不进入任何成功率、
-步数或 timeout 统计；有效重跑将写入新版本目录，避免覆盖证据。
+步数或 timeout 统计；有效重跑使用分支内冻结的 `model.gateway54.yaml` 并写入新目录。
+
+### 有效 paired E2E（15-case dev2）
+
+冻结配置：纯 GCR、`gpt-5.4` gateway、总并发 4、每站点并发 2、单任务 900 秒。产物保存在
+`primitive_router_v10_dev2_{runs,results}`。
+
+| 指标 | Scratch | Primitive |
+|---|---:|---:|
+| 全部 15 case 成功 | 7/15 | 9/15 |
+| 被实际曝光的 7 case 成功 | 5/7 | 4/7 |
+
+9/15 不能解释成 primitive 提升：148、309、312 的 route 都是 `skip`，solve prompt 与 scratch
+字节相同，三次翻转只能算本轮采样差异。只看非 skip 的配对，本轮是 1 Win（250）、1 个正式
+scored Loss（19）、1 个 agent incomplete（251，答案本身正确），其余无变化。
+
+逐类观察：
+
+- 18：`use get_route_summary`，双方都对，12→10 steps。
+- 19：同一 primitive 得到了 gold 对应的 `0:12/1:44`，但最终回答保留歧义的 H:MM 文本且只说
+  driving faster；scratch 还给出相差 92 分钟，因此前者被 fuzzy evaluator 判错。这暴露的是
+  duration contract/consumer formatting 问题，不是 route acquisition 失败。
+- 117：router 选了完整 GraphQL orders、两个 partial HTML list 和 auth 共四个 primitive；虽双方
+  都对且 25→13 steps，但集合明显冗余。完整 GraphQL 的 `all_pages` 已足够。
+- 118：单个 multi-search，双方都错，16→18 steps。
+- 250：单个 `search_places`，scratch 错、primitive 对，16→7 steps；这是本轮唯一严格可归因 Win。
+- 251：primitive 找到并提交了正确 gold 坐标，但探索中生成的脚本先因精确字符串匹配失败，最终在
+  28 steps 后以 `agent_timeout_or_incomplete` 结束，未进入 official evaluator。它是可靠性/成本
+  regression，不是事实 acquisition 错误。
+- 252：单个 `search_places`，双方都对，31→26 steps。
+
+### 独立 recall/trajectory 审计
+
+两个独立审计得到一致结论：不能因为 live router 把 148/337 skip 就放松 population guard。
+
+1. V10 population guard 只直接挡住 215/246/309/312/368；117/148/335/337 的变化来自 LLM
+   contract verifier 与候选选择方差。
+2. verifier 把 runner 已提供的 `base_url`/credentials 当成 task intent 必须明说的 semantic input，
+   并混淆 API 内部认证、浏览器登录态和普通参数。
+3. 117 缺少“最小充分集合”剪枝：complete GraphQL acquisition 应支配两个 partial HTML fallback，
+   随后无消费者的 auth helper 也应删除。
+4. 当前 completeness 检查还有 precision bug：只要 schema enum *支持* `all_pages` 就放行，没有确认
+   本次 proposal 真正绑定了 `retrieval_mode=all_pages`（以及从第一页开始）。
+5. marker 不能证明执行：117 没调用原函数但吸收了 endpoint/pagination 策略；148/337 复制了 detail
+   primitive 却没调用。后续 instrumentation 必须区分 exposure、copy、call、return 和 consumed output。
+
+因此 V10 不 promotion，也不启动 156-task full run。V11 的最小方向是：显式提供不含秘密值的 runtime
+binding availability；proposal 声明每个 primitive 的调用 bindings；guard 检查本次 all-pages binding；
+同一 acquisition role 只保留最小充分集合。335/337 的 storefront display date 语义应先由 induction
+补进 typed contract，不能靠 task ID 特判 router。

@@ -44,6 +44,12 @@ Site selectors, URL patterns, endpoint shapes, authentication, pagination, and s
 semantics belong in primitives. Task filtering, aggregation, ranking, subjective classification,
 and answer formatting stay in workflows. Local git/filesystem operations are not website
 primitives. A failed/blocked attempted mutation does not prove that mutation capability.
+Site-rendered unit, locale, and timezone conventions are site semantics, not answer formatting.
+Preserve the displayed raw value when useful, but also expose an unambiguous typed canonical field
+when the evidence supports parsing it: for example `duration_seconds` beside `duration_text`, or a
+storefront-local calendar date beside its displayed text. Keep API timestamps and storefront/UI
+display dates as distinct fields with explicit semantics; never collapse them into an ambiguous
+generic `date`, and never label an API UTC timestamp as a storefront display date.
 
 Candidate-set acquisition mechanics are also website operations when the workflow demonstrates
 them and they can be parameterized without embedding the task's category decision. Examples are
@@ -161,8 +167,12 @@ Methods are generated for a feature component class whose __init__ stores `self.
 every generated method starts with `self`, uses `self.page` for browser access, and MUST NOT expose
 a separate browser `page` parameter. The name `page` is reserved for that browser object: API/UI
 pagination inputs must be named `page_number` (and represented that way in input_contract), never
-`page`. Formatting seconds as an answer string is workflow logic; a site
-primitive may instead parse a site's displayed duration into typed seconds.
+`page`. Formatting seconds as an answer string is workflow logic; a site primitive that exposes
+a displayed duration MUST also parse it into typed `duration_seconds` when the demonstrated syntax
+is parseable. Preserve `duration_text` alongside it when useful. Site locale/timezone parsing
+follows the same rule: keep API timestamps and storefront/UI display dates distinct, name their
+semantics explicitly, and do not make each workflow rediscover whether an H:MM value means
+hours/minutes or minutes/seconds.
 Geographic bounds/viewbox inputs must be typed objects with numeric minlon, minlat, maxlon, and
 maxlat fields. The method validates increasing longitude/latitude bounds and serializes the opaque
 site parameter internally; never expose the raw comma-separated viewbox string as a public input.
@@ -828,6 +838,9 @@ def validate_primitive(value: dict, *, site: str, workflows: dict[str, dict], cl
     if any(term in output for term in ("locator", "elementhandle", "raw dom", "raw_html",
                                        "raw html", "untyped text", "page text")):
         errors.append("output_contract exposes raw/untyped site output")
+    output_fields = _semantic_output_fields(value.get("output_contract") or {})
+    if "duration_text" in output_fields and "duration_seconds" not in output_fields:
+        errors.append("duration_text requires typed duration_seconds in the output contract")
     boundary = _norm({"method": name, "capability": value.get("capability"),
                       "owns": value.get("owns")}).lower()
     if str(name or "").startswith("format_") or "final answer formatting" in boundary or (
