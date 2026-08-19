@@ -616,7 +616,8 @@ def deterministic_direct_contract_guard(task, selected, *, site, exposure_risk=N
 
     collection_keys = {
         "results", "records", "orders", "reviews", "items", "places", "candidates",
-        "rows", "commits", "issues", "products",
+        "rows", "commits", "issues", "products", "contributors", "review_details",
+        "report_rows",
     }
     selected_collections = [
         primitive for primitive in selected
@@ -629,19 +630,37 @@ def deterministic_direct_contract_guard(task, selected, *, site, exposure_risk=N
         if not outputs & {"quantity", "qty", "ordered_quantity", "order_quantity"}:
             return "items sold requires quantity facts; line-item cardinality is insufficient"
 
-    exhaustive = bool(re.search(
-        r"\b(all|total number|how many|most recent|nearest|closest|nearby|within|at most)\b",
+    population_reducer = bool(re.search(
+        r"\b(all|total number|how many|most(?:\s+recent)?|least|highest|lowest|top|"
+        r"first|last|earliest|latest|nearest|closest|nearby|within|at most|"
+        r"key aspects?|common themes?|recurring themes?)\b",
+        text,
+    )) or bool(re.search(
+        r"\b(find|list|show(?:\s+me)?)\b[^.!?]*\b(items|products|reviews|orders|contributors)\b",
         text,
     ))
-    if exhaustive and selected_collections and not any(
-        (primitive.get("guarantees") or {}).get("completeness") == "complete"
-        for primitive in selected_collections
+
+    def proves_complete_collection(primitive):
+        guarantees = primitive.get("guarantees") or {}
+        if guarantees.get("completeness") == "complete":
+            return True
+        # A conditional contract can still close a population acquisition when it exposes an
+        # explicit all-pages mode. The caller must select that mode; a large page_size alone is
+        # not a completeness proof.
+        input_contract = primitive.get("input_contract") or {}
+        retrieval_mode = (input_contract.get("properties") or {}).get("retrieval_mode") or {}
+        return guarantees.get("completeness") == "conditional" and "all_pages" in (
+            retrieval_mode.get("enum") or []
+        )
+
+    if population_reducer and selected_collections and not any(
+        proves_complete_collection(primitive) for primitive in selected_collections
     ):
         return "task requires exhaustive candidate acquisition but selected collection is partial"
 
     # Geographic category discovery is especially sensitive to query family and search radius.
     # Even a multi-query helper only executes caller guesses; it does not make them exhaustive.
-    if site == "map" and exhaustive and any(
+    if site == "map" and population_reducer and any(
         "/places/" in str(primitive.get("primitive_id") or "")
         for primitive in selected
     ):

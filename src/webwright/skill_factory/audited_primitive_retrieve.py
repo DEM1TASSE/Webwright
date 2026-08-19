@@ -109,6 +109,7 @@ def retrieve_audited_primitives(
     metadata = [{key: primitive.get(key) for key in (
         "primitive_id", "feature", "method", "capability", "owns", "does_not_own",
         "input_contract", "output_contract", "requires", "provides", "supported_patterns",
+        "guarantees",
     )} for primitive in primitives]
     if decide_fn is None:
         from .llm import llm_json

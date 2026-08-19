@@ -22,6 +22,18 @@ def test_build_jobs_keeps_t1_and_t2_disjoint():
     assert MODULE.build_jobs(split, "t2", ["map"]) == [("map", "retrieve", 9, 8)]
 
 
+def test_select_task_subset_stays_inside_frozen_partition():
+    jobs = [("map", "retrieve", 9, 8), ("gitlab", "retrieve", 10, 12)]
+    assert MODULE.select_task_subset(jobs, [12], []) == [jobs[1]]
+    assert MODULE.select_task_subset(jobs, None, [8]) == [jobs[1]]
+    try:
+        MODULE.select_task_subset(jobs, [999], [])
+    except ValueError as error:
+        assert "outside selected frozen partition" in str(error)
+    else:
+        raise AssertionError("unknown task must not be silently ignored")
+
+
 def test_compat_splits_are_site_local(tmp_path):
     jobs = [
         ("gitlab", "retrieve", 10, 1),

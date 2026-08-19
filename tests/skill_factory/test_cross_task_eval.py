@@ -425,6 +425,52 @@ def test_deterministic_guard_allows_query_scoped_price_aggregation_without_globa
     ) is None
 
 
+def test_deterministic_guard_rejects_population_reducers_over_partial_collections():
+    contributors = {
+        "primitive_id": "gitlab/contributors/list_repository_contributors",
+        "input_contract": {"properties": {"project_id": {"type": "integer"}}},
+        "output_contract": {"properties": {"contributors": {"type": "array"}}},
+        "guarantees": {"completeness": "conditional"},
+    }
+    reviews = {
+        "primitive_id": "shopping_admin/reviews/search_product_reviews_by_product_name",
+        "input_contract": {"properties": {"product_name": {"type": "string"}}},
+        "output_contract": {"properties": {"records": {"type": "array"}}},
+        "guarantees": {"completeness": "partial"},
+    }
+    products = {
+        "primitive_id": "shopping/catalog/multi_search_products_graphql_dedup_by_sku",
+        "input_contract": {"properties": {"queries": {"type": "array"}}},
+        "output_contract": {"properties": {"products": {"type": "array"}}},
+        "guarantees": {"completeness": "conditional"},
+    }
+
+    assert "exhaustive" in E.deterministic_direct_contract_guard(
+        "Tell me who made the most contributions to this project", [contributors], site="gitlab"
+    )
+    assert "exhaustive" in E.deterministic_direct_contract_guard(
+        "What key aspects do customers dislike about this product?", [reviews],
+        site="shopping_admin",
+    )
+    assert "exhaustive" in E.deterministic_direct_contract_guard(
+        "Find discounted items.", [products], site="shopping"
+    )
+
+
+def test_deterministic_guard_allows_population_reducer_with_explicit_all_pages_mode():
+    orders = {
+        "primitive_id": "shopping/orders/list_authenticated_customer_orders_graphql",
+        "input_contract": {"properties": {"retrieval_mode": {
+            "type": "string", "enum": ["single_page", "all_pages"],
+        }}},
+        "output_contract": {"properties": {"orders": {"type": "array"}}},
+        "guarantees": {"completeness": "conditional"},
+    }
+    assert E.deterministic_direct_contract_guard(
+        "What is the date when I made my first purchase on this site?", [orders], site="shopping"
+    ) is None
+
+
 def test_reads_valid_primitive_execution_events(tmp_path):
     (tmp_path / "primitive_execution_trace.jsonl").write_text("\n".join([
         json.dumps({"primitive_id": "gitlab/commits/list", "scratch_step_id": "S1",

@@ -51,6 +51,19 @@ def build_jobs(split, partition, sites=None):
     return jobs
 
 
+def select_task_subset(jobs, task_ids=None, exclude_task_ids=None):
+    """Filter only within an already-frozen partition and reject silent membership mistakes."""
+    jobs = list(jobs)
+    if task_ids is not None:
+        selected = set(task_ids)
+        missing = selected - {job[3] for job in jobs}
+        if missing:
+            raise ValueError(f"tasks outside selected frozen partition/sites: {sorted(missing)}")
+        jobs = [job for job in jobs if job[3] in selected]
+    excluded = set(exclude_task_ids or [])
+    return [job for job in jobs if job[3] not in excluded]
+
+
 def workflow_map(events_path):
     if not Path(events_path).exists():
         return {}
@@ -145,6 +158,8 @@ def main():
     ap.add_argument("--sites", nargs="*", help="Optional site subset; keeps the frozen split intact")
     ap.add_argument("--exclude-task-ids", nargs="*", type=int, default=[],
                     help="Recovery-only exclusions; the frozen split itself is unchanged")
+    ap.add_argument("--task-ids", nargs="*", type=int,
+                    help="Development-only subset of the frozen partition")
     ap.add_argument("--timeout", type=int, default=900)
     args = ap.parse_args()
     if args.partition == "t1" and args.arm == "primitive":
@@ -152,8 +167,11 @@ def main():
     if not os.environ.get("OPENAI_API_KEY"):
         raise SystemExit("OPENAI_API_KEY is missing")
 
-    jobs = [job for job in build_jobs(load(args.split), args.partition, args.sites)
-            if job[3] not in set(args.exclude_task_ids)]
+    partition_jobs = build_jobs(load(args.split), args.partition, args.sites)
+    try:
+        jobs = select_task_subset(partition_jobs, args.task_ids, args.exclude_task_ids)
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
     deployment_config = load(args.config)
     skills = workflow_map(args.workflow_events)
     # A process may run only a site subset while another subset is running concurrently.  A

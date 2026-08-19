@@ -123,3 +123,54 @@ Map Rails frontend 是唯一明显的单点瓶颈：并发 8 和 16 时吞吐都
 Map 23 个中 10 个 timeout，因此正式大规模运行不能把这些 timeout 解释为 primitive
 regression，也不应继续依赖 AWS Admin。压测还暴露并修复了 official adapter 在缺少
 `final_state.json` 时直接崩溃的问题。
+
+## Iteration 1 / V10：完整候选集门禁
+
+### 假设
+
+V9 的主要可归因 regression 不是“primitive 一律无用”，而是 router 把 partial/query-scoped
+collection 当成了可供全局 reducer 使用的候选全集。典型错误包括：在一页 contributors 上取
+`most`、在一页 reviews 上总结 `key aspects`、用 caller 猜测的 query family 枚举所有折扣商品。
+
+本轮只增加一条通用不变量：任务若要对一个 population 做 extrema/ranking/aggregation、主题总结或
+无边界复数枚举，selected collection 必须声明 `completeness=complete`，或提供显式
+`retrieval_mode=all_pages`。较大的 `page_size`、多 query union 和 `conditional` 本身都不能证明完整。
+
+### 实现
+
+- `cross_task_eval.py`：扩展 collection schema key；增加 population reducer 检测与 all-pages
+  完整性证明；不修改 primitive 实现。
+- `audited_primitive_retrieve.py`：修复 V9 遗漏，metadata surface 现在会把 library 中已有的
+  `guarantees` 交给 LLM router 和 deterministic guard。此前字段虽被 induction 生成，却在
+  retrieval 时丢失。
+- `replay_primitive_contract_guard.py`：增加无 LLM、无浏览器的冻结决策重放工具，只测当前 guard
+  对历史 selected primitive IDs 的影响。
+- 测试：增加 partial contributor/review/open-world product 拒绝用例，以及 explicit
+  `all_pages` order-history 保留用例。相关测试共 88 个通过。
+
+### 冻结开发集 route-only 结果
+
+产物：[primitive_router_v10_guard_replay.json](primitive_router_v10_guard_replay.json)
+
+| 转换 | 数量 |
+|---|---:|
+| use → use | 4 |
+| adapt → adapt | 6 |
+| adapt → skip | 5 |
+
+- 保留的历史 Win：18、19、117、118、148、251、252、337。
+- 被降为 skip 的历史 Loss：215、246、309、312、368。
+- 尚未处理的历史 Loss：250（正确 Map 候选已取得但 100-step 未完成）、335（GraphQL UTC/raw
+  timestamp 与网站展示日期语义不一致）。它们不是候选集完整性问题，不在本轮加 task-specific
+  规则。
+
+注意：这是 deterministic guard replay，不是新的成功率结果；下一步必须跑 paired E2E，确认 skip
+能恢复 scratch 行为且保留的正例没有受 metadata surface 变化影响。
+
+### 无效 E2E 尝试（不计入结果）
+
+2026-08-19 00:11 UTC 尝试以纯 GCR、总并发 4 启动 15 个 scratch。15/15 均在第一次模型请求
+前以 step 0 退出，`runtime_errors.jsonl` 一致记录 OpenAI Responses API `401 invalid_api_key`。
+GCR Shopping/Admin/GitLab/Map 在启动前 HTTP 检查均为 200，因此这不是站点超时，也不是算法
+regression。无效产物保留在 `primitive_router_v10_dev_{runs,results}` 供审计，但不进入任何成功率、
+步数或 timeout 统计；有效重跑将写入新版本目录，避免覆盖证据。

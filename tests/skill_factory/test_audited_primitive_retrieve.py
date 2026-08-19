@@ -13,6 +13,7 @@ def _library(tmp_path):
         "owns": ["GitLab commit acquisition"], "does_not_own": ["ranking"],
         "input_contract": {"project": "str"}, "output_contract": {"type": "list"},
         "requires": [], "provides": ["commit_records"], "supported_patterns": [],
+        "guarantees": {"collection_scope": "page", "completeness": "partial"},
     }
     (root / "index.json").write_text(__import__("json").dumps({
         "site": "gitlab", "status": "candidate", "approved": False,
@@ -28,6 +29,7 @@ def test_metadata_route_then_full_selected_code_injection(tmp_path):
     def decide(task, metadata):
         seen["metadata"] = metadata
         assert "method_code" not in metadata[0]
+        assert metadata[0]["guarantees"]["completeness"] == "partial"
         return {"decision": "adapt", "primitive_ids": ["gitlab/commits/list_commits"],
                 "reason": "useful", "remaining_gap": ["rank commits"]}
 
