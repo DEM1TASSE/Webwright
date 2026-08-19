@@ -9,6 +9,7 @@ import re
 import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -169,6 +170,62 @@ def find_run(output_dir: Path, key: str, before: set[Path]) -> Path | None:
     return candidates[-1] if candidates else None
 
 
+def complete_artifact_run(output_dir: Path, key: str, before: set[Path]) -> Path | None:
+    run_dir = find_run(output_dir, key, before)
+    if not run_dir:
+        return None
+    state_path = run_dir / "final_state.json"
+    response_path = run_dir / "agent_response.json"
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        response = json.loads(response_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(state.get("final_url"), str) or not state["final_url"].strip():
+        return None
+    html_path = state.get("html_path")
+    if not isinstance(html_path, str) or not (run_dir / html_path).is_file():
+        return None
+    if response.get("status") not in {"SUCCESS", "NOT_FOUND_ERROR"}:
+        return None
+    return run_dir
+
+
+def terminate_process_group(process: subprocess.Popen) -> int:
+    if process.poll() is not None:
+        return int(process.returncode)
+    os.killpg(process.pid, signal.SIGTERM)
+    try:
+        return process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        os.killpg(process.pid, signal.SIGKILL)
+        return process.wait()
+
+
+def resolve_agent_python(explicit: str | None = None) -> Path:
+    if explicit:
+        candidate = Path(explicit).expanduser().absolute()
+    else:
+        local_venv = Path.cwd() / ".venv" / "bin" / "python"
+        # Preserve the virtualenv symlink path. Resolving it selects the base interpreter and
+        # silently loses the environment's site-packages.
+        candidate = local_venv.absolute() if local_venv.is_file() else Path(sys.executable).absolute()
+    if not candidate.is_file():
+        raise ValueError(f"agent Python executable does not exist: {candidate}")
+    return candidate
+
+
+def agent_subprocess_env(python_executable: Path) -> dict[str, str]:
+    """Keep agent-authored subprocesses in the same Python environment as Webwright."""
+    executable = Path(python_executable).absolute()
+    env = dict(os.environ)
+    bin_dir = str(executable.parent)
+    old_parts = [part for part in env.get("PATH", "").split(os.pathsep) if part]
+    env["PATH"] = os.pathsep.join([bin_dir, *[part for part in old_parts if part != bin_dir]])
+    env["VIRTUAL_ENV"] = str(executable.parent.parent)
+    return env
+
+
 def run_task(args) -> dict:
     task, source, deployment, start_url = task_context(args)
     output_dir = Path(args.output_dir).resolve()
@@ -176,8 +233,9 @@ def run_task(args) -> dict:
     key = f"official_webarena_task{args.task_id}"
     before = set(output_dir.glob(f"{key}_*"))
     configs = args.config or ["base.yaml", "model_openai.yaml"]
+    agent_python = resolve_agent_python(args.python)
     command = [
-        sys.executable,
+        str(agent_python),
         "-m",
         "webwright.run.cli",
         "main",
@@ -194,28 +252,39 @@ def run_task(args) -> dict:
         command.extend(["-c", config])
 
     timed_out = False
+    stopped_after_artifacts = False
     return_code = None
-    process = subprocess.Popen(command, start_new_session=True)
-    try:
-        return_code = process.wait(timeout=args.timeout)
-    except subprocess.TimeoutExpired:
-        timed_out = True
-        os.killpg(process.pid, signal.SIGTERM)
-        try:
-            return_code = process.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            os.killpg(process.pid, signal.SIGKILL)
-            return_code = process.wait()
-
-    run_dir = find_run(output_dir, key, before)
+    process = subprocess.Popen(
+        command,
+        start_new_session=True,
+        env=agent_subprocess_env(agent_python),
+    )
+    deadline = time.monotonic() + args.timeout
+    run_dir = None
+    while process.poll() is None:
+        run_dir = complete_artifact_run(output_dir, key, before)
+        if run_dir:
+            stopped_after_artifacts = True
+            return_code = terminate_process_group(process)
+            break
+        if time.monotonic() >= deadline:
+            timed_out = True
+            return_code = terminate_process_group(process)
+            break
+        time.sleep(1)
+    if return_code is None:
+        return_code = process.returncode
+    run_dir = run_dir or find_run(output_dir, key, before)
     final_state = run_dir / "final_state.json" if run_dir else None
     result = {
         "task_id": args.task_id,
         "task_source": "official_webarena",
         "tasks_path": str(source.resolve()),
+        "agent_python": str(agent_python),
         "run_dir": str(run_dir) if run_dir else None,
         "return_code": return_code,
         "timed_out": timed_out,
+        "stopped_after_artifacts": stopped_after_artifacts,
         "final_state_ready": bool(final_state and final_state.is_file()),
     }
     if run_dir:
@@ -293,6 +362,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_common(run_parser)
     run_parser.add_argument("--output-dir", required=True)
     run_parser.add_argument("--config", action="append")
+    run_parser.add_argument("--python", help="Python executable containing Webwright")
     run_parser.add_argument("--timeout", type=int, default=900)
 
     eval_parser = commands.add_parser("evaluate")
@@ -305,6 +375,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_common(pipeline_parser)
     pipeline_parser.add_argument("--output-dir", required=True)
     pipeline_parser.add_argument("--config", action="append")
+    pipeline_parser.add_argument("--python", help="Python executable containing Webwright")
     pipeline_parser.add_argument("--timeout", type=int, default=900)
     pipeline_parser.add_argument("--model-config")
     pipeline_parser.add_argument("--output")

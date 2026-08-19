@@ -171,6 +171,44 @@ class OfficialWebArenaSkillTests(unittest.TestCase):
         self.assertEqual(state["answer"], "N/A")
         self.assertTrue((run_dir / "final_state.agent.json").is_file())
 
+    def test_agent_environment_prefers_selected_virtualenv(self):
+        executable = Path(sys.executable).absolute()
+        env = runner.agent_subprocess_env(executable)
+        self.assertEqual(env["PATH"].split(runner.os.pathsep)[0], str(executable.parent))
+        self.assertEqual(env["VIRTUAL_ENV"], str(executable.parent.parent))
+
+    def test_agent_python_preserves_virtualenv_symlink_path(self):
+        selected = runner.resolve_agent_python(str(ROOT / ".venv" / "bin" / "python"))
+        self.assertEqual(selected, (ROOT / ".venv" / "bin" / "python").absolute())
+
+    def test_complete_artifact_run_requires_parseable_contract(self):
+        output_dir = self.tmp_path / "runs"
+        run_dir = output_dir / "official_webarena_task7_20260819_120000"
+        run_dir.mkdir(parents=True)
+        before = set()
+        self.assertIsNone(
+            runner.complete_artifact_run(output_dir, "official_webarena_task7", before)
+        )
+        (run_dir / "final_state.html").write_text("<html></html>", encoding="utf-8")
+        (run_dir / "final_state.json").write_text(
+            json.dumps(
+                {
+                    "final_url": "http://example.test/result",
+                    "html_path": "final_state.html",
+                    "document_status": 200,
+                    "answer": "result",
+                }
+            ),
+            encoding="utf-8",
+        )
+        (run_dir / "agent_response.json").write_text(
+            json.dumps({"status": "SUCCESS"}), encoding="utf-8"
+        )
+        self.assertEqual(
+            runner.complete_artifact_run(output_dir, "official_webarena_task7", before),
+            run_dir,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

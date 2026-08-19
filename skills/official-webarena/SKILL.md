@@ -45,7 +45,7 @@ python skills/official-webarena/scripts/official_webarena.py run \
   --config model_openai.yaml
 ```
 
-The runner uses the original intent, resolves official URL placeholders, and asks Webwright to save `final_state.html`, `final_state.json`, and `agent_response.json` before closing the live page. Treat a missing final state as an incomplete run, not a zero from the evaluator.
+The runner uses the original intent, resolves official URL placeholders, and asks Webwright to save `final_state.html`, `final_state.json`, and `agent_response.json` before closing the live page. It automatically uses the repository's `.venv/bin/python` when present; otherwise pass `--python`. Once all three artifacts parse successfully, the runner stops any trailing reflection and proceeds to evaluation. Treat a missing final state as an incomplete run, not a zero from the evaluator.
 
 ### 3. Evaluate the saved state
 
