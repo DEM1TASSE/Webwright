@@ -30,6 +30,10 @@ Immediately before closing the same live Playwright page, wait for it to settle 
 1. `$WORKSPACE_DIR/final_state.html`: the exact result of `await page.content()`. For form tasks,
    first mirror current input values/checked state and selected options into the DOM without
    changing them, so serialization preserves live form state.
+   Where a table or grid is rendered by client-side JavaScript, `networkidle` is not enough:
+   the page settles while the grid is still an empty skeleton reading "0 records found". Wait
+   until its rows are actually present before reading any value from it and before capturing,
+   and treat an empty grid as "not loaded yet" rather than as a count of zero.
 2. `$WORKSPACE_DIR/final_state.json`:
    {"final_url": page.url, "html_path": "final_state.html",
     "document_status": <integer HTTP status or null>,
