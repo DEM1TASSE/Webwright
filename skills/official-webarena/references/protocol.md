@@ -83,6 +83,13 @@ load, after concurrency had been wrongly blamed.
   lives in the container's own `gitlab.rb`, so a hand-edit is lost on the next rebuild and
   has to be re-applied by the reset path instead.
 
+`scripts/gitlab_deployment_fixup.sh <container> <external-url>` applies the second setting,
+restarts what has to restart for it to take effect, and finishes by sampling the site twenty
+times — a single 200 proves nothing when the failure is intermittent. It refuses to continue
+if `/dev/shm` is undersized, since that one cannot be fixed in place. Run it after the
+container is created and again after every rebuild; it restarts PostgreSQL and Puma, so never
+run it against a deployment that is mid-batch.
+
 Before trusting a batch, probe each site directly with no load. If a site answers 5xx at
 all, the tasks that ran against it are infrastructure casualties rather than observations:
 discard and re-run them instead of recording their scores.
