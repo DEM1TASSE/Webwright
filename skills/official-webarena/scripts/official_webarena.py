@@ -33,8 +33,7 @@ Immediately before closing the same live Playwright page, wait for it to settle 
    Where a list, table or count is rendered by client-side JavaScript, the page reaches
    `networkidle` while that region is still an empty placeholder. Before reading a value out
    of such a region — and before capturing — wait until it actually holds content, and read an
-   empty region as "not loaded yet" rather than as a genuine zero or absence. A result you
-   would report as none, zero or unavailable is the case to re-check, not the case to trust.
+   empty region as "not loaded yet" rather than as a genuine zero or absence.
 2. `$WORKSPACE_DIR/final_state.json`:
    {"final_url": page.url, "html_path": "final_state.html",
     "document_status": <integer HTTP status or null>,
@@ -42,6 +41,10 @@ Immediately before closing the same live Playwright page, wait for it to settle 
 
 The URL and DOM must come from the same live page. Do not invent either artifact and do not use a
 HAR as a substitute. If you believe the task is impossible to complete, use textual answer `N/A`.
+
+Derive every path you write from `$WORKSPACE_DIR`. Do not embed an absolute path and do not
+read any other environment variable: a script that does either only runs inside the directory
+that produced it, and cannot be re-executed elsewhere or reused later.
 """
 
 
