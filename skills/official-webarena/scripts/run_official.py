@@ -31,6 +31,47 @@ def load(path):
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
+def parse_trailing_json(text: str) -> dict:
+    """Recover the pipeline's result object from stdout.
+
+    Anchoring on the first `{` breaks as soon as anything earlier on stdout contains one: the
+    parse fails, the result file is never written, and the task looks like it never ran. Scan
+    candidate starts from the end instead and take the last one that parses.
+    """
+    for index in range(len(text) - 1, -1, -1):
+        if text[index] != "{":
+            continue
+        try:
+            value = json.loads(text[index:])
+        except ValueError:
+            continue
+        if isinstance(value, dict):
+            return value
+    return {}
+
+
+def auth_is_live(state_path: Path, probe_url: str) -> bool:
+    """A storage_state file can exist and still be dead — the site may have been reset or may
+    still be starting. Existence checks miss that; the agent then fights a login wall and the
+    run scores zero in a way that looks like incompetence. Probe before spending any tokens."""
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as play:
+        browser = play.chromium.launch(headless=True)
+        try:
+            context = browser.new_context(storage_state=str(state_path))
+            page = context.new_page()
+            page.goto(probe_url, wait_until="domcontentloaded", timeout=60000)
+            body = page.content().lower()
+            landed = page.url.lower()
+            return not ("login[username]" in body or "please sign in" in body
+                        or "/users/sign_in" in landed)
+        except Exception:
+            return False
+        finally:
+            browser.close()
+
+
 def site_lanes(jobs, per_site_workers):
     grouped = {}
     for job in jobs:
@@ -59,6 +100,8 @@ def main():
     ap.add_argument("--limit-per-site", type=int, default=0)
     ap.add_argument("--task-id", type=int, action="append")
     ap.add_argument("--progress", default="")
+    ap.add_argument("--skip-auth-probe", action="store_true",
+                    help="skip the pre-flight storage_state liveness check")
     args = ap.parse_args()
     if not os.environ.get("OPENAI_API_KEY"):
         raise SystemExit("OPENAI_API_KEY is missing")
@@ -80,6 +123,37 @@ def main():
             if seen[job[0]] <= args.limit_per_site:
                 capped.append(job)
         jobs = capped
+
+    if not args.skip_auth_probe:
+        deployment = load(args.deployment_config)
+        auth_root = deployment.get("auth_root")
+        environments = deployment.get("environments") or {}
+        checked, dead = {}, []
+        for _site, task_id in jobs:
+            raw = tasks[task_id].get("storage_state")
+            if not raw or not auth_root:
+                continue
+            state = Path(auth_root) / Path(str(raw)).name
+            if state in checked:
+                continue
+            probe = tasks[task_id]["start_url"]
+            for placeholder, config in environments.items():
+                urls = config.get("urls") or []
+                if urls:
+                    probe = probe.replace(placeholder, str(urls[0]).rstrip("/"))
+            if not state.is_file():
+                dead.append(f"{state} (missing)")
+                checked[state] = False
+                continue
+            checked[state] = auth_is_live(state, probe)
+            if not checked[state]:
+                dead.append(f"{state} (session rejected at {probe})")
+        for state, ok in checked.items():
+            print(json.dumps({"event": "auth_probe", "state": str(state), "live": ok}), flush=True)
+        if dead:
+            raise SystemExit("auth state not usable; regenerate with the official "
+                             "browser_env/auto_login.py after the site is fully up:\n  "
+                             + "\n  ".join(dead))
 
     active, active_lock = set(), threading.Lock()
     stopping = threading.Event()
@@ -129,13 +203,14 @@ def main():
         with active_lock:
             active.discard(proc.pid)
 
-        payload = {}
-        try:
-            payload = json.loads(out[out.index("{"):]) if "{" in out else {}
-        except ValueError:
-            payload = {}
+        payload = parse_trailing_json(out)
         evaluation = payload.get("evaluation") or {}
         if payload:
+            payload["deployment"] = {
+                "config": str(Path(args.deployment_config).resolve()),
+                "sites": {k: (v.get("urls") or [None])[0]
+                          for k, v in (load(args.deployment_config).get("environments") or {}).items()},
+            }
             result.parent.mkdir(parents=True, exist_ok=True)
             result.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
                               encoding="utf-8")
