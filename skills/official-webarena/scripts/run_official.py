@@ -102,6 +102,42 @@ def auth_is_live(state_path: Path, probe_url: str, keyword: str = "") -> bool:
             browser.close()
 
 
+def renew_auth(state_path: Path, webarena_root: str) -> bool:
+    """Re-run the official login for whichever sites this auth file covers.
+
+    A session shared by hundreds of concurrent tasks does not last: the server can drop the
+    logged-in user while the cookie itself stays valid and present, so nothing on the client
+    side reveals it. Re-running the official auto_login is the only way back, and it has to be
+    driven from here because a batch outlives any single check made before it started.
+    """
+    # auto_login pulls in the whole browser_env package (numpy, gymnasium), which the agent's
+    # own environment need not carry. Point WEBARENA_LOGIN_PYTHON at an interpreter that has
+    # the official requirements installed.
+    interpreter = os.environ.get("WEBARENA_LOGIN_PYTHON") or sys.executable
+    combination = state_path.name[: -len("_state.json")].split(".")
+    script = (
+        "from browser_env.auto_login import renew_comb;"
+        f"renew_comb({sorted(combination)!r}, auth_folder={str(state_path.parent)!r})"
+    )
+    environment = dict(os.environ, PYTHONPATH=webarena_root)
+    result = subprocess.run([interpreter, "-c", script], cwd=webarena_root,
+                            env=environment, capture_output=True, text=True, timeout=600)
+    return result.returncode == 0
+
+
+def watch_auth(states, webarena_root, interval, stop):
+    """Keep re-checking the sessions a batch depends on, and rebuild any that lapse."""
+    while not stop.wait(interval):
+        for state_path, targets in states.items():
+            if all(auth_is_live(state_path, url, keyword) for url, keyword in targets):
+                continue
+            renewed = renew_auth(state_path, webarena_root)
+            live = renewed and all(auth_is_live(state_path, url, keyword)
+                                   for url, keyword in targets)
+            print(json.dumps({"event": "auth_renewed", "state": str(state_path),
+                              "ok": bool(live)}), flush=True)
+
+
 def jobs_by_site(jobs):
     grouped = {}
     for job in jobs:
@@ -124,6 +160,8 @@ def main():
     ap.add_argument("--limit-per-site", type=int, default=0)
     ap.add_argument("--task-id", type=int, action="append")
     ap.add_argument("--progress", default="")
+    ap.add_argument("--auth-recheck-seconds", type=int, default=300,
+                    help="how often to re-check and rebuild lapsed sessions; 0 disables")
     ap.add_argument("--skip-auth-probe", action="store_true",
                     help="skip the pre-flight storage_state liveness check")
     args = ap.parse_args()
@@ -175,6 +213,7 @@ def main():
                 dead.append(f"{state} (session rejected at {', '.join(failed)})")
         for state, ok in checked.items():
             print(json.dumps({"event": "auth_probe", "state": str(state), "live": ok}), flush=True)
+        probes = {state: probe_targets(state, environments) for state in checked}
         if dead:
             raise SystemExit("auth state not usable; regenerate with the official "
                              "browser_env/auto_login.py after the site is fully up:\n  "
@@ -253,6 +292,13 @@ def main():
     progress_path = Path(args.progress) if args.progress else None
     done, total = [0], len(jobs)
 
+    stop_watching = threading.Event()
+    if not args.skip_auth_probe and args.auth_recheck_seconds > 0:
+        threading.Thread(target=watch_auth,
+                         args=(probes, args.webarena_root, args.auth_recheck_seconds,
+                               stop_watching),
+                         daemon=True).start()
+
     grouped = jobs_by_site(jobs)
 
     def run_one(job):
@@ -286,6 +332,7 @@ def main():
         for future in concurrent.futures.as_completed(futures):
             failures += future.result()["status"] == "process_error"
     finally:
+        stop_watching.set()
         for pool in pools.values():
             pool.shutdown(wait=False)
     print(json.dumps({"event": "end", "process_errors": failures}), flush=True)
