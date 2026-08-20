@@ -64,3 +64,25 @@ The adapter uses optional Webwright LLM helpers only when an official string eva
 ## Isolation
 
 Give each experimental arm a distinct output root. Do not let a scratch run see primitive retrieval records, workflow code, or another arm's workspace. Reuse the same original task config and deployment assignment across paired arms.
+
+
+## Self-hosted site failures that look like agent failures
+
+A site that answers 5xx for a fraction of requests produces runs that are
+indistinguishable from incompetence: the agent wanders, times out, or answers from a
+half-loaded page, and the score is a legitimate-looking zero. Two GitLab defaults cause
+this on a self-hosted deployment, and both were found only by probing the site at zero
+load, after concurrency had been wrongly blamed.
+
+- `/dev/shm` defaults to 64M in a container. GitLab writes Prometheus metrics into it on
+  every request; once full, every request fails with `IOError (unmapped file)` in
+  `lib/gitlab/metrics/subscribers/rails_cache.rb`, independent of load. `--shm-size` can
+  only be set when the container is created, so this belongs in whatever recreates it.
+- PostgreSQL `max_connections` defaults to 200, which roughly a dozen concurrent agents
+  exhaust; further requests fail with `ActiveRecord::ConnectionNotEstablished`. The setting
+  lives in the container's own `gitlab.rb`, so a hand-edit is lost on the next rebuild and
+  has to be re-applied by the reset path instead.
+
+Before trusting a batch, probe each site directly with no load. If a site answers 5xx at
+all, the tasks that ran against it are infrastructure casualties rather than observations:
+discard and re-run them instead of recording their scores.
