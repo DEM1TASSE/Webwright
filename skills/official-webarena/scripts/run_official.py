@@ -102,17 +102,11 @@ def auth_is_live(state_path: Path, probe_url: str, keyword: str = "") -> bool:
             browser.close()
 
 
-def site_lanes(jobs, per_site_workers):
+def jobs_by_site(jobs):
     grouped = {}
     for job in jobs:
         grouped.setdefault(job[0], []).append(job)
-    lanes = []
-    for site_jobs in grouped.values():
-        buckets = [[] for _ in range(min(per_site_workers, len(site_jobs)))]
-        for index, job in enumerate(site_jobs):
-            buckets[index % len(buckets)].append(job)
-        lanes.extend(buckets)
-    return lanes
+    return grouped
 
 
 def main():
@@ -259,30 +253,41 @@ def main():
     progress_path = Path(args.progress) if args.progress else None
     done, total = [0], len(jobs)
 
-    def run_lane(lane):
-        rows = []
-        for job in lane:
-            row = run(job)
-            with print_lock:
-                done[0] += 1
-                row["done"], row["total"] = done[0], total
-                line = json.dumps(row, ensure_ascii=False)
-                print(line, flush=True)
-                if progress_path:
-                    with progress_path.open("a", encoding="utf-8") as f:
-                        f.write(line + "\n")
-            rows.append(row)
-        return rows
+    grouped = jobs_by_site(jobs)
 
-    lanes = site_lanes(jobs, args.per_site_workers)
-    print(json.dumps({"event": "start", "tasks": total, "lanes": len(lanes),
-                      "workers": args.workers}), flush=True)
+    def run_one(job):
+        row = run(job)
+        with print_lock:
+            done[0] += 1
+            row["done"], row["total"] = done[0], total
+            line = json.dumps(row, ensure_ascii=False)
+            print(line, flush=True)
+            if progress_path:
+                with progress_path.open("a", encoding="utf-8") as handle:
+                    handle.write(line + "\n")
+        return row
+
+    # One pool per site, each drawing from that site's shared queue. Within a site any free
+    # worker takes the next task, so the run does not trail off into a single straggler while
+    # the rest idle; across sites the pools simply run side by side. A single global pool with
+    # per-site semaphores would instead let one busy site's queued tasks occupy every thread
+    # and starve the others.
+    sizes = {site: min(args.per_site_workers, len(site_jobs))
+             for site, site_jobs in grouped.items()}
+    print(json.dumps({"event": "start", "tasks": total, "sites": sizes,
+                      "concurrency": sum(sizes.values()),
+                      "per_site_workers": args.per_site_workers}), flush=True)
     failures = 0
-    with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as pool:
-        futures = [pool.submit(run_lane, lane) for lane in lanes]
+    pools = {site: concurrent.futures.ThreadPoolExecutor(max_workers=size)
+             for site, size in sizes.items()}
+    try:
+        futures = [pools[site].submit(run_one, job)
+                   for site, site_jobs in grouped.items() for job in site_jobs]
         for future in concurrent.futures.as_completed(futures):
-            for row in future.result():
-                failures += row["status"] == "process_error"
+            failures += future.result()["status"] == "process_error"
+    finally:
+        for pool in pools.values():
+            pool.shutdown(wait=False)
     print(json.dumps({"event": "end", "process_errors": failures}), flush=True)
     return int(failures > 0)
 
