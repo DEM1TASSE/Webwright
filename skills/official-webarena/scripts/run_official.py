@@ -139,6 +139,20 @@ def watch_auth(states, webarena_root, interval, stop):
                               "ok": bool(live)}), flush=True)
 
 
+def auth_state_for_task(task_id: int, args) -> str | None:
+    """Path to the pre-authenticated session a task starts from, resolved as the pipeline does."""
+    tasks = load(Path(args.webarena_root) / "config_files/test.raw.json")
+    task = next((t for t in tasks if t.get("task_id") == task_id), None)
+    if not task:
+        return None
+    raw = task.get("storage_state")
+    auth_root = (load(args.deployment_config) or {}).get("auth_root")
+    if not raw or not auth_root:
+        return None
+    path = Path(auth_root) / Path(str(raw)).name
+    return str(path) if path.is_file() else None
+
+
 def replay_and_score(run_dir: Path, task_id: int, args) -> dict:
     """Re-execute the frozen final_script.py in a clean workspace and score that.
 
@@ -184,6 +198,14 @@ def replay_and_score(run_dir: Path, task_id: int, args) -> dict:
                    "--webarena-root", args.webarena_root,
                    "--model-config", args.model_config,
                    "--output", str(workspace / "official_eval.json")]
+        # The evaluator fetches every program_html target whose url is not "last" from the live
+        # site. Without a session that fetch lands on the sign-in page, and the content check
+        # fails however well the script ran. The inline path has always passed this; the replay
+        # path did not, which made replay look like wholesale script failure on exactly the
+        # tasks whose evaluators navigate -- that is, nearly every mutating one.
+        auth = auth_state_for_task(task_id, args)
+        if auth:
+            command += ["--auth-state", auth]
         subprocess.run(command, cwd=str(WW), capture_output=True, text=True, timeout=600)
         if (workspace / "official_eval.json").is_file():
             evaluation = load(workspace / "official_eval.json")

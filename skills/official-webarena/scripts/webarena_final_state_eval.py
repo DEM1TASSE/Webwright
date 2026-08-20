@@ -422,6 +422,11 @@ def main(argv=None) -> int:
     parser.add_argument("--deployment-config", required=True)
     parser.add_argument("--webarena-root", required=True)
     parser.add_argument("--model-config")
+    parser.add_argument("--auth-state",
+                        help="storage_state for the evaluator's own navigation. program_html "
+                             "targets whose url is not 'last' are fetched live, and on a site "
+                             "behind login a logged-out fetch returns the sign-in page, so the "
+                             "content check fails no matter what the agent did.")
     parser.add_argument("--output")
     args = parser.parse_args(argv)
     result = evaluate_saved_state(
@@ -431,6 +436,7 @@ def main(argv=None) -> int:
         deployment_config=args.deployment_config,
         webarena_root=args.webarena_root,
         model_config=args.model_config,
+        auth_state_path=args.auth_state,
     )
     encoded = json.dumps(result, ensure_ascii=False, indent=2)
     if args.output:
