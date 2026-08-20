@@ -223,8 +223,8 @@ def main():
     stopping = threading.Event()
 
     def stop_active(*_):
-        stopping.set()
         with active_lock:
+            stopping.set()
             pids = list(active)
         for pid in pids:
             try:
@@ -258,10 +258,17 @@ def main():
                "--model-config", args.model_config,
                "--timeout", str(args.timeout)]
         started = time.time()
-        proc = subprocess.Popen(cmd, cwd=str(WW), text=True, stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE, env=os.environ.copy(),
-                                start_new_session=True)
+        # Spawn and register under one lock. Registering after Popen returns leaves a window
+        # in which a stop signal sees an empty set and the child survives as an orphan, still
+        # driving a browser against the deployment. Checking the flag inside the lock closes
+        # the other side of it: either this child is in the set before the stopper reads it,
+        # or the stopper got there first and it is never spawned.
         with active_lock:
+            if stopping.is_set():
+                return {"site": site, "task_id": task_id, "status": "skipped_stopping"}
+            proc = subprocess.Popen(cmd, cwd=str(WW), text=True, stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE, env=os.environ.copy(),
+                                    start_new_session=True)
             active.add(proc.pid)
         out, err = proc.communicate()
         with active_lock:
