@@ -192,22 +192,46 @@ def _judge_call(message: str) -> str:
     return payload["choices"][0]["message"]["content"].lower()
 
 
+JUDGE_ATTEMPTS = 3
+
+
+def _judged(message, read_verdict):
+    """Official verdict parsing, asked again when the reply carries neither verdict.
+
+    The official helper asserts the reply contains one of the two words and raises when it does
+    not, which loses the whole task instead of the one call. At temperature 0 the reply is a
+    fixed phrase, so one that parses as neither is a transport hiccup rather than a judgement,
+    and asking again is not a second opinion. A reply that does parse is scored exactly as
+    official does; one that never parses raises with its text, so the case stays visible rather
+    than being silently resolved either way.
+    """
+    reply = None
+    for _ in range(JUDGE_ATTEMPTS):
+        reply = _judge_call(message)
+        verdict = read_verdict(reply)
+        if verdict is not None:
+            return verdict
+    raise ValueError(f"judge gave no verdict in {JUDGE_ATTEMPTS} attempts: {reply!r}")
+
+
 def make_llm_helpers(model_config: str | Path | None):
     """Official llm_fuzzy_match / llm_ua_match, verbatim except for the judge model id."""
 
-    def fuzzy(pred: str, reference: str, question: str) -> float:
-        response = _judge_call(_official_fuzzy_message(pred, reference, question))
+    def read_fuzzy(response):
         if "partially correct" in response or "incorrect" in response:
             return 0.0
-        assert "correct" in response
-        return 1.0
+        return 1.0 if "correct" in response else None
 
-    def unachievable(pred: str, reference: str, question: str) -> float:
-        response = _judge_call(_official_ua_message(pred, reference, question))
+    def read_ua(response):
         if "different" in response:
             return 0.0
-        assert "same" in response
-        return 1.0
+        return 1.0 if "same" in response else None
+
+    def fuzzy(pred: str, reference: str, question: str) -> float:
+        return _judged(_official_fuzzy_message(pred, reference, question), read_fuzzy)
+
+    def unachievable(pred: str, reference: str, question: str) -> float:
+        return _judged(_official_ua_message(pred, reference, question), read_ua)
 
     return fuzzy, unachievable
 
