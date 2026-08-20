@@ -289,9 +289,10 @@ def validate_final_state(value: dict) -> list[str]:
         errors.append("final_url must be a non-empty string")
     if not isinstance(value.get("html"), str) and not isinstance(value.get("html_path"), str):
         errors.append("html or html_path must be supplied")
-    status = value.get("document_status")
-    if status is not None and (not isinstance(status, int) or not 100 <= status <= 599):
-        errors.append("document_status must be null or an HTTP status integer")
+    # document_status is recorded, not consumed: no official evaluator reads it, since they
+    # score the answer, the URL and the DOM. Rejecting a run over it threw away three tasks
+    # whose artifacts were otherwise complete -- one agent wrote document.readyState, one
+    # wrote "ok", one wrote 1. A field nothing depends on must not be able to fail a task.
     if not isinstance(value.get("answer", ""), str):
         errors.append("answer must be a string")
     if "storage_state_path" in value and not isinstance(value["storage_state_path"], str):
