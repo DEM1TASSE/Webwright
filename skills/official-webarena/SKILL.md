@@ -45,7 +45,9 @@ python skills/official-webarena/scripts/official_webarena.py run \
   --config model_openai.yaml
 ```
 
-The runner uses the original intent, resolves official URL placeholders, and asks Webwright to save `final_state.html`, `final_state.json`, and `agent_response.json` before closing the live page. It automatically uses the repository's `.venv/bin/python` when present; otherwise pass `--python`. Once all three artifacts parse successfully, the runner stops any trailing reflection and proceeds to evaluation. Treat a missing final state as an incomplete run, not a zero from the evaluator.
+The runner uses the original intent, resolves official URL placeholders, and asks Webwright to save `final_state.html` and `final_state.json` before closing the live page. It automatically uses the repository's `.venv/bin/python` when present; otherwise pass `--python`. Once the final state parses and its saved DOM is present, the runner stops any trailing reflection and proceeds to evaluation. Treat a missing final state as an incomplete run, not a zero from the evaluator.
+
+When the task carries a `storage_state`, the prompt names the resolved auth file and requires every browser context to load it unconditionally. The agent never sees a credential and spends no step logging in, matching how official WebArena, ASI and SkillWeaver all start their agents; naming the file rather than injecting it invisibly also keeps `final_script.py` runnable outside this harness. Regenerate the auth files with the official `browser_env/auto_login.py` after any site reset — a reset drops the server-side sessions, and a stale file fails as an element-not-found timeout rather than an auth error.
 
 ### 3. Evaluate the saved state
 
@@ -80,7 +82,7 @@ Before reporting a result, verify all of the following:
 
 - `task_source` is `official_webarena`.
 - `official_webarena_commit` in the score is the pinned commit.
-- The run directory contains the three required output artifacts.
+- The run directory contains both required output artifacts.
 - `final_state.json.final_url` and its DOM came from the same live page.
 - `status` is `scored_correct` or `scored_incorrect`; `invalid_final_state` and `unsupported_saved_state` are infrastructure outcomes, not benchmark failures.
 - The result records the original task ID and official evaluator types.

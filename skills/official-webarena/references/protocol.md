@@ -49,7 +49,9 @@ Webwright must create these files inside its timestamped run directory:
 
 - `final_state.html`: exact `await page.content()` output captured before the page closes.
 - `final_state.json`: `final_url`, `html_path`, integer-or-null `document_status`, and textual `answer`.
-- `agent_response.json`: a structured companion result used for run inspection.
+- (Removed) `agent_response.json`: no longer requested. Official scoring reads the answer from
+  `final_state.json`, and the completion signal is the parsed final state itself, so the extra file
+  cost the agent a write without feeding any evaluator.
 
 The official adapter restores the saved HTML in a local Playwright page and wraps it with the recorded final URL. It then calls the pinned official `evaluator_router` with the original task config. It does not consume HAR traffic.
 

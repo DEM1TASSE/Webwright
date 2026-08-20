@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -47,20 +48,52 @@ def _unsupported_helper(*_args, **_kwargs):
     )
 
 
-def _install_official_import_compatibility(llm_fuzzy=None, llm_ua=None) -> None:
+def _load_official_helpers(root):
+    """Import the pinned checkout's helper_functions so the LLM judges are the official ones."""
+    import importlib.util
+
+    env_config_path = Path(root) / "browser_env" / "env_config.py"
+    helpers_path = Path(root) / "evaluation_harness" / "helper_functions.py"
+    if not env_config_path.is_file() or not helpers_path.is_file():
+        return None
+    # helper_functions imports `llms.providers.openai_utils`, which only resolves with the
+    # checkout on sys.path.
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    browser_env = sys.modules.setdefault("browser_env", types.ModuleType("browser_env"))
+    browser_env.__path__ = []
+    for name, path in (("browser_env.env_config", env_config_path),
+                       ("evaluation_harness.helper_functions", helpers_path)):
+        if name in sys.modules and getattr(sys.modules[name], "__file__", None):
+            continue
+        spec = importlib.util.spec_from_file_location(name, path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        try:
+            spec.loader.exec_module(module)
+        except Exception:
+            sys.modules.pop(name, None)
+            return None
+    return sys.modules["evaluation_harness.helper_functions"]
+
+
+def _install_official_import_compatibility(llm_fuzzy=None, llm_ua=None, root=None) -> None:
     """Provide import-only dependencies while preserving official evaluator classes."""
     if "beartype" not in sys.modules:
         module = types.ModuleType("beartype")
         module.beartype = _identity_beartype
         sys.modules["beartype"] = module
 
-    if "nltk.tokenize" not in sys.modules:
-        nltk = types.ModuleType("nltk")
-        tokenize = types.ModuleType("nltk.tokenize")
-        tokenize.word_tokenize = lambda text: re.findall(r"\w+|[^\w\s]", str(text))
-        nltk.tokenize = tokenize
-        sys.modules["nltk"] = nltk
-        sys.modules["nltk.tokenize"] = tokenize
+    try:
+        import nltk.tokenize  # noqa: F401  -- official tokeniser, keeps must_include faithful
+    except Exception:
+        if "nltk.tokenize" not in sys.modules:
+            nltk = types.ModuleType("nltk")
+            tokenize = types.ModuleType("nltk.tokenize")
+            tokenize.word_tokenize = lambda text: re.findall(r"\w+|[^\w\s]", str(text))
+            nltk.tokenize = tokenize
+            sys.modules["nltk"] = nltk
+            sys.modules["nltk.tokenize"] = tokenize
 
     browser_env = sys.modules.setdefault("browser_env", types.ModuleType("browser_env"))
     browser_env.__path__ = []
@@ -71,6 +104,16 @@ def _install_official_import_compatibility(llm_fuzzy=None, llm_ua=None) -> None:
     sys.modules["browser_env.actions"] = actions
     sys.modules["browser_env.utils"] = utils
 
+    official = _load_official_helpers(root) if root else None
+    if official is not None:
+        # Official site helpers come from the pinned checkout. The judges keep the official
+        # prompt and parameters but must run on JUDGE_MODEL: the official hard-coded
+        # gpt-4-1106-preview is not served by this deployment's gateway.
+        if llm_fuzzy:
+            official.llm_fuzzy_match = llm_fuzzy
+        if llm_ua:
+            official.llm_ua_match = llm_ua
+        return
     helpers = types.ModuleType("evaluation_harness.helper_functions")
     helpers.PseudoPage = _PseudoPage
     for name in (
@@ -86,35 +129,85 @@ def _install_official_import_compatibility(llm_fuzzy=None, llm_ua=None) -> None:
     sys.modules["evaluation_harness.helper_functions"] = helpers
 
 
-def make_llm_helpers(model_config: str | Path | None):
-    if not model_config:
-        return None, None
-    config = yaml.safe_load(Path(model_config).read_text(encoding="utf-8")) or {}
-    if not isinstance(config.get("model"), dict):
-        raise ValueError(f"{model_config}: missing model configuration")
-    from webwright.skill_factory.llm import configure_llm, llm
+# Official judge settings at the pinned commit. gpt-4-1106-preview is not served by the
+# deployment's gateway, so JUDGE_MODEL is the closest available model; everything else --
+# prompt text, temperature, max_tokens, top_p and the verdict parsing -- is the official one.
+OFFICIAL_JUDGE_MODEL = "gpt-4-1106-preview"
+JUDGE_MODEL = os.environ.get("WEBARENA_JUDGE_MODEL", "gpt-4o")
 
-    configure_llm(config["model"])
+
+def _official_fuzzy_message(pred: str, reference: str, question: str) -> str:
+    message = (
+        "Help a teacher to grade the answer of a student given a question. Keep in mind that "
+        "the student may use different phrasing or wording to answer the question. The goal is "
+        "to evaluate whether the answer is semantically equivalent to the reference answer.\n"
+    )
+    message += f"question: {question}\n"
+    message += f"reference answer: {reference}\n"
+    message += "all the string 'N/A' that you see is a special sequence that means 'not achievable'\n"
+    message += f"student answer: {pred}\n"
+    message += "Conclude the judgement by correct/incorrect/partially correct."
+    return message
+
+
+def _official_ua_message(pred: str, reference: str, question: str) -> str:
+    message = ""
+    message += f"task: {question}\n"
+    message += f"actual unachievable reason: {reference}\n"
+    message += f"reported unachievable reason: {pred}\n"
+    message += (
+        "The task described above is inherently unachievable due to the reason specified under "
+        "'actual unachievable reason'. An individual previously attempted this task and was "
+        "unable to complete it. They provided a reason for their failure, which is listed under "
+        "'reported unachievable reason'. Your role is to review both the actual and reported "
+        "reasons. Determine if the reported reason aligns with the actual reason, even if "
+        "implicitly. If the stated reason is in line with the actual reason, respond with "
+        "'same'. Otherwise, respond with 'different'."
+    )
+    return message
+
+
+def _judge_call(message: str) -> str:
+    """Official generate_from_openai_chat_completion parameters, over an OpenAI-compatible API."""
+    import urllib.request
+
+    base = (os.environ.get("OPENAI_BASE_URL") or "https://api.openai.com/v1").rstrip("/")
+    body = json.dumps({
+        "model": JUDGE_MODEL,
+        "messages": [
+            {"role": "system", "content": "You are a helpful assistant"},
+            {"role": "user", "content": message},
+        ],
+        "temperature": 0,
+        "max_tokens": 768,
+        "top_p": 1.0,
+    }).encode("utf-8")
+    request = urllib.request.Request(
+        f"{base}/chat/completions", data=body,
+        headers={"Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}",
+                 "Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(request, timeout=180) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    return payload["choices"][0]["message"]["content"].lower()
+
+
+def make_llm_helpers(model_config: str | Path | None):
+    """Official llm_fuzzy_match / llm_ua_match, verbatim except for the judge model id."""
 
     def fuzzy(pred: str, reference: str, question: str) -> float:
-        prompt = (
-            "Grade whether the student answer is semantically equivalent to the reference. "
-            "N/A means not achievable.\n"
-            f"question: {question}\nreference: {reference}\nstudent: {pred}\n"
-            "End with exactly correct, incorrect, or partially correct."
-        )
-        response = llm("You are a careful grader.", prompt, max_tokens=128).lower()
+        response = _judge_call(_official_fuzzy_message(pred, reference, question))
         if "partially correct" in response or "incorrect" in response:
             return 0.0
-        return float("correct" in response)
+        assert "correct" in response
+        return 1.0
 
     def unachievable(pred: str, reference: str, question: str) -> float:
-        prompt = (
-            f"task: {question}\nactual reason: {reference}\nreported reason: {pred}\n"
-            "Do the reasons align, even implicitly? End with exactly same or different."
-        )
-        response = llm("You are a careful grader.", prompt, max_tokens=128).lower()
-        return 0.0 if "different" in response else float("same" in response)
+        response = _judge_call(_official_ua_message(pred, reference, question))
+        if "different" in response:
+            return 0.0
+        assert "same" in response
+        return 1.0
 
     return fuzzy, unachievable
 
@@ -133,7 +226,7 @@ def load_official_evaluator(webarena_root: str | Path, model_config=None):
             f"WebArena checkout must be pinned at {OFFICIAL_COMMIT}; found {found}"
         )
     sys.path.insert(0, str(root))
-    _install_official_import_compatibility(*make_llm_helpers(model_config))
+    _install_official_import_compatibility(*make_llm_helpers(model_config), root=root)
     from evaluation_harness.evaluators import evaluator_router  # type: ignore
 
     return evaluator_router
@@ -201,6 +294,7 @@ def evaluate_saved_state(
     deployment_config: str | Path,
     webarena_root: str | Path,
     model_config: str | Path | None = None,
+    auth_state_path: str | Path | None = None,
 ) -> dict:
     state_path = Path(final_state_path)
     final_state = json.loads(state_path.read_text(encoding="utf-8"))
@@ -214,7 +308,7 @@ def evaluate_saved_state(
             return {"score": None, "status": "invalid_final_state", "errors": [str(error)]}
         final_state["html"] = html_path.read_text(encoding="utf-8")
 
-    storage_state = None
+    storage_state = Path(auth_state_path) if auth_state_path else None
     if final_state.get("storage_state_path"):
         try:
             storage_state = _resolve_run_artifact(
@@ -288,6 +382,8 @@ def evaluate_saved_state(
         "eval_types": eval_types,
         "final_url": final_state["final_url"],
         "official_webarena_commit": OFFICIAL_COMMIT,
+        "judge_model": JUDGE_MODEL,
+        "official_judge_model": OFFICIAL_JUDGE_MODEL,
         "webarena_root": str(Path(webarena_root).resolve()),
         "llm_model_config": str(Path(model_config).resolve()) if model_config else None,
     }

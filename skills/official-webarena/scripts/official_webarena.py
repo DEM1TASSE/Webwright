@@ -23,8 +23,8 @@ from webarena_final_state_eval import (
 
 FINAL_STATE_SPEC = r"""
 
-## Required benchmark artifacts
-This is an original WebArena benchmark task. Work only from the current goal and live website.
+## Required output artifacts
+Work only from the current goal and live website.
 Immediately before closing the same live Playwright page, wait for it to settle and save:
 
 1. `$WORKSPACE_DIR/final_state.html`: the exact result of `await page.content()`. For form tasks,
@@ -33,14 +33,10 @@ Immediately before closing the same live Playwright page, wait for it to settle 
 2. `$WORKSPACE_DIR/final_state.json`:
    {"final_url": page.url, "html_path": "final_state.html",
     "document_status": <integer HTTP status or null>,
-    "answer": <concise textual answer, or "" for a pure navigation task>}
-3. `$WORKSPACE_DIR/agent_response.json`:
-   {"task_type": "RETRIEVE|NAVIGATE", "status": "SUCCESS|NOT_FOUND_ERROR",
-    "retrieved_data": <JSON answer or null>, "error_details": null}
+    "answer": <concise textual answer, or "" if the goal asks for no text>}
 
 The URL and DOM must come from the same live page. Do not invent either artifact and do not use a
-HAR as a substitute. If absence is proven, use textual answer `N/A`; otherwise do not infer absence
-from one partial search or a failed endpoint.
+HAR as a substitute. If you believe the task is impossible to complete, use textual answer `N/A`.
 """
 
 
@@ -115,16 +111,42 @@ def task_context(args) -> tuple[dict, Path, dict, str]:
     return task, source, deployment, start_url
 
 
+def auth_state_for(task: dict, deployment: dict) -> str | None:
+    """Path to the pre-authenticated session this task starts from, if it needs login."""
+    raw = task.get("storage_state")
+    auth_root = deployment.get("auth_root")
+    if not raw or not auth_root:
+        return None
+    path = Path(auth_root) / Path(str(raw)).name
+    return str(path) if path.is_file() else None
+
+
+def storage_state_note(task: dict, deployment: dict) -> str:
+    """Name the pre-authenticated session file the task starts from.
+
+    Official WebArena, ASI and SkillWeaver all hand the agent an already logged-in browser, so
+    no step is spent on login and no password is ever shown. Webwright launches a throwaway
+    browser per script instead of holding one context, so the session is named as a file the
+    agent loads every time. Stating it in the prompt rather than injecting it invisibly keeps
+    the generated final_script.py self-contained: it carries the reference itself and can be
+    re-run outside this harness.
+    """
+    raw = task.get("storage_state")
+    auth_root = deployment.get("auth_root")
+    if not raw or not auth_root:
+        return ""
+    path = Path(auth_root) / Path(str(raw)).name
+    if not path.is_file():
+        raise ValueError(f"task {task.get('task_id')} needs missing auth state: {path}")
+    return (
+        f"\nYou are already signed in. Create every browser context with "
+        f"`storage_state=\"{path}\"` — always, unconditionally, in exploration scripts and in "
+        f"the final script alike. Never branch on whether to pass it, and never log in by hand."
+    )
+
+
 def build_prompt(task: dict, deployment: dict, start_url: str) -> str:
-    credentials = credentials_for(task, deployment["environments"])
-    login = ""
-    if credentials:
-        username = credentials.get("username", "")
-        password = credentials.get("password", "")
-        login = (
-            f"\nIf authentication is required, use username `{username}` and "
-            f"password `{password}`."
-        )
+    login = storage_state_note(task, deployment)
     resolved_task = resolve_placeholders(task, deployment["environments"])
     start_urls = task_start_urls(resolved_task) or [start_url]
     if len(start_urls) == 1:
@@ -138,8 +160,7 @@ def build_prompt(task: dict, deployment: dict, start_url: str) -> str:
     return (
         "Complete this web task.\n\n"
         f"Goal: {task['intent']}\n"
-        f"{start_note}{login}\n"
-        f"Expected task interface: {infer_task_type(task)}"
+        f"{start_note}{login}"
         + FINAL_STATE_SPEC
     )
 
@@ -175,18 +196,14 @@ def complete_artifact_run(output_dir: Path, key: str, before: set[Path]) -> Path
     if not run_dir:
         return None
     state_path = run_dir / "final_state.json"
-    response_path = run_dir / "agent_response.json"
     try:
         state = json.loads(state_path.read_text(encoding="utf-8"))
-        response = json.loads(response_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
     if not isinstance(state.get("final_url"), str) or not state["final_url"].strip():
         return None
     html_path = state.get("html_path")
     if not isinstance(html_path, str) or not (run_dir / html_path).is_file():
-        return None
-    if response.get("status") not in {"SUCCESS", "NOT_FOUND_ERROR"}:
         return None
     return run_dir
 
@@ -294,23 +311,6 @@ def run_task(args) -> dict:
     return result
 
 
-def normalize_not_found(run_dir: Path) -> None:
-    state_path = run_dir / "final_state.json"
-    response_path = run_dir / "agent_response.json"
-    if not state_path.is_file() or not response_path.is_file():
-        return
-    state = json.loads(state_path.read_text(encoding="utf-8"))
-    response = json.loads(response_path.read_text(encoding="utf-8"))
-    if response.get("status") != "NOT_FOUND_ERROR" or state.get("answer") == "N/A":
-        return
-    backup = run_dir / "final_state.agent.json"
-    if not backup.exists():
-        backup.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    state["answer"] = "N/A"
-    state["artifact_normalizations"] = ["not_found_status_to_official_na_v1"]
-    state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-
-
 def evaluate_task(args, run_dir: str | Path | None = None) -> dict:
     _, source, _, _ = task_context(args)
     run_path = Path(run_dir or args.run_dir).resolve()
@@ -322,7 +322,9 @@ def evaluate_task(args, run_dir: str | Path | None = None) -> dict:
             "task_id": args.task_id,
             "errors": [f"missing final state: {state_path}"],
         }
-    normalize_not_found(run_path)
+    # The evaluator needs a context authenticated as the task's user so it can navigate to
+    # program_html targets. That is the same session the run started from, so the harness
+    # supplies it directly rather than spending agent steps re-exporting an equivalent one.
     result = evaluate_saved_state(
         task_id=args.task_id,
         final_state_path=state_path,
@@ -330,6 +332,8 @@ def evaluate_task(args, run_dir: str | Path | None = None) -> dict:
         deployment_config=args.deployment_config,
         webarena_root=args.webarena_root,
         model_config=args.model_config,
+        auth_state_path=auth_state_for(load_task(source, args.task_id),
+                                       load_deployment(args.deployment_config)),
     )
     output = Path(args.output).resolve() if args.output else run_path / "official_webarena_eval.json"
     output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
