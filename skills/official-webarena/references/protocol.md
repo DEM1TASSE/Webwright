@@ -83,6 +83,18 @@ load, after concurrency had been wrongly blamed.
   lives in the container's own `gitlab.rb`, so a hand-edit is lost on the next rebuild and
   has to be re-applied by the reset path instead.
 
+Three layers, in increasing order of how little they depend on anyone remembering:
+
+1. `scripts/build_tuned_gitlab_image.sh` bakes the settings into an image, so a container
+   recreated from it cannot start with the bad defaults no matter how it is launched. This is
+   the only layer that survives someone bypassing the reset path and running `docker run`
+   directly — which is exactly how these were re-introduced here after being fixed by hand.
+   `--shm-size` is a runtime flag and cannot be baked, so the creating command must still pass
+   it; `external_url` is deliberately left out because it differs per instance.
+2. Whatever recreates containers applies the same settings, for deployments not using the
+   image.
+3. The check below, run before trusting a batch.
+
 `scripts/gitlab_deployment_fixup.sh <container> <external-url>` applies the second setting,
 restarts what has to restart for it to take effect, and finishes by sampling the site twenty
 times — a single 200 proves nothing when the failure is intermittent. It refuses to continue
