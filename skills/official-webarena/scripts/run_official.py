@@ -156,6 +156,14 @@ def replay_and_score(run_dir: Path, task_id: int, args) -> dict:
     if workspace.exists():
         shutil.rmtree(workspace)
     workspace.mkdir(parents=True)
+    # The script writes its log into final_runs/run_<n>/, a directory webwright created for it
+    # during the original run and named after an attempt number only that run knows. A bare
+    # workspace has none of it, so the script dies on its first open() before touching the site.
+    # Recreating the original run's directory tree -- directories only, no files -- gives back
+    # whatever layout the script was written against without carrying any of its results in.
+    for source in run_dir.rglob("*"):
+        if source.is_dir() and "replay" not in source.relative_to(run_dir).parts:
+            (workspace / source.relative_to(run_dir)).mkdir(parents=True, exist_ok=True)
     shutil.copy2(script, workspace / "final_script.py")
     started = time.time()
     try:
