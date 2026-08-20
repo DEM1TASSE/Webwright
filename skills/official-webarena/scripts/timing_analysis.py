@@ -63,6 +63,24 @@ def main():
     else:
         print("  → 墙钟不由单一条链决定，并发上限或任务耗时才是瓶颈。")
 
+    print("\n  反事实：若把兜底作用域按站点内的具体目标细分")
+    # The `*` scopes are the catch-all for tasks whose write target could not be read off the
+    # eval config. They are the longest chains, and they are conservative by construction: a
+    # task that writes an unknown place has to be assumed to write everywhere. Splitting one
+    # is a correctness decision, not a scheduling one, so this only prices it.
+    star = [c for c in chain if c[3].endswith(':*')]
+    for s_, n, tot, name in star:
+        ids = groups[name]
+        per = [secs.get(i, 0) for i in ids if i in secs]
+        if not per: continue
+        for k in (2, 4, 8):
+            bound = s_ / k
+            print(f"    {name:<18} 拆成 {k:2d} 条 → 该链下界 {bound/3600:5.2f} 小时"
+                  f"（现为 {s_/3600:5.2f}）")
+        break
+    rest = max((c[0] for c in chain if not c[3].endswith(':*')), default=0)
+    print(f"    其余最长的非兜底链下界 {rest/3600:.2f} 小时 —— 拆分兜底链后新的下界")
+
     print("\n  最长链的构成")
     top = chain[0][3]
     for i in groups[top][:6]:
