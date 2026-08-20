@@ -215,7 +215,10 @@ def main():
     ap.add_argument("--output-root", required=True)
     ap.add_argument("--results-root", required=True)
     ap.add_argument("--model-config", required=True)
-    ap.add_argument("--workers", type=int, default=64)
+    ap.add_argument("--workers", type=int, default=64,
+                    help="global cap on how many tasks run at once. With --serial-groups each "
+                         "chain is its own single-worker pool, so without this the 103 chains "
+                         "would all start at once and overwhelm one deployment.")
     ap.add_argument("--per-site-workers", type=int, default=12)
     ap.add_argument("--timeout", type=int, default=900)
     ap.add_argument("--sites", default="")
@@ -431,8 +434,11 @@ def main():
 
     worker = run_replay if args.replay_only else run
 
+    gate = threading.Semaphore(max(1, args.workers))
+
     def run_one(job):
-        row = worker(job)
+        with gate:
+            row = worker(job)
         with print_lock:
             done[0] += 1
             row["done"], row["total"] = done[0], total
@@ -452,7 +458,8 @@ def main():
     sizes = {group: min(per_group, len(group_jobs))
              for group, group_jobs in grouped.items()}
     print(json.dumps({"event": "start", "tasks": total, "sites": sizes,
-                      "concurrency": sum(sizes.values()),
+                      "concurrency": min(sum(sizes.values()), args.workers),
+                      "global_cap": args.workers,
                       "mode": "replay-only" if args.replay_only else "generate",
                       "per_site_workers": args.per_site_workers}), flush=True)
     failures = 0
