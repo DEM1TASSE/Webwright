@@ -47,6 +47,29 @@ def needs_replay(task: dict) -> bool:
     return bool(ORDER_SENSITIVE.search(locators))
 
 
+# WebArena Verified derives task_type from how a task is *scored*, not from what it does. A
+# task that creates something but is checked with string_match against the agent's answer --
+# "Create an issue asking ...", "Add the following users ... as maintainer" -- is annotated as
+# non-mutating and would be scheduled into the parallel lane, where it writes to a deployment
+# every other task in that lane is reading. Two such tasks are in the 812; one of them created
+# three issues, and three other tasks list open issues in the same project. Nothing was
+# affected that run only because of when they happened to start.
+WRITE_VERB = re.compile(
+    r"^\s*(create|post|add|submit|draft|leave a|reply|invite|assign|fork|upload|delete|remove"
+    r"|update|change|set |edit|rename|reduce|increase|cancel|subscribe|unsubscribe|star |vote"
+    r"|upvote|downvote|approve|merge|close |reopen)\b", re.I)
+
+# "Create an orders report from ... to ..." renders a filtered view in the Magento admin. It
+# reads as a write and is not one, so the verb alone would move five report tasks into the
+# serial lane and serialise them for nothing.
+READ_ONLY_PHRASE = re.compile(r"^\s*create (an?|the) [\w ]*report\b", re.I)
+
+
+def writes_despite_annotation(task: dict) -> bool:
+    intent = task.get("intent", "")
+    return bool(WRITE_VERB.match(intent)) and not READ_ONLY_PHRASE.match(intent)
+
+
 def write_scope(task: dict) -> str:
     """Coarse identity of what a task writes to. Tasks with different scopes may run together;
     the fallback groups a task alone with everything else whose scope could not be read, which
@@ -73,7 +96,9 @@ def main() -> int:
 
     parallel, serial = [], []
     for task_id, task in official.items():
-        (serial if annotated_type(verified[task_id]) == "mutate" else parallel).append(task_id)
+        mutates = (annotated_type(verified[task_id]) == "mutate"
+                   or writes_despite_annotation(official[task_id]))
+        (serial if mutates else parallel).append(task_id)
 
     groups = collections.defaultdict(list)
     for task_id in serial:
