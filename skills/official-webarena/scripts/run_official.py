@@ -326,7 +326,9 @@ def main():
         result = Path(args.results_root) / site / f"task{task_id}.json"
         if result.exists():
             try:
-                if load(result).get("evaluation", {}).get("status") in RESUMABLE:
+                # `.get(key, {})` returns the stored None when the key exists and holds
+                # null, which a task that produced no artifacts does; guard with `or {}`.
+                if (load(result).get("evaluation") or {}).get("status") in RESUMABLE:
                     rec = load(result)
                     return {"site": site, "task_id": task_id, "status": "resumed",
                             "score": rec["evaluation"].get("score")}
