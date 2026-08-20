@@ -50,7 +50,35 @@ def parse_trailing_json(text: str) -> dict:
     return {}
 
 
-def auth_is_live(state_path: Path, probe_url: str) -> bool:
+# Endpoints that refuse anonymous visitors, taken from the official
+# browser_env/auto_login.py liveness check. A task's own start_url is the wrong probe: the
+# shopping storefront and the reddit front page render fine without a session, so a dead
+# cookie sails through and the failure only surfaces hours later as a wall of zeroes.
+LOGIN_REQUIRED_PROBE = {
+    "__GITLAB__": ("/-/profile", ""),
+    "__SHOPPING__": ("/wishlist/", ""),
+    "__SHOPPING_ADMIN__": ("/dashboard", "Dashboard"),
+    "__REDDIT__": ("/user/MarvelsGrantMan136/account", "Delete"),
+}
+
+
+def probe_targets(state_path: Path, environments: dict) -> list[tuple[str, str]]:
+    """Which login-walled endpoints this auth file is supposed to open.
+
+    Combination files (gitlab.reddit_state.json) must satisfy every site they name, otherwise
+    half a session passes as whole."""
+    stem = state_path.name[: -len("_state.json")]
+    out = []
+    for site in stem.split("."):
+        placeholder = f"__{site.upper()}__"
+        spec = LOGIN_REQUIRED_PROBE.get(placeholder)
+        urls = (environments.get(placeholder) or {}).get("urls") or []
+        if spec and urls:
+            out.append((str(urls[0]).rstrip("/") + spec[0], spec[1]))
+    return out
+
+
+def auth_is_live(state_path: Path, probe_url: str, keyword: str = "") -> bool:
     """A storage_state file can exist and still be dead — the site may have been reset or may
     still be starting. Existence checks miss that; the agent then fights a login wall and the
     run scores zero in a way that looks like incompetence. Probe before spending any tokens."""
@@ -62,10 +90,12 @@ def auth_is_live(state_path: Path, probe_url: str) -> bool:
             context = browser.new_context(storage_state=str(state_path))
             page = context.new_page()
             page.goto(probe_url, wait_until="domcontentloaded", timeout=60000)
-            body = page.content().lower()
+            body = page.content()
             landed = page.url.lower()
-            return not ("login[username]" in body or "please sign in" in body
-                        or "/users/sign_in" in landed)
+            if ("login[username]" in body or "please sign in" in body.lower()
+                    or "/users/sign_in" in landed or "/customer/account/login" in landed):
+                return False
+            return keyword in body if keyword else True
         except Exception:
             return False
         finally:
@@ -136,18 +166,19 @@ def main():
             state = Path(auth_root) / Path(str(raw)).name
             if state in checked:
                 continue
-            probe = tasks[task_id]["start_url"]
-            for placeholder, config in environments.items():
-                urls = config.get("urls") or []
-                if urls:
-                    probe = probe.replace(placeholder, str(urls[0]).rstrip("/"))
             if not state.is_file():
                 dead.append(f"{state} (missing)")
                 checked[state] = False
                 continue
-            checked[state] = auth_is_live(state, probe)
-            if not checked[state]:
-                dead.append(f"{state} (session rejected at {probe})")
+            targets = probe_targets(state, environments)
+            if not targets:
+                dead.append(f"{state} (no login-walled probe known for this file)")
+                checked[state] = False
+                continue
+            failed = [url for url, keyword in targets if not auth_is_live(state, url, keyword)]
+            checked[state] = not failed
+            if failed:
+                dead.append(f"{state} (session rejected at {', '.join(failed)})")
         for state, ok in checked.items():
             print(json.dumps({"event": "auth_probe", "state": str(state), "live": ok}), flush=True)
         if dead:
