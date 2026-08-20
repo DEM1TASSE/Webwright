@@ -22,11 +22,18 @@ if [ "${shm:-0}" -lt 512 ]; then
   exit 1
 fi
 
+# Everything below lives inside the container, so a rebuild drops all of it. Rewrite each
+# time rather than fixing by hand once.
 docker exec "$container" bash -c "
   sed -i \"s|^external_url.*|external_url '${external_url}'|\" /etc/gitlab/gitlab.rb
-  # Lives inside the container, so a rebuild drops it and it must be rewritten every time.
   grep -q \"^postgresql\['max_connections'\]\" /etc/gitlab/gitlab.rb ||
     echo \"postgresql['max_connections'] = 600\" >> /etc/gitlab/gitlab.rb
+  # Puma defaults to one worker per core and preloads Rails into each. On a many-core host it
+  # never finishes booting, gets killed, and restarts forever, so nginx has nothing to reach
+  # and every request is a 502 while the container still reports healthy.
+  grep -q \"^puma\['worker_processes'\]\" /etc/gitlab/gitlab.rb ||
+    printf \"%s\\n\" \"puma['worker_processes'] = 24\" \"puma['min_threads'] = 4\" \
+      \"puma['max_threads'] = 8\" \"sidekiq['max_concurrency'] = 10\" >> /etc/gitlab/gitlab.rb
 "
 docker exec "$container" gitlab-ctl reconfigure >/dev/null
 # reconfigure rewrites postgresql.conf but leaves the running server on the old value.
