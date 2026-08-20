@@ -11,6 +11,7 @@ import argparse
 import concurrent.futures
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -138,10 +139,71 @@ def watch_auth(states, webarena_root, interval, stop):
                               "ok": bool(live)}), flush=True)
 
 
+def replay_and_score(run_dir: Path, task_id: int, args) -> dict:
+    """Re-execute the frozen final_script.py in a clean workspace and score that.
+
+    The inline score says whether the agent solved the task; this says whether the script it
+    left behind still does. They come apart when the script depends on something only the
+    original run had — an absolute path, a harness-private variable, a page already in the
+    right state — and every one of those also makes the script useless as a reusable skill.
+    Running both on every task turns that class of defect into something visible per task
+    instead of something discovered by accident.
+    """
+    script = run_dir / "final_script.py"
+    if not script.is_file():
+        return {"status": "no_script"}
+    workspace = run_dir / "replay"
+    if workspace.exists():
+        shutil.rmtree(workspace)
+    workspace.mkdir(parents=True)
+    shutil.copy2(script, workspace / "final_script.py")
+    started = time.time()
+    try:
+        proc = subprocess.run([str(PY), "final_script.py"], cwd=str(workspace),
+                              env={**os.environ, "WORKSPACE_DIR": str(workspace)},
+                              text=True, capture_output=True, timeout=args.replay_timeout)
+        status = "completed" if proc.returncode == 0 else "process_error"
+        returncode, tail = proc.returncode, (proc.stderr or "")[-400:]
+    except subprocess.TimeoutExpired:
+        status, returncode, tail = "timeout", None, ""
+    state = workspace / "final_state.json"
+    evaluation = None
+    if state.is_file():
+        command = [str(PY), str(HERE / "webarena_final_state_eval.py"),
+                   "--task-id", str(task_id), "--final-state", str(state),
+                   "--tasks", str(Path(args.webarena_root) / "config_files/test.raw.json"),
+                   "--deployment-config", args.deployment_config,
+                   "--webarena-root", args.webarena_root,
+                   "--model-config", args.model_config,
+                   "--output", str(workspace / "official_eval.json")]
+        subprocess.run(command, cwd=str(WW), capture_output=True, text=True, timeout=600)
+        if (workspace / "official_eval.json").is_file():
+            evaluation = load(workspace / "official_eval.json")
+    return {"status": status, "returncode": returncode, "stderr_tail": tail,
+            "seconds": round(time.time() - started, 1),
+            "produced_state": state.is_file(), "evaluation": evaluation}
+
+
 def jobs_by_site(jobs):
     grouped = {}
     for job in jobs:
         grouped.setdefault(job[0], []).append(job)
+    return grouped
+
+
+def jobs_by_scope(jobs, scope_file):
+    """Group by what a task writes to, so only tasks touching the same thing serialise.
+
+    Mutating tasks cannot run beside anything that reads what they wrote, but two tasks in
+    different GitLab projects or against different products never see each other. Grouping by
+    site instead would serialise 127 GitLab tasks behind one another; grouping by write scope
+    leaves 103 independent chains whose longest is 59.
+    """
+    scopes = load(scope_file)
+    placement = {task_id: scope for scope, ids in scopes.items() for task_id in ids}
+    grouped = {}
+    for site, task_id in jobs:
+        grouped.setdefault(placement.get(task_id, f"{site}:*"), []).append((site, task_id))
     return grouped
 
 
@@ -160,11 +222,32 @@ def main():
     ap.add_argument("--limit-per-site", type=int, default=0)
     ap.add_argument("--task-id", type=int, action="append")
     ap.add_argument("--progress", default="")
+    ap.add_argument("--serial-groups", default="",
+                    help="serial_groups.json from partition_tasks.py; one chain per write "
+                         "scope, chains running concurrently")
+    ap.add_argument("--replay-eval", action="store_true",
+                    help="also re-execute each frozen final_script.py and score that")
+    ap.add_argument("--replay-timeout", type=int, default=600)
+    ap.add_argument("--replay-only", action="store_true",
+                    help="do not generate; replay the final_script.py each task already left "
+                         "behind and score that. For mutating tasks this is the only honest "
+                         "way to run the replay: inline replay re-applies the write on top of "
+                         "the state the generation run just produced, so it has to happen "
+                         "after the deployment is reset, as its own phase.")
+    ap.add_argument("--replay-results-root", default="",
+                    help="where --replay-only writes its scores; defaults to "
+                         "<results-root>_replay so the generation scores stay intact")
     ap.add_argument("--auth-recheck-seconds", type=int, default=300,
                     help="how often to re-check and rebuild lapsed sessions; 0 disables")
     ap.add_argument("--skip-auth-probe", action="store_true",
                     help="skip the pre-flight storage_state liveness check")
     args = ap.parse_args()
+    if args.replay_eval and args.replay_only:
+        raise SystemExit("--replay-eval is the inline variant; --replay-only replaces it")
+    if args.replay_eval and args.serial_groups:
+        raise SystemExit("--replay-eval replays in the state the run just produced, which "
+                         "re-applies the write. Serial (mutating) batches must instead be "
+                         "reset and then replayed with --replay-only.")
     if not os.environ.get("OPENAI_API_KEY"):
         raise SystemExit("OPENAI_API_KEY is missing")
 
@@ -276,6 +359,13 @@ def main():
 
         payload = parse_trailing_json(out)
         evaluation = payload.get("evaluation") or {}
+        if payload and args.replay_eval:
+            run_dir = (payload.get("run") or {}).get("run_dir")
+            if run_dir:
+                payload["replay"] = replay_and_score(Path(run_dir), task_id, args)
+                inline = (payload.get("evaluation") or {}).get("score")
+                replayed = ((payload["replay"].get("evaluation") or {}) or {}).get("score")
+                payload["replay"]["matches_inline"] = (inline == replayed)
         if payload:
             payload["deployment"] = {
                 "config": str(Path(args.deployment_config).resolve()),
@@ -295,6 +385,36 @@ def main():
                 "wall_seconds": round(time.time() - started, 1),
                 "stderr": err.strip()[-400:]}
 
+    replay_root = Path(args.replay_results_root or (str(args.results_root).rstrip("/") + "_replay"))
+
+    def run_replay(job):
+        """Replay one task's frozen script against the current (reset) deployment."""
+        site, task_id = job
+        started = time.time()
+        source = Path(args.results_root) / site / f"task{task_id}.json"
+        out = replay_root / site / f"task{task_id}.json"
+        if not source.is_file():
+            return {"site": site, "task_id": task_id, "status": "no_generation_result"}
+        if stopping.is_set():
+            return {"site": site, "task_id": task_id, "status": "skipped_stopping"}
+        record = load(source)
+        run_dir = (record.get("run") or {}).get("run_dir")
+        if not run_dir:
+            return {"site": site, "task_id": task_id, "status": "no_run_dir"}
+        replay = replay_and_score(Path(run_dir), task_id, args)
+        inline = (record.get("evaluation") or {}).get("score")
+        replayed = ((replay.get("evaluation") or {}) or {}).get("score")
+        replay["matches_inline"] = (inline == replayed)
+        payload = {"task_id": task_id, "site": site, "run": record.get("run"),
+                   "inline_evaluation": record.get("evaluation"), "replay": replay,
+                   "deployment": record.get("deployment")}
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        return {"site": site, "task_id": task_id, "status": replay.get("status"),
+                "inline_score": inline, "replay_score": replayed,
+                "matches_inline": replay["matches_inline"],
+                "wall_seconds": round(time.time() - started, 1)}
+
     print_lock = threading.Lock()
     progress_path = Path(args.progress) if args.progress else None
     done, total = [0], len(jobs)
@@ -306,10 +426,13 @@ def main():
                                stop_watching),
                          daemon=True).start()
 
-    grouped = jobs_by_site(jobs)
+    grouped = (jobs_by_scope(jobs, args.serial_groups) if args.serial_groups
+               else jobs_by_site(jobs))
+
+    worker = run_replay if args.replay_only else run
 
     def run_one(job):
-        row = run(job)
+        row = worker(job)
         with print_lock:
             done[0] += 1
             row["done"], row["total"] = done[0], total
@@ -325,10 +448,12 @@ def main():
     # the rest idle; across sites the pools simply run side by side. A single global pool with
     # per-site semaphores would instead let one busy site's queued tasks occupy every thread
     # and starve the others.
-    sizes = {site: min(args.per_site_workers, len(site_jobs))
-             for site, site_jobs in grouped.items()}
+    per_group = 1 if args.serial_groups else args.per_site_workers
+    sizes = {group: min(per_group, len(group_jobs))
+             for group, group_jobs in grouped.items()}
     print(json.dumps({"event": "start", "tasks": total, "sites": sizes,
                       "concurrency": sum(sizes.values()),
+                      "mode": "replay-only" if args.replay_only else "generate",
                       "per_site_workers": args.per_site_workers}), flush=True)
     failures = 0
     pools = {site: concurrent.futures.ThreadPoolExecutor(max_workers=size)
