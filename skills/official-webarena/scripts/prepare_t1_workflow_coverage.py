@@ -21,6 +21,7 @@ def main() -> None:
     ap.add_argument("--events", required=True)
     ap.add_argument("--parallel", required=True)
     ap.add_argument("--serial", required=True)
+    ap.add_argument("--replay", required=True)
     ap.add_argument("--output", required=True)
     args = ap.parse_args()
 
@@ -39,6 +40,7 @@ def main() -> None:
     missing = [row for row in jobs if (row["site"], row["template_id"]) not in built]
     parallel = {int(value) for value in load(args.parallel)}
     serial = {int(value) for value in load(args.serial)}
+    replay = {int(value) for value in load(args.replay)}
     covered_ids = {row["task_id"] for row in covered}
     output = Path(args.output)
     output.mkdir(parents=True, exist_ok=True)
@@ -46,10 +48,12 @@ def main() -> None:
     write(output / "missing_ids.json", sorted(row["task_id"] for row in missing))
     write(output / "covered_parallel_ids.json", sorted(covered_ids & parallel))
     write(output / "covered_serial_ids.json", sorted(covered_ids & serial))
+    write(output / "covered_replay_ids.json", sorted(covered_ids & replay))
     summary = {
         "heldout": len(jobs), "covered": len(covered), "missing": len(missing),
         "covered_parallel": len(covered_ids & parallel),
         "covered_serial": len(covered_ids & serial), "missing_jobs": missing,
+        "covered_replay": len(covered_ids & replay),
     }
     write(output / "coverage.json", summary)
     print(json.dumps({key: value for key, value in summary.items() if key != "missing_jobs"}))
