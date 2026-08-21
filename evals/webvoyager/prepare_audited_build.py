@@ -19,20 +19,23 @@ def main(argv=None):
     parser.add_argument("--manifest-output", required=True)
     args = parser.parse_args(argv)
     annotations = {row["id"]: row for row in load_jsonl(args.annotations)}
-    dataset, manifest = [], {"github_com": []}
+    dataset, manifest = [], {}
     for record_path in args.records:
         record = json.loads(Path(record_path).read_text(encoding="utf-8"))
         if record.get("score") != 1.0 or record.get("correct") is not True:
             raise ValueError(f"source not GPT-4o-admitted: {record_path}")
         task_id = str(record["task_id"])
         annotation = annotations[task_id]
+        site = str(record.get("site") or "")
+        if not site:
+            raise ValueError(f"source record has no normalized site: {record_path}")
         dataset.append({
             "task_id": task_id,
             "intent_template_id": annotation["template_id"],
             "intent": annotation["ques"],
-            "sites": ["github_com"],
+            "sites": [site],
         })
-        manifest["github_com"].append(record_path)
+        manifest.setdefault(site, []).append(record_path)
     if len({row["intent_template_id"] for row in dataset}) < 2:
         raise ValueError("cross-template source build requires at least two templates")
     Path(args.dataset_output).write_text(
