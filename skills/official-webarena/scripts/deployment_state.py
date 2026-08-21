@@ -11,6 +11,9 @@ a site that already contains what the script was supposed to create.
 
 Neither shows up as an error. Both show up as a lower number.
 
+The order these gates go in, and what else a batch needs around them, is in
+references/lanes.md.
+
   --wait      block until every site in the deployment actually serves
   --snapshot  write a fingerprint of the counters that mutating tasks move
   --verify    take a fingerprint and diff it against a reference, non-zero on mismatch

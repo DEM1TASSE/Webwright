@@ -1,4 +1,16 @@
-# 评测划分：设计与依据
+# 划分：设计与依据
+
+本目录有两类划分，回答的是不同问题：
+
+| 文件 | 单位 | 用途 |
+|---|---|---|
+| `parallel_ids` / `serial_ids` / `serial_groups` | task | **调度**：哪些任务能并发跑，哪些必须串行（见 `../references/lanes.md`）|
+| `same_template` / `cross_template` | template | **评测**：技能库的泛化半径 |
+
+调度划分与技能实验无关，只是为了让批量跑不互相污染；下文讲的是评测划分。
+
+---
+
 
 对象：官方 WebArena `web-arena-x/webarena@dce04686`，812 题。
 产物在本目录，生成脚本在 `../scripts/`，seed 一律 **42**。
