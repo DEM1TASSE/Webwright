@@ -13,8 +13,10 @@ exclusive implementations can coexist in one runtime tree.
 
 Branch: [`web-skill-factory-best`](https://github.com/DEM1TASSE/Webwright/tree/web-skill-factory-best)
 
-Frozen commit: `100a0e3`  
-Pipeline label: **V12 direct primitive pipeline**  
+Frozen commit: `100a0e3`
+
+Pipeline label: **V12 direct primitive pipeline**
+
 Generated library: V11 audited library consumed by the V12 router/consumer.
 
 Authoritative paired WebArena T2 result:
