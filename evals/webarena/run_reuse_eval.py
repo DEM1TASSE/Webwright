@@ -216,6 +216,10 @@ def main():
     )
     ap.add_argument("--task-ids", nargs="*", type=int,
                     help="Development-only subset of the frozen partition")
+    ap.add_argument(
+        "--task-ids-file",
+        help="JSON list selecting a reproducible lane/intersection of the frozen partition.",
+    )
     ap.add_argument("--timeout", type=int, default=900)
     args = ap.parse_args()
     if args.partition == "t1" and args.arm == "primitive":
@@ -223,9 +227,17 @@ def main():
     if not os.environ.get("OPENAI_API_KEY"):
         raise SystemExit("OPENAI_API_KEY is missing")
 
+    if args.task_ids is not None and args.task_ids_file:
+        raise SystemExit("use only one of --task-ids and --task-ids-file")
+    selected_task_ids = args.task_ids
+    if args.task_ids_file:
+        selected_task_ids = load(args.task_ids_file)
+        if not isinstance(selected_task_ids, list):
+            raise SystemExit("--task-ids-file must contain a JSON list")
+        selected_task_ids = [int(value) for value in selected_task_ids]
     partition_jobs = build_jobs(load(args.split), args.partition, args.sites)
     try:
-        jobs = select_task_subset(partition_jobs, args.task_ids, args.exclude_task_ids)
+        jobs = select_task_subset(partition_jobs, selected_task_ids, args.exclude_task_ids)
     except ValueError as error:
         raise SystemExit(str(error)) from error
     deployment_config = load(args.config)
