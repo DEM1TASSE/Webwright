@@ -1,0 +1,982 @@
+{
+  "site": "gitlab",
+  "status": "candidate",
+  "approved": false,
+  "composition": [
+    {
+      "source": 0,
+      "primitive_ids": [
+        "gitlab/issues/list_dashboard_issues",
+        "gitlab/issues/get_issue_detail",
+        "gitlab/projects/search_projects",
+        "gitlab/contributors/list_repository_contributors",
+        "gitlab/commits/list_visible_commit_day_buckets",
+        "gitlab/profiles/get_user_follower_count_from_profile",
+        "gitlab/contributors/list_repository_contributors_from_graph_page",
+        "gitlab/commits/list_repository_commits"
+      ]
+    }
+  ],
+  "primitives": [
+    {
+      "primitive_id": "gitlab/commits/list_repository_commits",
+      "method": "list_repository_commits",
+      "capability": "List commit records for a GitLab repository ref from the repository commits API with optional site-native filters and optional paginated traversal.",
+      "method_code": "async def list_repository_commits(self, base_url: str, ref_name: str, project_path: str | None = None, project_id: int | None = None, author: str | None = None, since: str | None = None, until: str | None = None, page_number: int = 1, per_page: int = 100, traversal_mode: str = \"single_page\") -> dict:\n    import json\n    from urllib.parse import urlsplit, urljoin, quote\n\n    if not isinstance(base_url, str) or not base_url.strip():\n        raise ValueError(\"base_url must be a non-empty string\")\n    parts = urlsplit(base_url)\n    if not parts.scheme or not parts.netloc:\n        raise ValueError(\"base_url must include scheme and host\")\n    origin = f\"{parts.scheme}://{parts.netloc}\"\n\n    if not isinstance(ref_name, str) or not ref_name.strip():\n        raise ValueError(\"ref_name must be a non-empty string\")\n    if project_id is None and project_path is None:\n        raise ValueError(\"Either project_id or project_path must be provided\")\n    if project_id is not None and not isinstance(project_id, int):\n        raise ValueError(\"project_id must be an integer when provided\")\n    if project_path is not None:\n        if not isinstance(project_path, str) or not project_path.strip() or \"/\" not in project_path:\n            raise ValueError(\"project_path must be a GitLab project path like 'group/project'\")\n    if not isinstance(page_number, int) or page_number < 1:\n        raise ValueError(\"page_number must be an integer >= 1\")\n    if not isinstance(per_page, int) or per_page < 1:\n        raise ValueError(\"per_page must be an integer >= 1\")\n    if traversal_mode not in {\"single_page\", \"all_pages\"}:\n        raise ValueError(\"traversal_mode must be one of: single_page, all_pages\")\n\n    project_token = str(project_id) if project_id is not None else quote(project_path, safe=\"\")\n\n    commits = []\n    current_page = page_number\n    while True:\n        api_url = urljoin(origin + \"/\", f\"api/v4/projects/{project_token}/repository/commits\")\n        params = {\"ref_name\": ref_name, \"page\": current_page, \"per_page\": per_page}\n        if author is not None:\n            params[\"author\"] = author\n        if since is not None:\n            params[\"since\"] = since\n        if until is not None:\n            params[\"until\"] = until\n\n        response = await self.page.request.get(api_url, params=params)\n        if response.status >= 400:\n            raise RuntimeError(f\"GitLab commits API request failed with status {response.status} on page {current_page}\")\n\n        try:\n            batch = await response.json()\n        except Exception:\n            batch = json.loads(await response.text())\n\n        if not isinstance(batch, list):\n            raise RuntimeError(\"Expected GitLab repository commits response to be a JSON array\")\n        if not batch:\n            break\n\n        for item in batch:\n            if not isinstance(item, dict):\n                continue\n            commit_id = item.get(\"id\") or \"\"\n            short_id = item.get(\"short_id\") or \"\"\n            if not commit_id and not short_id:\n                raise RuntimeError(\"GitLab commits API item missing both id and short_id\")\n            commits.append({\n                \"id\": commit_id,\n                \"short_id\": short_id,\n                \"title\": item.get(\"title\") or \"\",\n                \"author_name\": item.get(\"author_name\") or \"\",\n                \"author_email\": item.get(\"author_email\") or \"\",\n                \"committer_name\": item.get(\"committer_name\") or \"\",\n                \"committer_email\": item.get(\"committer_email\") or \"\",\n                \"authored_date\": item.get(\"authored_date\") or \"\",\n                \"committed_at\": item.get(\"committed_date\") or \"\",\n                \"web_url\": item.get(\"web_url\") or \"\",\n            })\n\n        if traversal_mode == \"single_page\":\n            break\n        if len(batch) < per_page:\n            break\n        current_page += 1\n\n    return {\"commits\": commits}",
+      "owns": [
+        "Constructing the GitLab repository commits API request for one project and ref",
+        "Accepting either a numeric project_id or a path-based project_path for the same site-local commits resource",
+        "Applying site-supported query parameters such as ref_name, author, since, until, page, and per_page",
+        "Retrieving commit records from either a single API page or all pages via explicit traversal_mode",
+        "Parsing JSON response items into typed commit records with stable identifiers, authorship, timestamps, and web links"
+      ],
+      "does_not_own": [
+        "Choosing which repository, branch, author, or time range to inspect",
+        "Looping over multiple repositories or refs",
+        "Cross-query merge or deduplication across repeated commit-list requests",
+        "Task-level filtering, counting, ranking, or summarizing beyond the API response slice(s) requested",
+        "Using the HTML commits page as a verification source"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "base_url": {
+            "type": "string",
+            "description": "Base GitLab instance URL."
+          },
+          "ref_name": {
+            "type": "string",
+            "description": "Branch or ref name to query."
+          },
+          "project_path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "GitLab project path, e.g. 'group/project'. Provide this or project_id."
+          },
+          "project_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "GitLab numeric project id. Provide this or project_path."
+          },
+          "author": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional author filter passed through to the commits API."
+          },
+          "since": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional lower-bound ISO-8601 timestamp passed to the API."
+          },
+          "until": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional upper-bound ISO-8601 timestamp passed to the API."
+          },
+          "page_number": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Starting page number."
+          },
+          "per_page": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Page size."
+          },
+          "traversal_mode": {
+            "type": "string",
+            "enum": [
+              "single_page",
+              "all_pages"
+            ],
+            "description": "Whether to return one API page or continue until exhaustion."
+          }
+        },
+        "required": [
+          "base_url",
+          "ref_name"
+        ]
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "commits": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Full commit SHA if returned by the API."
+                },
+                "short_id": {
+                  "type": "string",
+                  "description": "Short commit identifier displayed by GitLab."
+                },
+                "title": {
+                  "type": "string"
+                },
+                "author_name": {
+                  "type": "string"
+                },
+                "author_email": {
+                  "type": "string"
+                },
+                "committer_name": {
+                  "type": "string"
+                },
+                "committer_email": {
+                  "type": "string"
+                },
+                "authored_date": {
+                  "type": "string",
+                  "description": "Commit authored timestamp from the API."
+                },
+                "committed_at": {
+                  "type": "string",
+                  "description": "Commit committed timestamp from the API field committed_date."
+                },
+                "web_url": {
+                  "type": "string",
+                  "description": "GitLab web URL for the commit."
+                }
+              },
+              "required": [
+                "id",
+                "short_id",
+                "title",
+                "author_name",
+                "author_email",
+                "committer_name",
+                "committer_email",
+                "authored_date",
+                "committed_at",
+                "web_url"
+              ]
+            }
+          }
+        },
+        "required": [
+          "commits"
+        ]
+      },
+      "requires": [],
+      "provides": [
+        "gitlab.repository_commits"
+      ],
+      "supported_patterns": [
+        "Query the GitLab repository commits API for one project and ref.",
+        "Pass through optional author and authored time-range filters supported by the site API.",
+        "Return either one API response page or traverse all pages via an explicit semantic mode.",
+        "Preserve authored_date and committed_date-derived committed_at when available."
+      ],
+      "guarantees": {
+        "collection_scope": "query",
+        "completeness": "conditional",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "semantic_enum",
+          "supported_values": [
+            "single_page",
+            "all_pages"
+          ],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "Uses the caller-supplied base_url to construct the site-local commits API request.",
+        "Returns a JSON-derived array `commits` (possibly empty) rather than raw page text.",
+        "Each returned commit includes a stable commit identifier or short identifier and a GitLab web URL when present in the API response.",
+        "When traversal_mode is 'all_pages', requests successive pages until the API returns an empty batch or a short final page.",
+        "Preserves author identity fields and both authored_date and committed_date-derived committed_at when those API fields are present."
+      ],
+      "feature": "commits"
+    },
+    {
+      "primitive_id": "gitlab/commits/list_visible_commit_day_buckets",
+      "method": "list_visible_commit_day_buckets",
+      "capability": "List commit history buckets shown on a GitLab project's branch commits page, including displayed day labels, per-day commit counts, and visible commit author names within each day section.",
+      "method_code": "async def list_visible_commit_day_buckets(self, project_path: str, branch: str) -> dict:\n    import re\n    from urllib.parse import urlsplit, urljoin\n\n    if not isinstance(project_path, str) or not project_path.strip():\n        raise ValueError(\"project_path must be a non-empty string\")\n    if not isinstance(branch, str) or not branch.strip():\n        raise ValueError(\"branch must be a non-empty string\")\n\n    current_url = self.page.url\n    if not current_url:\n        raise RuntimeError(\"self.page.url is empty; navigate to the GitLab deployment before calling list_visible_commit_day_buckets\")\n    parts = urlsplit(current_url)\n    origin = f\"{parts.scheme}://{parts.netloc}\"\n    commits_url = urljoin(origin + \"/\", f\"{project_path.strip('/')}/-/commits/{branch}\")\n\n    response = await self.page.goto(commits_url, wait_until=\"domcontentloaded\")\n    if response and response.status >= 400:\n        raise RuntimeError(f\"GitLab commits page navigation failed with status {response.status}\")\n\n    buckets = []\n    items = self.page.locator(\"li.commits-list-item\")\n    count = await items.count()\n\n    for i in range(count):\n        item = items.nth(i)\n        text = await item.inner_text()\n        lines = [line.strip() for line in text.splitlines() if line.strip()]\n        if not lines:\n            continue\n\n        header_line = None\n        for line in lines:\n            if re.search(r\"\\b\\d+\\s+commit[s]?\\b\", line):\n                header_line = line\n                break\n        if not header_line:\n            continue\n\n        match = re.match(r\"^(?P<day_label>.+?)\\s+(?P<commit_count>\\d+)\\s+commit[s]?$\", header_line)\n        if not match:\n            continue\n\n        day_label = match.group(\"day_label\").strip()\n        commit_count = int(match.group(\"commit_count\"))\n        commit_count_text = f\"{commit_count} commit\" if commit_count == 1 else f\"{commit_count} commits\"\n\n        authors = []\n        for line in lines:\n            authored_match = re.match(r\"^(?P<author>.+?)\\s+authored\\b\", line)\n            if authored_match:\n                authors.append(authored_match.group(\"author\").strip())\n\n        buckets.append({\n            \"day_label\": day_label,\n            \"commit_count\": commit_count,\n            \"commit_count_text\": commit_count_text,\n            \"authors\": authors,\n        })\n\n    return {\n        \"commit_day_buckets\": buckets,\n        \"final_url\": self.page.url,\n    }",
+      "owns": [
+        "Open a specific project's commits page for a given branch",
+        "Parse the rendered commits listing into typed day-bucket records",
+        "Extract the displayed day label for each visible bucket",
+        "Extract the displayed per-day commit count from each visible bucket",
+        "Extract visible commit author names within each visible day bucket"
+      ],
+      "does_not_own": [
+        "Filtering for specific people such as Eric or Kilian",
+        "Inferring site-wide or branch-wide absence of commits by an author from one visible page slice",
+        "Aggregating counts across multiple days",
+        "Navigating pagination or infinite scroll beyond the demonstrated visible page",
+        "Ranking, comparison, or answer formatting"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "project_path": {
+            "type": "string",
+            "description": "Namespace/project path, e.g. a11yproject/a11yproject.com"
+          },
+          "branch": {
+            "type": "string",
+            "description": "Branch whose commits page should be opened, e.g. main"
+          }
+        },
+        "required": [
+          "project_path",
+          "branch"
+        ]
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "commit_day_buckets": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "day_label": {
+                  "type": "string",
+                  "description": "Displayed GitLab day heading, e.g. 03 Jan, 2023"
+                },
+                "commit_count": {
+                  "type": "integer",
+                  "description": "Displayed number of commits in that day bucket"
+                },
+                "commit_count_text": {
+                  "type": "string",
+                  "description": "Raw displayed count text, e.g. 1 commit"
+                },
+                "authors": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Visible commit author display names parsed from commits shown in that day bucket"
+                }
+              },
+              "required": [
+                "day_label",
+                "commit_count",
+                "commit_count_text",
+                "authors"
+              ]
+            }
+          },
+          "final_url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "commit_day_buckets",
+          "final_url"
+        ]
+      },
+      "requires": [],
+      "provides": [
+        "gitlab.visible_commit_day_buckets"
+      ],
+      "supported_patterns": [
+        "UI-based acquisition from the standard /-/commits/{branch} route",
+        "Reading visible day-group commit summaries when API use is unnecessary or unavailable"
+      ],
+      "guarantees": {
+        "collection_scope": "page",
+        "completeness": "partial",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "none",
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "Returns final_url ending with /<project_path>/-/commits/<branch> after successful navigation.",
+        "Each returned bucket has a non-empty day_label and commit_count_text.",
+        "Each returned bucket has commit_count parsed as a non-negative integer consistent with the displayed count text.",
+        "If the page visibly contains a bucket like '03 Jan, 2023 1 commit', at least one record reflects day_label '03 Jan, 2023' and commit_count 1."
+      ],
+      "feature": "commits"
+    },
+    {
+      "primitive_id": "gitlab/contributors/list_repository_contributors",
+      "method": "list_repository_contributors",
+      "capability": "Retrieve contributor records for a GitLab project's repository from the repository contributors endpoint.",
+      "method_code": "async def list_repository_contributors(self, project_id: int) -> dict:\n    import json\n    from urllib.parse import urlsplit, urljoin\n\n    if not isinstance(project_id, int):\n        raise ValueError(\"project_id must be an integer\")\n\n    current_url = self.page.url\n    if not current_url:\n        raise RuntimeError(\"self.page.url is empty; navigate to the GitLab deployment before calling list_repository_contributors\")\n    parts = urlsplit(current_url)\n    origin = f\"{parts.scheme}://{parts.netloc}\"\n    api_url = urljoin(origin + \"/\", f\"api/v4/projects/{project_id}/repository/contributors\")\n\n    response = await self.page.request.get(api_url)\n    if response.status >= 400:\n        raise RuntimeError(f\"GitLab repository contributors request failed with status {response.status}\")\n\n    try:\n        payload = await response.json()\n    except Exception:\n        payload = json.loads(await response.text())\n\n    if not isinstance(payload, list):\n        raise RuntimeError(\"Expected GitLab repository contributors response to be a JSON array\")\n\n    contributors = []\n    for item in payload:\n        if not isinstance(item, dict):\n            continue\n        commits_value = item.get(\"commits\")\n        commits = int(commits_value) if commits_value is not None else 0\n        contributors.append({\n            \"name\": item.get(\"name\"),\n            \"email\": item.get(\"email\"),\n            \"commits\": commits,\n        })\n\n    return {\"contributors\": contributors}",
+      "owns": [
+        "Issuing the GitLab repository contributors request to /api/v4/projects/{project_id}/repository/contributors",
+        "Parsing the JSON response into typed contributor records",
+        "Preserving contributor fields demonstrated by the workflow, including name, email, and commits"
+      ],
+      "does_not_own": [
+        "Ranking contributors by commit count",
+        "Selecting the top N contributors",
+        "Project discovery or project_id lookup",
+        "Formatting contributor emails for the final answer"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "description": "GitLab project identifier used in /api/v4/projects/{project_id}/repository/contributors"
+          }
+        },
+        "required": [
+          "project_id"
+        ]
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "contributors": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "email": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "commits": {
+                  "type": "integer",
+                  "description": "Commit count parsed from the API field 'commits'"
+                }
+              },
+              "required": [
+                "name",
+                "email",
+                "commits"
+              ]
+            },
+            "description": "Contributor records returned by the GitLab repository contributors API for the specified project."
+          }
+        },
+        "required": [
+          "contributors"
+        ]
+      },
+      "requires": [],
+      "provides": [
+        "gitlab.repository_contributors"
+      ],
+      "supported_patterns": [
+        "Fetch repository contributor statistics for one project",
+        "Return typed contributor facts for downstream ranking or selection"
+      ],
+      "guarantees": {
+        "collection_scope": "single",
+        "completeness": "conditional",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "none",
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "Returns a JSON-parsed array, possibly empty, for the specified project_id.",
+        "Each returned contributor record includes parsed commits as an integer when the API field is present.",
+        "A successful empty list for a repository is distinguishable from request/parsing failure."
+      ],
+      "feature": "contributors"
+    },
+    {
+      "primitive_id": "gitlab/contributors/list_repository_contributors_from_graph_page",
+      "method": "list_repository_contributors_from_graph_page",
+      "capability": "Open a GitLab repository branch graphs page and extract contributor commit summary records shown on that page as typed contributor records, while also supporting direct navigation to a known graphs page URL.",
+      "method_code": "async def list_repository_contributors_from_graph_page(self, base_url: str | None = None, namespace: str | None = None, project: str | None = None, branch: str | None = None, graph_page_url: str | None = None, username: str | None = None, password: str | None = None) -> dict:\n    import re\n    from urllib.parse import urlsplit, urljoin\n\n    def _origin_from_url(value: str) -> str:\n        parts = urlsplit(value)\n        if not parts.scheme or not parts.netloc:\n            raise ValueError(\"URL must include scheme and host\")\n        return f\"{parts.scheme}://{parts.netloc}\"\n\n    if graph_page_url is not None:\n        if not isinstance(graph_page_url, str) or not graph_page_url.strip():\n            raise ValueError(\"graph_page_url must be a non-empty string when provided\")\n        target_url = graph_page_url.strip()\n        origin = _origin_from_url(target_url)\n    else:\n        if not isinstance(base_url, str) or not base_url.strip():\n            raise ValueError(\"base_url must be a non-empty string when graph_page_url is not provided\")\n        if not isinstance(namespace, str) or not namespace.strip():\n            raise ValueError(\"namespace must be a non-empty string when graph_page_url is not provided\")\n        if not isinstance(project, str) or not project.strip():\n            raise ValueError(\"project must be a non-empty string when graph_page_url is not provided\")\n        if not isinstance(branch, str) or not branch.strip():\n            raise ValueError(\"branch must be a non-empty string when graph_page_url is not provided\")\n        origin = _origin_from_url(base_url)\n        target_url = urljoin(origin + \"/\", f\"{namespace.strip('/')}/{project.strip('/')}/-/graphs/{branch}\")\n\n    if username is not None or password is not None:\n        if not username or not password:\n            raise ValueError(\"username and password must both be provided when authentication is requested\")\n        sign_in_url = urljoin(origin + \"/\", \"users/sign_in\")\n        response = await self.page.goto(sign_in_url, wait_until=\"domcontentloaded\")\n        if response is None:\n            raise RuntimeError(\"Failed to load GitLab sign-in page\")\n        await self.page.fill('input[name=\"user[login]\"]', username)\n        await self.page.fill('input[name=\"user[password]\"]', password)\n        await self.page.locator('input[type=\"submit\"], button[type=\"submit\"]').first.click()\n        await self.page.wait_for_load_state(\"domcontentloaded\")\n\n    response = await self.page.goto(target_url, wait_until=\"networkidle\")\n    document_status = response.status if response is not None else None\n    final_url = self.page.url\n    final_path = urlsplit(final_url).path\n    if \"/-/graphs/\" not in final_path and not final_path.endswith(\"/-/graphs\"):\n        raise RuntimeError(f\"Loaded page does not appear to be a GitLab graphs page: {final_url}\")\n\n    inferred_branch = branch or final_path.rsplit(\"/-/graphs/\", 1)[-1] if \"/-/graphs/\" in final_path else (branch or \"\")\n    repo_path = final_path.split(\"/-/graphs/\", 1)[0].strip(\"/\") if \"/-/graphs/\" in final_path else \"\"\n    repository_url = urljoin(origin + \"/\", repo_path) if repo_path else \"\"\n\n    contributors = []\n    cards = self.page.locator('.contributors-charts .col-lg-6.col-12.gl-my-5')\n    card_count = await cards.count()\n    if card_count > 0:\n        for i in range(card_count):\n            card = cards.nth(i)\n            name_locator = card.locator('h4').first\n            if await name_locator.count() == 0:\n                continue\n            contributor_name = (await name_locator.inner_text()).strip()\n            if not contributor_name:\n                continue\n\n            summary_locator = card.locator('p').first\n            summary_text = \"\"\n            if await summary_locator.count() > 0:\n                summary_text = (await summary_locator.inner_text()).strip()\n\n            commit_match = re.search(r'(\\d+)\\s+commit', summary_text, re.IGNORECASE)\n            email_match = re.search(r'\\(([^\\n()]+@[^\\n()]+)\\)', summary_text)\n            commit_count = int(commit_match.group(1)) if commit_match else None\n            contributor_email = email_match.group(1).strip() if email_match else None\n            commit_count_text = None\n            if commit_match:\n                n = int(commit_match.group(1))\n                commit_count_text = f\"{n} commit\" if n == 1 else f\"{n} commits\"\n\n            contributors.append({\n                \"name\": contributor_name,\n                \"contributor_name\": contributor_name,\n                \"summary_text\": summary_text,\n                \"commit_count\": commit_count,\n                \"contributor_email\": contributor_email,\n                \"contributor_email_displayed\": contributor_email,\n                \"commit_count_text\": commit_count_text,\n            })\n    else:\n        body_text = await self.page.locator('body').inner_text()\n        regex = re.compile(r\"([A-Za-z][A-Za-z .'-]+)\\n\\n(\\d+) commits? \\(([^\\n]+)\\)\")\n        for match in regex.finditer(body_text):\n            contributor_name = match.group(1).strip()\n            n = int(match.group(2))\n            contributor_email = match.group(3).strip()\n            contributors.append({\n                \"name\": contributor_name,\n                \"contributor_name\": contributor_name,\n                \"summary_text\": f\"{match.group(2)} commits ({contributor_email})\",\n                \"commit_count\": n,\n                \"contributor_email\": contributor_email,\n                \"contributor_email_displayed\": contributor_email,\n                \"commit_count_text\": f\"{n} commit\" if n == 1 else f\"{n} commits\",\n            })\n\n        if not contributors:\n            lines = [line.strip() for line in body_text.splitlines() if line.strip()]\n            for idx in range(len(lines) - 1):\n                if re.fullmatch(r\"[A-Za-z][A-Za-z .'-]+\", lines[idx]) and re.fullmatch(r\"\\d+ commits?\", lines[idx + 1]):\n                    contributor_name = lines[idx]\n                    n = int(re.search(r\"\\d+\", lines[idx + 1]).group(0))\n                    contributors.append({\n                        \"name\": contributor_name,\n                        \"contributor_name\": contributor_name,\n                        \"summary_text\": lines[idx + 1],\n                        \"commit_count\": n,\n                        \"contributor_email\": None,\n                        \"contributor_email_displayed\": None,\n                        \"commit_count_text\": lines[idx + 1],\n                    })\n\n    return {\n        \"repository_url\": repository_url,\n        \"graph_page_url\": final_url,\n        \"graphs_url\": final_url,\n        \"document_status\": document_status,\n        \"branch\": inferred_branch,\n        \"contributors\": contributors,\n    }",
+      "owns": [
+        "Navigating to a GitLab repository branch graphs page at /<namespace>/<project>/-/graphs/<branch> or directly to a caller-supplied graphs page URL",
+        "Optionally authenticating to the GitLab site with username/password before accessing repository pages",
+        "Extracting contributor summary cards from the rendered contributors graph section when that UI is present",
+        "Falling back to rendered page-text parsing for contributor entries when card selectors are absent",
+        "Parsing typed contributor records including both demonstrated name field spellings, commit_count, optional displayed email, preserved summary_text, and commit_count_text",
+        "Returning the full contributor list visible on that one graphs page"
+      ],
+      "does_not_own": [
+        "Choosing which repository or branch to inspect for a user task",
+        "Ranking, sorting, or selecting top contributors",
+        "Cross-page pagination or infinite-scroll handling beyond the loaded graphs page",
+        "Cross-source joins with profile pages or repository APIs",
+        "Proving repository-wide absence beyond the acquired page"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "base_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Base GitLab instance URL. Required when graph_page_url is not provided."
+          },
+          "namespace": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Repository owner/group path segment. Required when graph_page_url is not provided."
+          },
+          "project": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Repository name/path segment. Required when graph_page_url is not provided."
+          },
+          "branch": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Branch name used in the graphs URL. Required when graph_page_url is not provided unless the direct graph_page_url already encodes it."
+          },
+          "graph_page_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Direct URL of a GitLab project graphs page. When provided, navigation uses this URL directly."
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional GitLab username for instances that require authentication to view the graphs page."
+          },
+          "password": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional GitLab password paired with username."
+          }
+        },
+        "required": []
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "repository_url": {
+            "type": "string"
+          },
+          "graph_page_url": {
+            "type": "string"
+          },
+          "graphs_url": {
+            "type": "string",
+            "description": "Alias of the final loaded graphs page URL to preserve source output compatibility."
+          },
+          "document_status": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "branch": {
+            "type": "string"
+          },
+          "contributors": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "description": "Contributor display name preserved from the graph page."
+                },
+                "contributor_name": {
+                  "type": "string",
+                  "description": "Alias of name for compatibility with alternate source output."
+                },
+                "summary_text": {
+                  "type": "string"
+                },
+                "commit_count": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "contributor_email": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "contributor_email_displayed": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "commit_count_text": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "name",
+                "contributor_name",
+                "summary_text",
+                "commit_count",
+                "contributor_email",
+                "contributor_email_displayed",
+                "commit_count_text"
+              ]
+            }
+          }
+        },
+        "required": [
+          "repository_url",
+          "graph_page_url",
+          "graphs_url",
+          "document_status",
+          "branch",
+          "contributors"
+        ]
+      },
+      "requires": [],
+      "provides": [
+        "gitlab.repository_contributor_graph_page"
+      ],
+      "supported_patterns": [
+        "Open a repository branch graphs page at /-/graphs/<branch> or navigate directly to a known graphs page URL.",
+        "Use the exact demonstrated contributor-card selector when present.",
+        "Fall back to rendered page-text parsing for the same site resource when card markup differs.",
+        "Return visible contributor summary facts from that one graphs page without workflow-level ranking."
+      ],
+      "guarantees": {
+        "collection_scope": "page",
+        "completeness": "partial",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "semantic_enum",
+          "supported_values": [
+            "repository_branch_graph",
+            "direct_graph_page_url"
+          ],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "Returned graph_page_url/graphs_url correspond to the loaded GitLab graphs page after any redirects.",
+        "Each returned contributor record has a non-empty name and matching contributor_name alias.",
+        "When commit_count is non-null, it is parsed as an integer from displayed page content rather than fabricated.",
+        "An empty contributors array is allowed only if the graphs page loaded successfully and no contributor rows matching the demonstrated UI-card or rendered-text patterns were present."
+      ],
+      "feature": "contributors"
+    },
+    {
+      "primitive_id": "gitlab/issues/get_issue_detail",
+      "method": "get_issue_detail",
+      "capability": "Open a GitLab issue detail page and extract typed issue metadata including title and whether the page indicates the issue is closed.",
+      "method_code": "async def get_issue_detail(self, base_url: str, username: str, password: str, issue_url: str) -> dict:\n    import re\n    import html as html_lib\n    from urllib.parse import urlsplit, urljoin\n\n    base_parts = urlsplit(base_url)\n    if not base_parts.scheme or not base_parts.netloc:\n        raise ValueError(\"base_url must include scheme and host\")\n    origin = f\"{base_parts.scheme}://{base_parts.netloc}\"\n    sign_in_url = urljoin(origin + \"/\", \"users/sign_in\")\n\n    response = await self.page.goto(sign_in_url, wait_until=\"domcontentloaded\")\n    if response is None:\n        raise RuntimeError(\"Failed to load GitLab sign-in page\")\n    sign_in_html = await self.page.content()\n\n    token_match = re.search(r'name=\"authenticity_token\" value=\"([^\"]+)\"', sign_in_html)\n    if not token_match:\n        raise RuntimeError(\"GitLab authenticity_token not found on sign-in page\")\n\n    login_response = await self.page.request.post(\n        sign_in_url,\n        form={\n            \"authenticity_token\": token_match.group(1),\n            \"user[login]\": username,\n            \"user[password]\": password,\n            \"user[remember_me]\": \"0\",\n        },\n        headers={\"Referer\": sign_in_url},\n    )\n    if not login_response.ok:\n        raise RuntimeError(f\"GitLab login failed with status {login_response.status}\")\n\n    resolved_issue_url = issue_url if urlsplit(issue_url).scheme else urljoin(origin + \"/\", issue_url.lstrip(\"/\"))\n    issue_response = await self.page.goto(resolved_issue_url, wait_until=\"domcontentloaded\")\n    if issue_response is None:\n        raise RuntimeError(\"Failed to load GitLab issue detail page\")\n    issue_html = await self.page.content()\n\n    page_title_match = re.search(r'<title>(.*?)</title>', issue_html, re.S)\n    page_title = html_lib.unescape(page_title_match.group(1)).strip() if page_title_match else \"\"\n    page_text = ' '.join(html_lib.unescape(re.sub(r'<[^>]+>', ' ', issue_html)).split())\n    is_closed = ' closed ' in f' {page_text.lower()} '\n    issue_title = page_title.split('(#')[0].strip() if page_title else \"\"\n\n    return {\n        \"issue_url\": self.page.url,\n        \"issue_title\": issue_title,\n        \"page_title\": page_title,\n        \"is_closed\": is_closed,\n    }",
+      "owns": [
+        "Authenticating to the GitLab instance via the sign-in form using authenticity_token and session cookies",
+        "Fetching a GitLab issue detail page by relative or absolute issue URL",
+        "Extracting the page title from the HTML title element",
+        "Deriving a normalized issue title from the page title text by removing the trailing (#...) suffix when present",
+        "Detecting whether the rendered issue page text indicates a closed state"
+      ],
+      "does_not_own": [
+        "Finding candidate issue URLs from searches or listings",
+        "Ranking or choosing which issue to inspect",
+        "Guaranteeing that text-state parsing captures every possible GitLab visual state variant beyond the demonstrated closed indicator",
+        "Formatting the final answer for the user"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "base_url": {
+            "type": "string",
+            "description": "Base GitLab instance URL."
+          },
+          "username": {
+            "type": "string",
+            "description": "GitLab username used for login."
+          },
+          "password": {
+            "type": "string",
+            "description": "GitLab password used for login."
+          },
+          "issue_url": {
+            "type": "string",
+            "description": "Absolute or relative URL of the GitLab issue detail page to open."
+          }
+        },
+        "required": [
+          "base_url",
+          "username",
+          "password",
+          "issue_url"
+        ]
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "issue_url": {
+            "type": "string",
+            "description": "Resolved absolute issue URL."
+          },
+          "issue_title": {
+            "type": "string",
+            "description": "Normalized issue title extracted from the page title."
+          },
+          "page_title": {
+            "type": "string",
+            "description": "Raw HTML title text from the issue page when present."
+          },
+          "is_closed": {
+            "type": "boolean",
+            "description": "Whether the rendered page text contains the demonstrated closed-state indicator."
+          }
+        },
+        "required": [
+          "issue_url",
+          "issue_title",
+          "page_title",
+          "is_closed"
+        ]
+      },
+      "requires": [],
+      "provides": [
+        "gitlab_authenticated_session"
+      ],
+      "supported_patterns": [
+        "Authenticate through GitLab's sign-in form before opening a specific issue detail URL.",
+        "Accept either a relative or absolute issue URL.",
+        "Parse title metadata and a demonstrated closed-state text indicator from the fetched issue page."
+      ],
+      "guarantees": {
+        "collection_scope": "single",
+        "completeness": "not_applicable",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "none",
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "Fetches the issue page successfully and returns the resolved absolute issue_url.",
+        "Returns a boolean is_closed computed from the fetched page text.",
+        "If a title element exists, page_title is non-empty and issue_title is a normalized derivative of it."
+      ],
+      "feature": "issues"
+    },
+    {
+      "primitive_id": "gitlab/issues/list_dashboard_issues",
+      "method": "list_dashboard_issues",
+      "capability": "List issues from the GitLab dashboard issues page with site-supported assignee, state, and text-search filters, returning issue links and page-exposed updated timestamps.",
+      "method_code": "async def list_dashboard_issues(self, base_url: str, username: str, password: str, assignee_username: str, state: str, search: str) -> dict:\n    import re\n    import html as html_lib\n    from urllib.parse import urlsplit, urljoin, urlencode\n\n    if state not in {\"opened\", \"closed\", \"all\"}:\n        raise ValueError(\"state must be one of: opened, closed, all\")\n\n    base_parts = urlsplit(base_url)\n    if not base_parts.scheme or not base_parts.netloc:\n        raise ValueError(\"base_url must include scheme and host\")\n    origin = f\"{base_parts.scheme}://{base_parts.netloc}\"\n    sign_in_url = urljoin(origin + \"/\", \"users/sign_in\")\n\n    response = await self.page.goto(sign_in_url, wait_until=\"domcontentloaded\")\n    if response is None:\n        raise RuntimeError(\"Failed to load GitLab sign-in page\")\n    sign_in_html = await self.page.content()\n\n    token_match = re.search(r'name=\"authenticity_token\" value=\"([^\"]+)\"', sign_in_html)\n    if not token_match:\n        raise RuntimeError(\"GitLab authenticity_token not found on sign-in page\")\n\n    login_response = await self.page.request.post(\n        sign_in_url,\n        form={\n            \"authenticity_token\": token_match.group(1),\n            \"user[login]\": username,\n            \"user[password]\": password,\n            \"user[remember_me]\": \"0\",\n        },\n        headers={\"Referer\": sign_in_url},\n    )\n    if not login_response.ok:\n        raise RuntimeError(f\"GitLab login failed with status {login_response.status}\")\n\n    query = urlencode({\n        \"assignee_username\": assignee_username,\n        \"state\": state,\n        \"search\": search,\n    })\n    issues_url = urljoin(origin + \"/\", f\"dashboard/issues?{query}\")\n    issues_response = await self.page.goto(issues_url, wait_until=\"domcontentloaded\")\n    if issues_response is None:\n        raise RuntimeError(\"Failed to load dashboard issues page\")\n    body = await self.page.content()\n\n    issues = []\n    for match in re.finditer(r'href=\"([^\"]+/-/issues/\\d+)\"', body):\n        issue_path = html_lib.unescape(match.group(1))\n        snippet_start = max(0, match.start() - 800)\n        snippet_end = min(len(body), match.end() + 1800)\n        snippet = body[snippet_start:snippet_end]\n        dt_match = re.search(r'datetime=\"([^\"]+)\"', snippet)\n        issues.append({\n            \"issue_path\": issue_path,\n            \"issue_url\": urljoin(origin + \"/\", issue_path.lstrip(\"/\")),\n            \"updated_at_iso\": dt_match.group(1) if dt_match else \"\",\n        })\n\n    return {\"issues\": issues}",
+      "owns": [
+        "Authenticating to the GitLab instance via the sign-in form using authenticity_token and session cookies",
+        "Requesting the dashboard issues page with GitLab query parameters assignee_username, state, and search",
+        "Parsing issue result entries from the returned HTML",
+        "Extracting each issue's relative URL from /-/issues/<number> links",
+        "Extracting page-exposed update timestamp values from datetime attributes near each issue result",
+        "Returning a query-scoped collection of matching issue candidates"
+      ],
+      "does_not_own": [
+        "Choosing which username, state, or search term to use for a task",
+        "Client-side keyword confirmation against nearby snippet text beyond the site's own search filter",
+        "Deduplicating repeated issue links emitted by page parsing",
+        "Sorting candidates client-side by updated timestamp",
+        "Selecting the latest issue from the returned collection",
+        "Opening an issue detail page",
+        "Determining whether an issue is closed from the issue page text",
+        "Cross-query merge/dedup or looping over multiple searches"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "base_url": {
+            "type": "string",
+            "description": "Base GitLab instance URL."
+          },
+          "username": {
+            "type": "string",
+            "description": "GitLab username used for login and optionally assignee filter."
+          },
+          "password": {
+            "type": "string",
+            "description": "GitLab password used for login."
+          },
+          "assignee_username": {
+            "type": "string",
+            "description": "Assignee username filter for dashboard issues."
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "opened",
+              "closed",
+              "all"
+            ],
+            "description": "GitLab issue state filter shown in the dashboard query string."
+          },
+          "search": {
+            "type": "string",
+            "description": "Free-text search query passed to the dashboard issues page."
+          }
+        },
+        "required": [
+          "base_url",
+          "username",
+          "password",
+          "assignee_username",
+          "state",
+          "search"
+        ]
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "issues": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "issue_path": {
+                  "type": "string",
+                  "description": "Relative GitLab issue path such as /group/project/-/issues/123."
+                },
+                "issue_url": {
+                  "type": "string",
+                  "description": "Absolute URL for the issue."
+                },
+                "updated_at_iso": {
+                  "type": "string",
+                  "description": "Timestamp string from the page's datetime attribute when present."
+                }
+              },
+              "required": [
+                "issue_path",
+                "issue_url",
+                "updated_at_iso"
+              ]
+            }
+          }
+        },
+        "required": [
+          "issues"
+        ]
+      },
+      "requires": [],
+      "provides": [
+        "gitlab_authenticated_session"
+      ],
+      "supported_patterns": [
+        "Authenticate through GitLab's sign-in form before opening dashboard issues.",
+        "Fetch a single dashboard issues result page using site-native assignee/state/search filters.",
+        "Return typed issue references and displayed update timestamps from the result page."
+      ],
+      "guarantees": {
+        "collection_scope": "query",
+        "completeness": "conditional",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "semantic_enum",
+          "supported_values": [
+            "opened",
+            "closed",
+            "all"
+          ],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "Returns an issues array, possibly empty, without raising an acquisition error after successful authentication and page fetch.",
+        "Each returned item has an issue_path matching GitLab issue URL shape and an absolute issue_url on the same base host.",
+        "If updated_at_iso is non-empty, it is copied from a datetime attribute present in the fetched dashboard HTML."
+      ],
+      "feature": "issues"
+    },
+    {
+      "primitive_id": "gitlab/profiles/get_user_follower_count_from_profile",
+      "method": "get_user_follower_count_from_profile",
+      "capability": "Read a GitLab user's follower count from their profile page",
+      "method_code": "async def get_user_follower_count_from_profile(self, profile_url: str) -> dict:\n    import re\n\n    if not isinstance(profile_url, str) or not profile_url.strip():\n        raise ValueError(\"profile_url must be a non-empty string\")\n\n    response = await self.page.goto(profile_url, wait_until=\"networkidle\")\n    document_status = response.status if response is not None else None\n\n    follower_link = self.page.locator('a[href$=\"/followers\"]').first\n    if await follower_link.count() == 0:\n        raise RuntimeError(f\"Followers link not found on profile page: {self.page.url}\")\n\n    follower_text = (await follower_link.inner_text()).strip()\n    match = re.search(r'(\\d+)\\s+followers?', follower_text, re.IGNORECASE)\n    if not match:\n        raise RuntimeError(f\"Could not parse follower count from text: {follower_text!r}\")\n\n    follower_count = int(match.group(1))\n    return {\n        \"profile_url\": self.page.url,\n        \"document_status\": document_status,\n        \"follower_count\": follower_count,\n        \"follower_text\": follower_text,\n    }\n",
+      "owns": [
+        "Navigate to a GitLab user profile page",
+        "Locate the followers link using the demonstrated selector `a[href$=\"/followers\"]`",
+        "Extract displayed follower text and parse an integer follower count from it"
+      ],
+      "does_not_own": [
+        "Determining which user profile to inspect",
+        "Validating that the profile belongs to a contributor selected elsewhere",
+        "Listing follower identities",
+        "Inferring missing counts when the followers link/text is absent"
+      ],
+      "input_contract": {
+        "profile_url": {
+          "type": "string",
+          "description": "URL of a GitLab user profile page"
+        }
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "profile_url": {
+            "type": "string",
+            "description": "Final loaded profile URL"
+          },
+          "document_status": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "HTTP status for the navigation response when available"
+          },
+          "follower_count": {
+            "type": "integer",
+            "description": "Follower count parsed from the displayed followers link text"
+          },
+          "follower_text": {
+            "type": "string",
+            "description": "Raw displayed followers link text, e.g. '12 followers'"
+          }
+        },
+        "required": [
+          "profile_url",
+          "document_status",
+          "follower_count",
+          "follower_text"
+        ]
+      },
+      "requires": [],
+      "provides": [
+        "gitlab_user_profile_loaded"
+      ],
+      "supported_patterns": [
+        "Direct navigation to a known GitLab user profile URL",
+        "Rendered UI extraction of the followers link text from a profile page"
+      ],
+      "guarantees": {
+        "collection_scope": "single",
+        "completeness": "complete",
+        "supports_absence_proof": true,
+        "configuration": {
+          "kind": "none",
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "On a valid profile page with a visible followers link, returns `follower_count` as a non-negative integer parsed from `follower_text`",
+        "`follower_text` comes from the first matched `a[href$=\"/followers\"]` element on the profile page",
+        "If the followers link is missing or its text cannot be parsed as a count, the operation fails rather than returning a fabricated zero"
+      ],
+      "feature": "profiles"
+    },
+    {
+      "primitive_id": "gitlab/projects/search_projects",
+      "method": "search_projects",
+      "capability": "Search GitLab projects by a text query and return typed project records from the site search results.",
+      "method_code": "async def search_projects(self, search_query: str) -> dict:\n    import json\n    from urllib.parse import urlsplit, urljoin, urlencode\n\n    if not isinstance(search_query, str) or not search_query.strip():\n        raise ValueError(\"search_query must be a non-empty string\")\n\n    current_url = self.page.url\n    if not current_url:\n        raise RuntimeError(\"self.page.url is empty; navigate to the GitLab deployment before calling search_projects\")\n    parts = urlsplit(current_url)\n    origin = f\"{parts.scheme}://{parts.netloc}\"\n    api_url = urljoin(origin + \"/\", \"api/v4/projects\") + \"?\" + urlencode({\"search\": search_query})\n\n    response = await self.page.request.get(api_url)\n    if response.status >= 400:\n        raise RuntimeError(f\"GitLab project search failed with status {response.status}\")\n\n    try:\n        payload = await response.json()\n    except Exception:\n        payload = json.loads(await response.text())\n\n    if not isinstance(payload, list):\n        raise RuntimeError(\"Expected GitLab projects search response to be a JSON array\")\n\n    projects = []\n    for item in payload:\n        if not isinstance(item, dict):\n            continue\n        project_id = item.get(\"id\")\n        path_with_namespace = item.get(\"path_with_namespace\")\n        web_url = item.get(\"web_url\")\n        if project_id is None or path_with_namespace is None or web_url is None:\n            continue\n        projects.append({\n            \"id\": int(project_id),\n            \"path_with_namespace\": str(path_with_namespace),\n            \"web_url\": str(web_url),\n        })\n\n    return {\"projects\": projects}",
+      "owns": [
+        "Issuing the GitLab projects search request to /api/v4/projects with a caller-provided search string",
+        "Parsing the JSON response into typed project records",
+        "Preserving stable project identity and canonical repository fields exposed by the API, including project id, path_with_namespace, and web_url"
+      ],
+      "does_not_own": [
+        "Choosing which returned project is the task target",
+        "Exact-match filtering for a specific path_with_namespace",
+        "Looping over multiple search terms",
+        "Cross-query merge or deduplication",
+        "Ranking or selecting a nearest/best project beyond the site response"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "search_query": {
+            "type": "string",
+            "description": "Free-text project search query for GitLab /api/v4/projects?search="
+          }
+        },
+        "required": [
+          "search_query"
+        ]
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "projects": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer"
+                },
+                "path_with_namespace": {
+                  "type": "string"
+                },
+                "web_url": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "path_with_namespace",
+                "web_url"
+              ]
+            },
+            "description": "Project records parsed from the GitLab project search response."
+          }
+        },
+        "required": [
+          "projects"
+        ]
+      },
+      "requires": [],
+      "provides": [
+        "gitlab.projects_search_results"
+      ],
+      "supported_patterns": [
+        "Single-query project discovery before downstream exact filtering by workflow",
+        "API-based acquisition of project identity fields"
+      ],
+      "guarantees": {
+        "collection_scope": "query",
+        "completeness": "partial",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "none",
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "Returns a JSON-parsed array, possibly empty, rather than raw text.",
+        "Each returned record includes integer id plus string path_with_namespace and web_url fields.",
+        "An empty array is treated as a valid no-match result for the given query, not an acquisition failure."
+      ],
+      "feature": "projects"
+    }
+  ]
+}

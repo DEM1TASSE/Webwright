@@ -29,7 +29,7 @@ deduplication. Return JSON with either:
  "guarantees":{"collection_scope":"single|page|query|scope|not_applicable",
  "completeness":"complete|partial|conditional|not_applicable",
  "supports_absence_proof":true|false,
- "configuration":{"kind":"none|internal|semantic_enum","supported_values":[],
+ "configuration":{"kind":"none|internal|semantic_enum","input_field":null|"field_name","supported_values":[],
  "coupled_site_parameters_hidden":true}},"acceptance_checks":["runtime postcondition",...],
  "source_evidence":{"workflow_id":"exact id","template_id":"exact id",
  "code_quote":"representative source excerpt or concise source description",
@@ -44,57 +44,70 @@ Site selectors, URL patterns, endpoint shapes, authentication, pagination, and s
 semantics belong in primitives. Task filtering, aggregation, ranking, subjective classification,
 and answer formatting stay in workflows. Local git/filesystem operations are not website
 primitives. A failed/blocked attempted mutation does not prove that mutation capability.
-Site-rendered unit, locale, and timezone conventions are site semantics, not answer formatting.
-Preserve the displayed raw value when useful, but also expose an unambiguous typed canonical field
-when the evidence supports parsing it: for example `duration_seconds` beside `duration_text`, or a
-storefront-local calendar date beside its displayed text. Keep API timestamps and storefront/UI
-display dates as distinct fields with explicit semantics; never collapse them into an ambiguous
-generic `date`, and never label an API UTC timestamp as a storefront display date.
+Treat deployment endpoints, browser state, and credentials as runtime context rather than task
+semantics. Resource-acquisition candidates consume that context through the component boundary and
+declare any required state; they do not turn runtime plumbing into task parameters. Authentication
+components return authenticated-state facts, never secret material for another public component.
+Site-rendered units, locale, timezone, and status conventions are site semantics, not answer
+formatting. Preserve a displayed representation when useful, but also expose an unambiguous typed
+canonical field whenever the demonstrated syntax supports parsing it. Keep values with different
+source semantics distinct rather than collapsing them into one ambiguous field.
 
-Candidate-set acquisition mechanics are also website operations when the workflow demonstrates
-them and they can be parameterized without embedding the task's category decision. Examples are
-issuing several caller-supplied queries, combining bounded and unbounded site searches, deduplicating
-site records by stable identity, and preserving objective coordinates returned by the site. Extract
-that reusable acquisition core separately from the workflow's choice of query terms, category
-filter, nearest/all decision, ranking, and answer formatting. A single query-scoped search must not
-claim that it exhaustively discovers the candidates required by a nearest/all/vicinity task.
-Client-side haversine/distance computation is generic workflow comparison, not a site primitive,
-unless the website itself returns that distance as part of the acquired record.
-Coverage requirement: when source code issues two or more place/list searches in a loop and merges
-or deduplicates their records before applying task-specific filters, emit a separate candidate for
-that multi-search acquisition pattern. Do not reduce it to only the one-query endpoint candidate,
-and do not push the demonstrated request-loop/dedup mechanics back into `does_not_own`.
+Candidate-set acquisition mechanics are website operations when the site itself exposes
+pagination, continuation, batch execution, or stable identity. Ordinary client-side repetition of
+the same atomic acquisition over caller-chosen inputs is workflow orchestration: extract the atomic
+operation once and leave input-family choice, repetition, cross-call merge/dedup, semantic filtering,
+ranking, and answer formatting to the workflow. A batch candidate is distinct only when evidence
+demonstrates a site-native transaction or stateful control that repeated atomic calls cannot
+represent. A bounded acquisition must not claim exhaustive discovery outside its declared scope.
+Generic client-side computation over acquired records is workflow logic unless the website itself
+returns that value as an objective field.
 
 Do not overfit a typed record to only the fields consumed by the current task. At the same
 demonstrated acquisition boundary, preserve stable objective identity, temporal, state, value,
 link, and pagination/completeness fields that the evidence actually exposes. This is not license
-to invent undocumented fields. In particular, do not collapse contributor identity to display
-name, issue records to title/href, commit timestamps to one ambiguous date field, or paginated
-search results to an apparently complete list when richer facts/completeness are demonstrated.
+to invent undocumented fields. Preserve distinct identity, temporal, state, value, link, and
+pagination semantics rather than collapsing richer evidence into a task-tailored projection.
+For candidate/search records, identity is more than a non-empty label or coordinates. When the
+same evidenced response exposes stable identity discriminators such as canonical name, entity
+kind/type/category or role, parent/scope, locality, or stable ID, preserve them as separately typed
+fields. Do not drop those fields merely because the source task happened to select by name; do not
+invent them when the source acquisition does not expose them.
 Reserve the input name `page` for the component's browser object (`self.page`). Describe numeric
 pagination inputs as `page_number` in candidate input contracts.
-Do not expose a serialized geographic viewbox string. Represent bounds as a typed object with
-minlon, minlat, maxlon, and maxlat numeric fields; validate minlon < maxlon and minlat < maxlat,
-then serialize in the site-required order inside the primitive. This ordering is site request
-construction, not workflow logic.
+An output is typed only when its schema gives each value a stable semantic role. Positional cells,
+unscoped rendered text, or another opaque UI fragment cannot substitute for a record schema.
+Text that is itself a domain fact remains valid when represented as a semantically named field.
+When two evidence-supported field names express the same role, annotate their JSON-schema property
+with `"semantic_role":"safe_snake_case"`; never rely on site-specific alias tables.
+Do not expose an opaque serialized site parameter when its demonstrated semantic structure can be
+represented and validated as typed input. Serialization order and low-level coupling remain inside
+the primitive.
+Preserve exact successful source selectors as evidence. Do not replace a demonstrated field name
+with a guessed accessibility role or generic selector during later code generation unless another
+gold workflow directly demonstrates that alternative.
 
 A website package owns mechanisms of that website deployment. When the source tries both the
-site-local endpoint/UI and unrelated public fallback providers, extract the site-local mechanism;
-do not turn public Photon, public Nominatim, maps.co, or another third-party workaround into a
-provider switch in this site's primitive. Preserve the failed/fallback attempt as provenance, not
-as a supported site capability. If several source paths hit the same site acquisition and differ
+site-local endpoint/UI and unrelated external fallback providers, extract the site-local mechanism;
+do not turn a workaround provider into a supported configuration of this site's primitive.
+Preserve the failed/fallback attempt as provenance, not as a supported site capability. If several
+source paths hit the same site acquisition and differ
 only in requested fields, pagination, or projection, expose the richest evidence-supported typed
 site-local boundary rather than separate lossy variants.
 
 Guarantees describe only what the demonstrated acquisition can establish. Ranked or page-scoped
-collections do not support absence proof. If site deployment parameters are coupled (for example
-transport mode to endpoint/port/profile), expose one semantic enum and resolve the coupling inside
-the primitive; never expose independently combinable low-level controls. Acceptance checks state
+collections do not support absence proof. If site parameters are coupled, expose one semantic
+choice and resolve the low-level mapping inside the primitive; never expose invalid independently
+combinable controls. Acceptance checks state
 observable postconditions that distinguish valid empty output from acquisition failure.
 Hard invariant: `supports_absence_proof` may be true only when `completeness` is exactly
 `complete`. For page-, query-, bounded-, partial-, or conditional acquisition it must be false,
 even when the source workflow happened to find no matching record. Absence in one acquired slice
 is not proof of site-wide absence.
+`supports_absence_proof` describes an empty collection within a declared complete acquisition
+scope. It is not a synonym for successfully parsing one scalar or record. Finite semantic
+configuration choices must be represented as an explicit enum whose low-level mapping remains
+internal to the primitive.
 
 Do not compare against a library, merge candidates, generate code, or discard a real capability
 merely because an API/embedded JSON source would be more stable. Source evidence is attribution,
@@ -121,7 +134,7 @@ ADD and UPDATE must contain a complete `replacement`:
  "guarantees":{"collection_scope":"single|page|query|scope|not_applicable",
  "completeness":"complete|partial|conditional|not_applicable",
  "supports_absence_proof":true|false,
- "configuration":{"kind":"none|internal|semantic_enum","supported_values":[],
+ "configuration":{"kind":"none|internal|semantic_enum","input_field":null|"field_name","supported_values":[],
  "coupled_site_parameters_hidden":true}},"acceptance_checks":["runtime postcondition",...],
  "source_evidence":[{"workflow_id":"exact id","template_id":"exact id",
  "code_quote":"representative source excerpt or concise source description",
@@ -154,28 +167,48 @@ as `is_authenticated`, the post-login URL, or whether a required token was obser
 not expose the token value. When an extracted candidate exposes such a value while an existing
 primitive already covers the safe authentication operation, treat that internal field as a
 boundary defect rather than widening the public contract merely to preserve it.
-Parameterized candidate-set acquisition may own repeated site requests, bounded/unbounded search,
-and stable-ID deduplication when source workflows demonstrate those mechanics. It must leave
-query/category terms, client-computed distance, semantic inclusion, ranking, and final selection
-to the workflow. Keep this distinct from a one-query primitive: the latter is query-scoped and
-cannot promise candidate-set completeness for open-ended nearest/all/vicinity requests.
+Ordinary repetition of one site acquisition over several caller-supplied queries is workflow
+orchestration, not another public primitive: the workflow calls the single-query primitive in a
+loop and owns query generation/order. Only retain a batch/multi-query primitive when the site
+itself exposes a distinct batch transaction or stateful control that cannot be represented as
+repeated calls to the atomic primitive. Never expose parallel one-shot and Python-loop variants.
 Do not REJECT such an extracted candidate merely because its one source workflow used concrete
-task terms (for example USPS) or because only one workflow demonstrates it. When those terms have
+task terms or because only one workflow demonstrates it. When those terms have
 been lifted into caller inputs and task filtering/selection remains outside, preserve the evidenced
 acquisition mechanism as ADD or a genuinely backward-compatible UPDATE.
 Methods are generated for a feature component class whose __init__ stores `self.page`. Therefore
-every generated method starts with `self`, uses `self.page` for browser access, and MUST NOT expose
+the canonical package runtime is async Playwright: every public method is `async def`, starts with
+`self`, awaits browser/page/request calls, uses `self.page` for browser access, and MUST NOT expose
 a separate browser `page` parameter. The name `page` is reserved for that browser object: API/UI
 pagination inputs must be named `page_number` (and represented that way in input_contract), never
-`page`. Formatting seconds as an answer string is workflow logic; a site primitive that exposes
-a displayed duration MUST also parse it into typed `duration_seconds` when the demonstrated syntax
-is parseable. Preserve `duration_text` alongside it when useful. Site locale/timezone parsing
-follows the same rule: keep API timestamps and storefront/UI display dates distinct, name their
-semantics explicitly, and do not make each workflow rediscover whether an H:MM value means
-hours/minutes or minutes/seconds.
-Geographic bounds/viewbox inputs must be typed objects with numeric minlon, minlat, maxlon, and
-maxlat fields. The method validates increasing longitude/latitude bounds and serializes the opaque
-site parameter internally; never expose the raw comma-separated viewbox string as a public input.
+`page`. Formatting a typed fact as a final answer is workflow logic; parsing a site-rendered value
+into an unambiguous typed representation is primitive logic whenever the demonstrated syntax is
+parseable. Preserve the displayed representation alongside it when useful, and keep values with
+different source semantics explicitly distinct.
+Generated code MUST be deployment-portable. Never preserve a literal `http://host:port` or
+`https://host:port` from a source workflow. Use the runtime page origin or a semantic `base_url`
+input, and keep relative UI paths relative. A site-internal backend endpoint may be discovered from
+the current deployment's own assets/configuration or reached through the UI; do not hard-code the
+source deployment's frontend, backend, API, or port into reusable method code.
+Do not "parameterize" a separately hosted backend by merely replacing its origin with the current
+frontend origin while preserving its path. A backend path is coupled to the backend component;
+there must be source evidence that the same path exists on the frontend origin, or generated code
+must discover the current backend endpoint from this deployment's own assets/configuration. When
+that evidence is absent, use the evidenced portable UI acquisition instead.
+For Python Playwright navigation, a leading-slash string is not a valid portable target. Derive
+`origin = f"{urlsplit(self.page.url).scheme}://{urlsplit(self.page.url).netloc}"`, then call
+`urljoin(origin + "/", relative_path.lstrip("/"))` before `page.goto` or `page.request.*`.
+This runtime-origin recipe is portable; neither `goto("/path")` nor a literal source host is.
+When source evidence contains an exact successful selector or field name, preserve it as the
+primary acquisition path. Do not replace it with a guessed role/label selector unless another
+source workflow directly demonstrates that selector. Typed numeric parsing must preserve decimal
+values and units (for example `8.4km`) and include a parser-level example that round-trips to the
+declared normalized value; a regex that stops at a decimal point is invalid.
+Do not click a page-global generic `Close` control after opening a target panel/form. Such a click
+may dismiss the very acquisition UI the primitive needs. Modal cleanup is allowed only when source
+evidence or behavior diagnostics identify a selector scoped to a known obstructing modal.
+Semantically structured site inputs must use typed objects with explicit validation; serialize
+opaque site request parameters internally rather than exposing their encoding as public input.
 Do not create `count_*` primitives that compute len/count over acquired records. Return typed
 records and let the workflow aggregate them. A total explicitly supplied by the website may be
 returned as an objective field alongside records.
@@ -184,21 +217,35 @@ the acquisition boundary, not minimal projections tailored to the source task. P
 identity fields, distinct site timestamps, stable hrefs/ids/state, and explicit pagination or
 enumeration-completeness metadata when supported by evidence. Never claim a collection is complete
 merely because the current source task stopped after one page.
+For candidate/search records, preserve every evidenced discriminator needed to distinguish
+semantically adjacent records: canonical name, entity kind/type/category or role, parent/scope,
+locality, and stable ID. A label plus coordinates or URL does not subsume a richer evidenced typed
+identity record. The workflow still owns the current task's semantic match decision.
 Hard invariant: set `supports_absence_proof` to true only when `completeness` is exactly
 `complete`; otherwise set it to false. A valid empty page, query, bounded scan, or conditional
 collection is not an absence proof outside that explicitly complete acquisition scope.
+When input/output names differ across source workflows but represent the same evidence-supported
+concept, use a JSON-schema property annotation `semantic_role` with a safe snake_case value. Do not
+invent equivalence from lexical similarity.
 Every replacement must state machine-readable guarantees and observable acceptance checks. A
-configuration contract may be `semantic_enum` only when code accepts the semantic parameter,
-internally maps every supported value to coupled deployment controls, and checks the response.
+configuration contract may be `semantic_enum` only when `input_field` names an input property with
+the same explicit enum, code accepts that semantic parameter, internally maps every supported value
+to coupled deployment controls, and checks the response. Other configuration kinds set
+`input_field` to null.
 Never expose coupled endpoint/port/profile controls as independently combinable public inputs.
 Do not infer a configuration contradiction merely because a low-level path/profile label remains
 constant while another coupled deployment control (such as endpoint or port) changes. When
 successful source workflows demonstrate the semantic modes, hide the complete evidenced mapping
 behind one semantic enum rather than exposing or interpreting its low-level pieces independently.
-Do not expose unrelated public fallback services as a semantic provider enum for a site package.
+Do not expose unrelated external fallback services as a semantic provider enum for a site package.
 Prefer the evidenced site-local endpoint or UI. A declared output field is valid only when the
-generated request and parser actually acquire it: for example, a geocoder cannot promise postcode
-or structured address fields unless it requests address details and parses the returned address.
+generated request and parser actually acquire it.
+
+Read operations return typed facts. Effectful operations return a typed receipt containing only
+evidence-supported identifiers/state plus observable postconditions that distinguish success,
+no-op, and failure. The workflow decides whether and when to perform the effect; the primitive owns
+only the site's action mechanics. Never promote a failed or blocked source attempt into an
+effectful capability.
 
 Every workflow in the batch must occur exactly once in workflow_attribution:
 {"workflow_id":"...","decision":"CONTRIBUTED","operation_indices":[0]} or
@@ -248,7 +295,10 @@ MERGE: {"op":"MERGE","sources":["id1","id2",...],"feature":"snake_case",
 SPLIT: {"op":"SPLIT","source":"id","feature_assignments":[],
  "replacements":[<two or more complete primitive objects, each id <site>/<feature>/<method>>],
  "reason":"..."}. Each replacement carries complete generated method code, boundary contracts,
-and source attribution with a concise explanation of any generalization.
+and source attribution with a concise explanation of any generalization. `feature_assignments`
+must contain one safe feature name per replacement in the same order. A replacement may omit its
+redundant `feature` field; the deterministic manager copies the aligned assignment into it. If a
+replacement includes `feature`, it must exactly match the aligned assignment.
 
 Feature classes are composition components such as auth, reviews, commits, orders, or routes;
 they are not inheritance subclasses. Choose cohesive site features. Preserve the primitive/workflow
@@ -257,14 +307,33 @@ ranking, subjective decisions, and answer formatting remain in workflows. Do not
 MERGE/SPLIT replacements preserve or strengthen explicit guarantees and acceptance checks. Do not
 turn conflicting configuration evidence into freely combinable public parameters; use a semantic
 enum with an internal mapping, or keep the capability narrower.
+Never split a complete paginated acquisition into a public authentication-token primitive plus a
+single-page consumer. Authentication tokens/cookies/keys remain private implementation details;
+the public acquisition must keep authentication and site pagination internal and preserve the
+source's complete/absence-proof mode. A SPLIT replacement must not introduce a new caller input
+that was not already public on the source primitive.
 MERGE overlapping acquisition primitives that address the same site resource even when their
 input names, provider wrappers, or output projections differ. The replacement should keep one
 site-local mechanism and the lossless union of evidence-supported objective fields. Do not KEEP
-multiple geocoders/searchers merely because one is a lossy projection or exposes an external
+parallel acquisitions merely because one is a lossy projection or exposes an external
 fallback provider. A site package must not depend on unrelated public services when an evidenced
 site-local mechanism exists. Verify that every promised output field is enabled by the request
 and populated by the parser; otherwise repair it in the MERGE replacement or omit the unsupported
 field.
+All consolidation replacements remain deployment-portable: no literal source-workflow origin or
+backend host/port may survive in method code. Preserve a relative site path, derive the current
+origin from the runtime page, or expose one semantic base URL input as appropriate.
+Never relocate a separate backend path onto the frontend origin without evidence that the frontend
+serves that path; retain a portable UI method or discover the endpoint from deployment assets.
+All replacement public methods use the package's canonical async Playwright runtime: emit
+`async def` and await every browser/page/request coroutine.
+Consolidation must collapse an atomic primitive and any client-side loop wrapper into the atomic
+primitive; workflows can call it repeatedly. Preserve exact successful source selectors as primary
+paths, and preserve evidenced numeric precision and units in typed outputs.
+When `behavior_smoke_feedback` is present, treat every failed probe as a release-blocking contract
+counterexample. Regenerate the affected replacement from source evidence; do not explain away,
+delete, or hard-code the probe. Preserve passing acquisitions while correcting the general parser,
+selector, portability, or async-runtime defect demonstrated by the failure.
 Do not emit package/class code; the deterministic Class Manager renders it."""
 
 _QUALITY_SYS = r"""Act as an independent quality-and-coverage gate. Return JSON
@@ -280,21 +349,33 @@ contract agree. Parsing UI/DOM/page text internally into typed site records is v
 be rejected merely because an API is unavailable. Parameterized site-native search/date/page
 controls are valid; an arbitrary filter copied from the task question is not. FAIL unsupported,
 invented, contradictory, overly task-specific, raw-output, or cosmetic abstractions.
-PASS a source-evidenced candidate-acquisition primitive that accepts caller-supplied query terms,
-performs repeated/bounded site searches, deduplicates stable records, and returns site facts;
-those are acquisition mechanics, not task filtering. FAIL it if it hard-codes the source task's
-category, adds generic client-side distance/ranking logic, or claims exhaustive nearest/all coverage
-without an evidenced completeness mechanism.
-FAIL a primitive that exposes a geographic viewbox/bounds as an opaque serialized string or does
-not validate coordinate ordering before constructing the site request.
+The generated package runtime is async Playwright. FAIL a synchronous public method that calls
+async page/request APIs, or any browser operation whose coroutine is used without `await`.
+PASS a source-evidenced atomic candidate acquisition that accepts caller-supplied semantic inputs
+and returns typed site facts. FAIL a second public primitive that merely loops over that atomic
+operation in client code; the workflow owns repetition and input-family choice. A batch primitive
+is distinct only when the website exposes a source-evidenced transaction or stateful control that
+repeated atomic calls cannot represent. Also FAIL task-category hard-coding, generic client-side
+filtering/ranking/aggregation, or exhaustive claims without an evidenced completeness mechanism.
+FAIL generated acquisition code that replaces a source-evidenced exact successful selector with
+an unsupported guessed role, label, or generic whole-page selector. FAIL typed numeric parsing
+that truncates decimal values or drops evidenced units.
+FAIL a primitive that exposes an opaque serialized site parameter when the demonstrated semantic
+structure can be typed and validated before request construction.
 Website-specific authentication mechanics are valid primitives when evidence demonstrates the
 site's login URL/form selectors, submit behavior, and authenticated-state detection. Do not reject
 such a candidate as generic browser setup merely because credentials are parameters.
+Effectful operations are valid only when successful source evidence demonstrates the site action
+and the output contract exposes observable postconditions distinguishing success, no-op, and
+failure. The workflow retains policy over whether and when to invoke the action.
 
 FAIL a lossy task-tailored projection when the cited evidence demonstrates additional stable
 objective record fields needed to interpret identity, time, state, links, or collection
 completeness. FAIL an output that looks like a complete collection but neither traverses nor
 reports pagination/completeness. Do not demand fields absent from the supplied evidence.
+For candidate/search records, treat evidenced kind/type/category, role, parent/scope, locality,
+canonical name, and stable ID as identity-bearing fields: FAIL a projection that keeps only a
+label/coordinate/URL while discarding those available discriminators.
 FAIL missing, unsupported, or internally inconsistent guarantees/acceptance checks. FAIL when
 coupled site configuration is exposed as independent public controls, when `semantic_enum` lacks
 an internal mapping for every supported value, or when valid empty output cannot be distinguished
@@ -308,6 +389,10 @@ data is not requested or parsed by the method code. When several operations in t
 lossy/overlapping views of one site acquisition, FAIL the lossy duplication so the updater emits
 one richer operation; global duplicates from independent parallel batches are resolved by the
 serial consolidation stage.
+FAIL pseudo-portability that takes a path evidenced only on a separately hosted backend and joins
+it to the current frontend origin. Passing this gate requires evidence for that same-origin path,
+runtime discovery of the current backend from site assets/configuration, or use of the evidenced
+portable UI acquisition. Changing only the hostname is not endpoint generalization.
 
 A REJECT passes only when removing task logic leaves no reusable website acquisition/parsing core.
 If a count candidate demonstrates listing record IDs, it must be narrowed to a list-records
@@ -606,6 +691,8 @@ def _parse_methods(code: str, public_name: str) -> tuple[list[ast.stmt], list[st
                 "an argument named page; rename a pagination input to page_number in both code "
                 "and input_contract"
             )
+        if fn.name == public_name and not isinstance(fn, ast.AsyncFunctionDef):
+            errors.append(f"public method {fn.name} must be async def for async Playwright")
     if len(funcs) != len(body):
         errors.append("method_code may contain only method definitions")
     return funcs, errors
@@ -657,32 +744,9 @@ def _contract_is_backward_compatible(old: dict, new: dict, *, input_contract: bo
 
 def _semantic_output_fields(value) -> set[str]:
     """Collect normalized objective field names from JSON-schema and compact field schemas."""
-    aliases = {
-        "places": "results", "candidates": "results", "products": "results",
-        "lat": "latitude", "lon": "longitude",
-        "type": "place_type", "class": "category",
-        "issue_url": "web_url",
-        "detail_url": "order_detail_url",
-        "display_date": "order_date", "order_date_text": "order_date",
-        "display_order_date": "order_date", "order_date_display": "order_date",
-        "display_order_total": "order_total", "order_total_display": "order_total",
-        "total_text": "order_total",
-        "status_text": "status", "status_display": "status", "display_status": "status",
-        "grand_total_text": "grand_total", "grand_total_display": "grand_total",
-        "review_title": "title", "review_content": "description",
-        "summary": "title", "review_text": "detail",
-        "review_id": "id",
-        "product_name": "product", "product_url": "url",
-        # Magento GraphQL exposes this as
-        # price_range.minimum_price.final_price.value.  Some extractors flatten the path.
-        "minimum_final_price_value": "value",
-        "authenticated": "is_authenticated",
-        "dashboard_url": "final_url",
-        "session_authenticated": "is_authenticated",
-        "landing_url": "final_url", "post_login_url": "final_url",
-        "account_home_url": "final_url",
-        "records": "results", "orders": "results",
-    }
+    def semantic_name(name, schema):
+        role = schema.get("semantic_role") if isinstance(schema, dict) else None
+        return role if isinstance(role, str) and _SAFE.fullmatch(role) else name
     # These are private authentication mechanics, not reusable semantic outputs.  They may be
     # acquired and consumed inside a primitive, but must not force a public contract to expose
     # credentials/tokens merely because a source workflow kept them in a local variable.
@@ -691,7 +755,8 @@ def _semantic_output_fields(value) -> set[str]:
         "session_cookie", "session_cookies", "access_token", "bearer_token",
     }
     ignored = {"type", "items", "properties", "fields", "required", "description", "enum",
-               "default", "anyOf", "oneOf", "allOf", "format"}
+               "default", "anyOf", "oneOf", "allOf", "format", "nullable",
+               "semantic_role"}
     fields = set()
     if isinstance(value, dict):
         for container in ("properties", "fields"):
@@ -707,7 +772,7 @@ def _semantic_output_fields(value) -> set[str]:
                         or any(key in child for key in ("properties", "fields", "items"))
                     )
                     if not structured:
-                        fields.add(aliases.get(name, name))
+                        fields.add(semantic_name(name, child))
                     fields.update(_semantic_output_fields(child))
         for name, child in value.items():
             if name not in ignored and name not in {"properties", "fields"}:
@@ -718,22 +783,89 @@ def _semantic_output_fields(value) -> set[str]:
                     or any(key in child for key in ("properties", "fields", "items"))
                 )
                 if not structured:
-                    fields.add(aliases.get(name, name))
+                    fields.add(semantic_name(name, child))
                 fields.update(_semantic_output_fields(child))
             elif name in {"items", "anyOf", "oneOf", "allOf"}:
                 fields.update(_semantic_output_fields(child))
     elif isinstance(value, list):
         for child in value:
             fields.update(_semantic_output_fields(child))
-    ignored_fields = {
-        "profile", "origin_latitude", "origin_longitude", "destination_latitude",
-        "destination_longitude", "nullable", "page_text_excerpt", "page_title",
-        "detected_markers",
-    }
     return {
         name for name in fields
-        if name not in ignored_fields and not name.startswith("raw_") and not name.endswith("_path")
+        if not name.startswith("raw_") and not name.endswith("_path")
     }
+
+
+def _required_semantic_output_fields(value) -> set[str]:
+    """Collect only contractually required facts, retaining legacy compact schemas.
+
+    JSON-schema properties not named in ``required`` are optional observations.  A COVERED
+    attribution may omit those observations without violating the extracted contract.  Older
+    compact schemas have no ``required`` vocabulary, so all of their declared fields remain
+    required for backward-compatible coverage.
+    """
+    def project(node):
+        if isinstance(node, list):
+            return [project(child) for child in node]
+        if not isinstance(node, dict):
+            return node
+        result = {}
+        for key, child in node.items():
+            if key in {"properties", "fields"} and isinstance(child, dict):
+                declared = node.get("required")
+                names = set(declared) if isinstance(declared, list) else set(child)
+                result[key] = {
+                    name: project(schema) for name, schema in child.items() if name in names
+                }
+            elif key != "required":
+                result[key] = project(child)
+        return result
+
+    return _semantic_output_fields(project(value))
+
+
+def _contract_leaf_fields(value) -> set[str]:
+    """Collect public leaf field names without applying output-only ignore rules."""
+    def semantic_name(name, schema):
+        role = schema.get("semantic_role") if isinstance(schema, dict) else None
+        return role if isinstance(role, str) and _SAFE.fullmatch(role) else name
+
+    schema_keys = {
+        "type", "items", "properties", "fields", "required", "description", "enum",
+        "default", "anyOf", "oneOf", "allOf", "format", "nullable", "minItems",
+        "maxItems", "minimum", "maximum", "minLength", "maxLength", "pattern",
+        "semantic_role",
+    }
+    fields = set()
+    if isinstance(value, dict):
+        for container in ("properties", "fields"):
+            children = value.get(container)
+            if isinstance(children, dict):
+                for name, child in children.items():
+                    structured = isinstance(child, (dict, list)) and (
+                        isinstance(child, list)
+                        or any(key in child for key in ("properties", "fields", "items",
+                                                        "anyOf", "oneOf", "allOf"))
+                    )
+                    if not structured:
+                        fields.add(semantic_name(name, child))
+                    fields.update(_contract_leaf_fields(child))
+        for name, child in value.items():
+            if name not in schema_keys and name not in {"properties", "fields"}:
+                structured = isinstance(child, (dict, list)) and (
+                    isinstance(child, list)
+                    or any(key in child for key in ("properties", "fields", "items",
+                                                    "anyOf", "oneOf", "allOf"))
+                )
+                if not structured:
+                    fields.add(semantic_name(name, child))
+                fields.update(_contract_leaf_fields(child))
+            elif name in {"items", "anyOf", "oneOf", "allOf"}:
+                fields.update(_contract_leaf_fields(child))
+    elif isinstance(value, list):
+        for child in value:
+            fields.update(_contract_leaf_fields(child))
+    return fields
 
 
 def _validate_guarantees(value: dict) -> list[str]:
@@ -760,10 +892,13 @@ def _validate_guarantees(value: dict) -> list[str]:
     if not isinstance(configuration, dict):
         errors.append("guarantees.configuration must be an object")
     else:
-        config_required = {"kind", "supported_values", "coupled_site_parameters_hidden"}
+        config_required = {
+            "kind", "input_field", "supported_values", "coupled_site_parameters_hidden",
+        }
         if set(configuration) != config_required:
             errors.append(f"guarantees.configuration keys must be exactly {sorted(config_required)}")
         kind = configuration.get("kind")
+        input_field = configuration.get("input_field")
         values = configuration.get("supported_values")
         if kind not in {"none", "internal", "semantic_enum"}:
             errors.append("guarantees.configuration.kind is invalid")
@@ -771,21 +906,28 @@ def _validate_guarantees(value: dict) -> list[str]:
             errors.append("guarantees.configuration.supported_values must be strings")
         elif kind == "semantic_enum" and not values:
             errors.append("semantic_enum configuration requires supported_values")
+        properties = (value.get("input_contract") or {}).get("properties") or {}
+        if kind == "semantic_enum":
+            if not isinstance(input_field, str) or input_field not in properties:
+                errors.append(
+                    "semantic_enum configuration requires input_field naming an input property"
+                )
+            else:
+                field_values = properties[input_field].get("enum") if isinstance(
+                    properties[input_field], dict
+                ) else None
+                if not isinstance(field_values, list) or not field_values:
+                    errors.append("semantic_enum input_field requires an explicit enum")
+                elif set(values or []) != {str(item) for item in field_values}:
+                    errors.append(
+                        "guarantees supported_values must match the configured input enum"
+                    )
+        elif input_field is not None:
+            errors.append("non-semantic configuration must set input_field to null")
+        if kind in {"none", "internal"} and values:
+            errors.append("non-semantic configuration must not declare supported_values")
         if configuration.get("coupled_site_parameters_hidden") is not True:
             errors.append("coupled site parameters must be hidden")
-        properties = (value.get("input_contract") or {}).get("properties") or {}
-        config_names = {"provider", "backend", "profile", "transport_mode", "mode", "engine",
-                        "service"}
-        config_values = {
-            str(item)
-            for name, spec in properties.items()
-            if name in config_names and isinstance(spec, dict)
-            for item in (spec.get("enum") or [])
-        }
-        if config_values and kind != "semantic_enum":
-            errors.append("public configuration enum requires semantic_enum guarantees")
-        if config_values and set(values or []) != config_values:
-            errors.append("guarantees supported_values must match public configuration enum")
     checks = value.get("acceptance_checks")
     if not isinstance(checks, list) or not checks or any(
         not isinstance(item, str) or not item.strip() for item in checks
@@ -811,27 +953,6 @@ def validate_primitive(value: dict, *, site: str, workflows: dict[str, dict], cl
             errors.append(f"{key} must be non-empty")
     errors.extend(_validate_guarantees(value))
 
-    def viewbox_specs(schema):
-        if not isinstance(schema, dict):
-            return
-        properties = schema.get("properties")
-        if isinstance(properties, dict):
-            for field_name, field_schema in properties.items():
-                if field_name == "viewbox":
-                    yield field_schema
-                yield from viewbox_specs(field_schema)
-        yield from viewbox_specs(schema.get("items"))
-
-    for spec in viewbox_specs(value.get("input_contract")):
-        required_bounds = {"minlon", "minlat", "maxlon", "maxlat"}
-        if not isinstance(spec, dict) or spec.get("type") != "object":
-            errors.append("viewbox input must be a typed bounds object, not a serialized string")
-            continue
-        properties = spec.get("properties") or {}
-        if not required_bounds.issubset(properties) or not required_bounds.issubset(
-            set(spec.get("required") or [])
-        ):
-            errors.append("viewbox object must require minlon, minlat, maxlon, and maxlat")
     _, code_errors = _parse_methods(str(value.get("method_code") or ""), str(name or ""))
     errors.extend(code_errors)
     output = _norm(_schema_shape(value.get("output_contract"))).lower()
@@ -839,6 +960,21 @@ def validate_primitive(value: dict, *, site: str, workflows: dict[str, dict], cl
                                        "raw html", "untyped text", "page text")):
         errors.append("output_contract exposes raw/untyped site output")
     output_fields = _semantic_output_fields(value.get("output_contract") or {})
+    public_output_fields = {
+        field.lower() for field in _contract_leaf_fields(value.get("output_contract") or {})
+    }
+    private_output_fields = {
+        field for field in public_output_fields
+        if (
+            field in {"token", "password", "secret", "cookie", "cookies", "form_key"}
+            or field.endswith(("_token", "_password", "_secret", "_cookie", "_cookies"))
+        ) and not field.endswith(("_present", "_observed"))
+    }
+    if private_output_fields:
+        errors.append(
+            "output_contract exposes private authentication material: "
+            + ", ".join(sorted(private_output_fields))
+        )
     if "duration_text" in output_fields and "duration_seconds" not in output_fields:
         errors.append("duration_text requires typed duration_seconds in the output contract")
     boundary = _norm({"method": name, "capability": value.get("capability"),
@@ -848,6 +984,26 @@ def validate_primitive(value: dict, *, site: str, workflows: dict[str, dict], cl
     ):
         errors.append("primitive owns workflow-level formatting rather than site-specific parsing")
     method_code = str(value.get("method_code") or "")
+    if re.search(r"https?://[A-Za-z0-9]", method_code):
+        errors.append("method_code hard-codes a deployment origin; derive it from runtime context")
+    if re.search(r"self\.page\.(?:goto|request\.(?:get|post|put|delete))\(\s*f?['\"]/", method_code):
+        errors.append(
+            "Playwright navigation/request uses a relative absolute-path string; resolve it "
+            "against the current page origin before calling the Python API"
+        )
+    if ".raise_for_status(" in method_code:
+        errors.append(
+            "Playwright APIResponse has no raise_for_status(); check response.ok/status and "
+            "raise an explicit acquisition error"
+        )
+    if re.search(
+        r"(?:self\.)?page\.get_by_role\(\s*['\"]button['\"]\s*,\s*name\s*=\s*['\"]Close['\"]",
+        method_code,
+    ):
+        errors.append(
+            "method_code uses a page-global generic Close control; scope modal cleanup to a "
+            "source-evidenced obstructing container or omit it"
+        )
     site_reported_count = (
         str(name or "").startswith("count_")
         and any(phrase in boundary for phrase in (
@@ -1046,7 +1202,7 @@ def validate_build_proposal(
                 target = target or pool.get(target_id)
                 if candidate is not None and target is not None:
                     missing = sorted(
-                        _semantic_output_fields(candidate.get("output_contract"))
+                        _required_semantic_output_fields(candidate.get("output_contract"))
                         - _semantic_output_fields(target.get("output_contract"))
                     )
                     if missing:
@@ -1107,6 +1263,25 @@ def validate_consolidation(raw: dict, *, site: str, pool: dict[str, dict], workf
             if source not in pool or len(op.get("replacements") or []) < 2:
                 errors.append(f"operations[{i}] SPLIT source/replacements invalid")
             replacements = deepcopy(op.get("replacements") or [])
+            assignments = op.get("feature_assignments")
+            if assignments is not None:
+                if not isinstance(assignments, list) or len(assignments) != len(replacements):
+                    errors.append(
+                        f"operations[{i}] SPLIT feature_assignments must align one-to-one "
+                        "with replacements"
+                    )
+                else:
+                    for j, (replacement, assignment) in enumerate(
+                        zip(replacements, assignments)
+                    ):
+                        explicit = replacement.get("feature")
+                        if explicit in {None, ""}:
+                            replacement["feature"] = assignment
+                        elif explicit != assignment:
+                            errors.append(
+                                f"operations[{i}].replacements[{j}] feature {explicit!r} "
+                                f"conflicts with feature_assignments value {assignment!r}"
+                            )
         else:
             errors.append(f"operations[{i}] unknown op {kind!r}")
             continue
@@ -1116,6 +1291,100 @@ def validate_consolidation(raw: dict, *, site: str, pool: dict[str, dict], workf
             )
             errors.extend(f"operations[{i}].replacements[{j}]: {x}" for x in item_errors)
             final.append(replacement)
+        if kind == "MERGE" and sources and all(source in pool for source in sources):
+            source_inputs = set().union(*(
+                _contract_leaf_fields(pool[source].get("input_contract") or {})
+                for source in sources
+            ))
+            replacement_inputs = _contract_leaf_fields(
+                replacement.get("input_contract") or {}
+            )
+            missing_inputs = sorted(source_inputs - replacement_inputs)
+            if missing_inputs:
+                errors.append(
+                    f"operations[{i}] MERGE drops source input modes {missing_inputs}; "
+                    "preserve them in one semantic contract or keep capabilities separate"
+                )
+            source_outputs = set().union(*(
+                _semantic_output_fields(pool[source].get("output_contract") or {})
+                for source in sources
+            ))
+            replacement_outputs = _semantic_output_fields(
+                replacement.get("output_contract") or {}
+            )
+            missing_outputs = sorted(source_outputs - replacement_outputs)
+            if missing_outputs:
+                errors.append(
+                    f"operations[{i}] MERGE drops source output facts {missing_outputs}; "
+                    "preserve the lossless typed union"
+                )
+        elif kind == "SPLIT" and source in pool and replacements:
+            source_input_fields = _contract_leaf_fields(pool[source].get("input_contract") or {})
+            introduced_inputs = set().union(*(
+                _contract_leaf_fields(item.get("input_contract") or {})
+                for item in replacements
+            )) - source_input_fields
+            introduced_private_inputs = sorted(
+                field for field in introduced_inputs
+                if field.lower() in {
+                    "token", "bearer_token", "access_token", "csrf_token", "xsrf_token",
+                    "form_key", "cookie", "cookies", "session_cookie", "session_cookies",
+                    "password", "secret",
+                } or field.lower().endswith(("_token", "_cookie", "_cookies", "_secret"))
+            )
+            if introduced_private_inputs:
+                errors.append(
+                    f"operations[{i}] SPLIT introduces private intermediate public inputs "
+                    f"{introduced_private_inputs}; "
+                    "keep intermediate authentication/configuration inside a standalone primitive"
+                )
+            replacement_inputs = set().union(*(
+                _contract_leaf_fields(item.get("input_contract") or {})
+                for item in replacements
+            ))
+            missing_inputs = sorted(
+                _contract_leaf_fields(pool[source].get("input_contract") or {})
+                - replacement_inputs
+            )
+            if missing_inputs:
+                errors.append(
+                    f"operations[{i}] SPLIT drops source input modes {missing_inputs}"
+                )
+            replacement_outputs = set().union(*(
+                _semantic_output_fields(item.get("output_contract") or {})
+                for item in replacements
+            ))
+            missing_outputs = sorted(
+                _semantic_output_fields(pool[source].get("output_contract") or {})
+                - replacement_outputs
+            )
+            if missing_outputs:
+                errors.append(
+                    f"operations[{i}] SPLIT drops source output facts {missing_outputs}"
+                )
+            source_guarantees = pool[source].get("guarantees") or {}
+            source_required_outputs = _required_semantic_output_fields(
+                pool[source].get("output_contract") or {}
+            )
+            complete_replacements = [
+                item for item in replacements
+                if (item.get("guarantees") or {}).get("completeness") == "complete"
+                and source_required_outputs <= _semantic_output_fields(
+                    item.get("output_contract") or {}
+                )
+            ]
+            if source_guarantees.get("completeness") == "complete" and not complete_replacements:
+                errors.append(
+                    f"operations[{i}] SPLIT downgrades a complete source acquisition; at least "
+                    "one standalone replacement covering its required facts must remain complete"
+                )
+            if source_guarantees.get("supports_absence_proof") is True and not any(
+                (item.get("guarantees") or {}).get("supports_absence_proof") is True
+                for item in complete_replacements
+            ):
+                errors.append(
+                    f"operations[{i}] SPLIT drops the source absence-proof capability"
+                )
     expected = sorted(pool)
     if sorted(consumed) != expected or len(consumed) != len(set(consumed)):
         errors.append(f"consolidation must consume every primitive exactly once; expected={expected}, got={consumed}")
@@ -1233,6 +1502,7 @@ def build_audited_site_library(
     *, site: str, workflows: list[dict], output: str | Path, batch_size=4, seed=20260810,
     llm_fn: Callable[[str, str], dict], max_attempts: int = 3,
     rebuild_from_batch: int | None = None, max_workers: int = 16,
+    behavior_smoke_feedback: dict | None = None,
 ) -> dict:
     """Build independent batch candidates in parallel, then consolidate their union once."""
     output = Path(output)
@@ -1262,6 +1532,19 @@ def build_audited_site_library(
     history = []
     all_workflows = {str(x["id"]): x for x in workflows}
     extractions_by_workflow = {}
+
+    def resume_rejected_attempts(directory, *, enabled):
+        """Load historical attempts so current validators can re-audit old accepted output."""
+        attempts_path = directory / "attempts.json"
+        validation_path = directory / "validation.json"
+        if not enabled or not attempts_path.exists() or not validation_path.exists():
+            return [], {}, []
+        validation = json.loads(validation_path.read_text(encoding="utf-8"))
+        attempts = json.loads(attempts_path.read_text(encoding="utf-8"))
+        if not isinstance(attempts, list) or not attempts:
+            return [], {}, []
+        last = attempts[-1] if isinstance(attempts[-1], dict) else {}
+        return attempts, last.get("proposal") or {}, list(validation.get("errors") or [])
 
     def extract_one(workflow):
         directory = output / "extractions" / str(workflow["id"])
@@ -1323,8 +1606,9 @@ def build_audited_site_library(
                "extractions": batch_extractions, "catalog_index": [],
                "retrieved_primitives": []}
         _dump(directory / "input.json", inp)
-        attempts, raw, accepted, errors = [], {}, [], []
-        for attempt in range(1, max_attempts + 1):
+        attempts, raw, errors = resume_rejected_attempts(directory, enabled=may_resume)
+        accepted = []
+        for attempt in range(len(attempts) + 1, max_attempts + 1):
             attempt_input = dict(inp)
             if errors:
                 attempt_input["previous_rejected_proposal"] = raw
@@ -1347,7 +1631,23 @@ def build_audited_site_library(
                     "the union of demonstrated stable fields and point all matching candidates to "
                     "that operation, or REJECT only when the extraction itself has a specific "
                     "boundary/evidence defect. When workflow-level aggregation is rejected, return "
-                    "the underlying typed site records and leave count/rank/selection to workflow code."
+                    "the underlying typed site records and leave count/rank/selection to workflow code. "
+                    "When quality feedback identifies overlapping or lossy duplicate operations, "
+                    "emit one richest evidence-supported primitive and point every subsumed candidate "
+                    "at that single operation; do not keep a narrower retry/fallback duplicate. "
+                    "Mechanically compare each method's returned top-level keys and nesting against "
+                    "its output_contract before responding: they must have exactly the same shape. "
+                    "For one acquisition role, do not emit parallel public methods merely because "
+                    "source workflows used different input forms. Prefer one evidence-supported "
+                    "semantic method with explicit input modes and an internal mapping; if the "
+                    "evidence cannot support that union, keep only the narrower reusable core and "
+                    "mark the non-subsumed candidate REJECT with a specific boundary reason. "
+                    "When fixing portability, use the one allowed Python Playwright recipe: parse "
+                    "scheme/netloc from self.page.url and urljoin that origin with the relative UI "
+                    "path before goto/request. Never alternate between a leading-slash goto and a "
+                    "literal source host. "
+                    "Represent valid empty/no-match outcomes separately from acquisition or parser "
+                    "failure whenever the evidence supports that distinction."
                 )
             raw = _normalize_safe_guarantee_weakening(_reconcile_workflow_attribution(
                 _drop_unlinked_semantic_operations(_normalize_operation_envelopes(
@@ -1417,16 +1717,56 @@ def build_audited_site_library(
     candidate_rows = list(pool.values())
     _dump(output / "pre_consolidation" / "primitive_pool.json", candidate_rows)
     consolidation_input = {"site": site, "primitive_pool": candidate_rows}
-    _dump(output / "consolidation" / "input.json", consolidation_input)
-    attempts, raw, final, errors, coverage = [], {}, [], [], {}
-    for attempt in range(1, max_attempts + 1):
+    if behavior_smoke_feedback:
+        consolidation_input["behavior_smoke_feedback"] = behavior_smoke_feedback
+    consolidation_dir = output / "consolidation"
+    previous_input_path = consolidation_dir / "input.json"
+    previous_input = None
+    if previous_input_path.exists():
+        try:
+            previous_input = json.loads(previous_input_path.read_text(encoding="utf-8"))
+        except Exception:
+            previous_input = None
+    _dump(previous_input_path, consolidation_input)
+    attempts, raw, errors = resume_rejected_attempts(
+        consolidation_dir, enabled=previous_input == consolidation_input
+    )
+    final, coverage = [], {}
+    revalidated_from_attempt = None
+    if attempts:
+        latest_revalidation = None
+        for previous in reversed(attempts):
+            proposal = previous.get("proposal") if isinstance(previous, dict) else None
+            if not isinstance(proposal, dict):
+                continue
+            candidate_final, candidate_errors, candidate_coverage = validate_consolidation(
+                proposal, site=site, pool=pool, workflows=all_workflows
+            )
+            if latest_revalidation is None:
+                latest_revalidation = (
+                    proposal, candidate_errors, candidate_coverage,
+                )
+            if not candidate_errors:
+                raw, final, errors, coverage = (
+                    proposal, candidate_final, [], candidate_coverage
+                )
+                revalidated_from_attempt = previous.get("attempt")
+                break
+        if revalidated_from_attempt is None and latest_revalidation is not None:
+            raw, errors, coverage = latest_revalidation
+    for attempt in range(len(attempts) + 1, max_attempts + 1):
+        if revalidated_from_attempt is not None:
+            break
         attempt_input = dict(consolidation_input)
         if errors:
             attempt_input["previous_rejected_proposal"] = raw
             attempt_input["validation_feedback"] = errors
             attempt_input["retry_instruction"] = (
                 "Regenerate the complete consolidation. Correct coverage, boundary, code, and "
-                "evidence errors without silently deleting a primitive."
+                "evidence errors without silently deleting a primitive. Every SPLIT replacement "
+                "must be a complete primitive with a safe feature and primitive_id exactly "
+                "<site>/<feature>/<method>. Remove every page-global generic Close click; do not "
+                "rename or wrap it. Preserve all passing behavior probes while repairing failures."
             )
         raw = _normalize_consolidation_response(
             llm_fn(_CONSOLIDATE_SYS, json.dumps(attempt_input, ensure_ascii=False)) or {}
@@ -1437,10 +1777,13 @@ def build_audited_site_library(
         attempts.append({"attempt": attempt, "proposal": raw, "errors": errors})
         if not errors:
             break
-    _dump(output / "consolidation" / "attempts.json", attempts)
-    _dump(output / "consolidation" / "proposal.json", raw)
-    _dump(output / "consolidation" / "validation.json", {"accepted": not errors, "errors": errors})
-    _dump(output / "consolidation" / "coverage.json", coverage)
+    _dump(consolidation_dir / "attempts.json", attempts)
+    _dump(consolidation_dir / "proposal.json", raw)
+    _dump(consolidation_dir / "validation.json", {
+        "accepted": not errors, "errors": errors,
+        "revalidated_from_attempt": revalidated_from_attempt,
+    })
+    _dump(consolidation_dir / "coverage.json", coverage)
     if errors:
         raise ValueError(f"{site} consolidation rejected: {errors}")
     code = render_site_package(site, final)

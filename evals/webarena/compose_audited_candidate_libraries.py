@@ -19,11 +19,19 @@ def main() -> None:
     result = compose_candidate_indexes(
         site=args.site, indexes=values, output=Path(args.output) / args.site / "final_candidate"
     )
-    summary = {"status": "candidate", "promoted": False,
-               "sites": {args.site: {"site": args.site, "status": "candidate",
-                                      "final_count": len(result["primitives"])}}}
     Path(args.output).mkdir(parents=True, exist_ok=True)
-    (Path(args.output) / "summary.json").write_text(
+    summary_path = Path(args.output) / "summary.json"
+    summary = {"status": "candidate", "promoted": False, "sites": {}}
+    if summary_path.exists():
+        existing = json.loads(summary_path.read_text(encoding="utf-8"))
+        if isinstance(existing.get("sites"), dict):
+            summary["sites"].update(existing["sites"])
+    summary["sites"][args.site] = {
+        "site": args.site, "status": "candidate",
+        "final_count": len(result["primitives"]),
+    }
+    summary["sites"] = dict(sorted(summary["sites"].items()))
+    summary_path.write_text(
         json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
     print(json.dumps(summary, ensure_ascii=False))

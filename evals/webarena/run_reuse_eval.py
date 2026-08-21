@@ -134,6 +134,13 @@ def write_job_deployment_config(runs_root, partition, arm, config, site, task_id
     return path, url
 
 
+def append_optional_eval_flags(cmd, *, scratch_first=False):
+    """Append benchmark-independent routing controls to one task command."""
+    if scratch_first:
+        cmd.append("--scratch-first")
+    return cmd
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--partition", required=True, choices=["t1", "t2"])
@@ -151,6 +158,11 @@ def main():
     ap.add_argument("--webarena-tasks")
     ap.add_argument("--webarena-root")
     ap.add_argument("--vanilla-task-interface", action="store_true")
+    ap.add_argument(
+        "--scratch-first", action="store_true",
+        help=("Freeze a task-only scratch plan before primitive metadata routing and allow "
+              "primitives to replace only named plan steps."),
+    )
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--per-site-workers", type=int, default=1)
     ap.add_argument("--round-robin-deployments", action="store_true",
@@ -218,6 +230,7 @@ def main():
         if args.webarena_tasks and args.webarena_root:
             cmd += ["--webarena-tasks", args.webarena_tasks,
                     "--webarena-root", args.webarena_root]
+        append_optional_eval_flags(cmd, scratch_first=args.scratch_first)
         if task_type == "navigate":
             if not args.webarena_tasks or not args.webarena_root:
                 return {"site": site, "task_id": task_id, "status": "process_error",

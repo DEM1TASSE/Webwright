@@ -11,6 +11,35 @@ E = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(E)
 
 
+def test_agent_subprocess_env_prepends_runner_virtualenv():
+    env = E.agent_subprocess_env(
+        "/workspace/eval/.venv/bin/python", {"PATH": "/usr/bin:/bin", "KEEP": "1"}
+    )
+    assert env["PATH"].split(":") == ["/workspace/eval/.venv/bin", "/usr/bin", "/bin"]
+    assert env["VIRTUAL_ENV"] == "/workspace/eval/.venv"
+    assert env["KEEP"] == "1"
+
+
+def test_agent_subprocess_env_deduplicates_runner_bin():
+    env = E.agent_subprocess_env(
+        "/workspace/eval/.venv/bin/python",
+        {"PATH": "/usr/bin:/workspace/eval/.venv/bin:/bin"},
+    )
+    assert env["PATH"].split(":") == ["/workspace/eval/.venv/bin", "/usr/bin", "/bin"]
+
+
+def test_agent_subprocess_env_preserves_virtualenv_symlink_parent(tmp_path):
+    system_python = tmp_path / "system" / "python"
+    system_python.parent.mkdir()
+    system_python.write_text("")
+    venv_python = tmp_path / "eval" / ".venv" / "bin" / "python"
+    venv_python.parent.mkdir(parents=True)
+    venv_python.symlink_to(system_python)
+    env = E.agent_subprocess_env(str(venv_python), {"PATH": "/usr/bin"})
+    assert env["PATH"].split(":")[0] == str(venv_python.parent)
+    assert env["VIRTUAL_ENV"] == str(venv_python.parent.parent)
+
+
 def test_prepare_routed_hint_uses_primitive_only_cross_template_policy(tmp_path):
     seen = {}
 
@@ -66,6 +95,57 @@ def test_null_not_found_response_is_a_complete_artifact(tmp_path):
     assert E.collect_run(tmp_path, "task7_scratch")[1] is None
 
 
+def test_not_found_status_normalizes_arbitrary_text_sentinel_to_official_na(tmp_path):
+    (tmp_path / "agent_response.json").write_text(json.dumps({
+        "task_type": "RETRIEVE",
+        "status": "NOT_FOUND_ERROR",
+        "retrieved_data": None,
+        "error_details": None,
+    }))
+    (tmp_path / "final_state.json").write_text(json.dumps({
+        "final_url": "https://example.test/results",
+        "html_path": "final_state.html",
+        "document_status": 200,
+        "answer": "NONE",
+    }))
+
+    assert E.normalize_official_answer(tmp_path) is True
+    normalized = json.loads((tmp_path / "final_state.json").read_text())
+    assert normalized["answer"] == "N/A"
+    assert normalized["artifact_normalizations"] == [
+        "not_found_status_to_official_na_v1"
+    ]
+
+
+def test_official_score_does_not_reuse_stale_output_after_subprocess_failure(
+    tmp_path, monkeypatch
+):
+    (tmp_path / "agent_response.json").write_text(json.dumps({
+        "task_type": "RETRIEVE", "status": "SUCCESS",
+        "retrieved_data": ["answer"], "error_details": None,
+    }))
+    (tmp_path / "final_state.json").write_text(json.dumps({
+        "final_url": "https://example.test/results",
+        "html_path": "final_state.html",
+        "document_status": 200,
+        "answer": "answer",
+    }))
+    stale = tmp_path / "webarena_final_state_eval.json"
+    stale.write_text('{"score": 1.0, "official_webarena_commit": "old"}')
+    monkeypatch.setattr(E.subprocess, "run", lambda *args, **kwargs: E.subprocess.CompletedProcess(
+        args[0], 1, stdout="", stderr="evaluator failed"
+    ))
+
+    score, provenance = E.score_navigate(
+        7, tmp_path, tmp_path / "deployment.json", tmp_path / "tasks.json",
+        tmp_path / "webarena", tmp_path / "model.yaml",
+    )
+
+    assert score is None
+    assert provenance["error"] == "evaluator failed"
+    assert not stale.exists()
+
+
 def test_missing_response_is_not_complete(tmp_path):
     run = tmp_path / "task8_scratch_001"
     run.mkdir()
@@ -97,6 +177,13 @@ def test_vanilla_final_state_interface_does_not_reveal_task_type():
     assert "task_type" not in E.VANILLA_FINAL_STATE_SPEC
     assert "agent_response" not in E.VANILLA_FINAL_STATE_SPEC
     assert "final_state.json" in E.VANILLA_FINAL_STATE_SPEC
+    assert "mirror live input" in E.VANILLA_FINAL_STATE_SPEC
+
+
+def test_navigate_capture_preserves_live_form_control_state():
+    assert "mirror each" in E.NAVIGATE_SPEC
+    assert "input's current `value`/`checked`" in E.NAVIGATE_SPEC
+    assert "select option's current" in E.NAVIGATE_SPEC
 
 
 def test_validate_split_accepts_navigate_with_network_evaluators():
@@ -268,7 +355,7 @@ def test_direct_primitive_router_does_not_require_scratch_plan(tmp_path):
                     }, "closed_acquisition": "place lookup"}],
                     "reason": "useful acquisition", "remaining_gap": ["filter"],
                     "task_structure": "single_stage"}
-        if system.startswith("Classify exactly one structural property"):
+        if system.startswith("Classify exactly two structural properties"):
             seen.update(risk_system=system, risk_user=user)
             return {"chained_open_world": False, "upstream_entity": "",
                     "downstream_operation": "", "reason": "one candidate set"}
@@ -291,11 +378,22 @@ def test_direct_primitive_router_does_not_require_scratch_plan(tmp_path):
     assert out.decision == "adapt"
     assert [item["primitive_id"] for item in out.primitives] == ["map/search"]
     assert "Do not require or mention a scratch plan" in seen["system"]
+    assert "choose ADAPT" in seen["system"]
+    assert "do not invent a comparison" in seen["system"]
+    assert "lacks that qualification field" in seen["system"]
     assert "scratch_plan" not in seen["user"]
     assert "contract refinement" in seen["verifier_system"]
+    assert "narrower closed acquisition" in seen["verifier_system"]
+    assert "complete but unqualified collection" in seen["verifier_system"]
     assert "runtime.base_url" in seen["user"]
     assert "runtime.base_url" in seen["verifier_user"]
     assert "nearest pharmacy from fully named CMU" in seen["risk_system"]
+    assert "unclosed_qualified_population" in seen["risk_system"]
+    assert "last order conditioner" in seen["risk_system"]
+    assert "order_number and site-local order_id" in seen["risk_system"]
+    assert "API-internal authentication" in seen["risk_system"]
+    assert "candidate_capability_reachability" in seen["risk_system"]
+    assert "candidate_capability_reachability" in seen["risk_user"]
     assert out.contract_verdict["verdict"] == "accept"
 
 
@@ -316,7 +414,7 @@ def test_direct_primitive_router_skips_ambiguous_open_world_chain(tmp_path):
                 "reason": "local searches are covered", "remaining_gap": ["choose hotel"],
                 "task_structure": "ambiguous_open_world_chain",
             }
-        if system.startswith("Classify exactly one structural property"):
+        if system.startswith("Classify exactly two structural properties"):
             return {
                 "chained_open_world": True,
                 "upstream_entity": "a hotel",
@@ -343,6 +441,112 @@ def test_direct_primitive_router_skips_ambiguous_open_world_chain(tmp_path):
     assert out.decision == "skip"
     assert out.primitives == []
     assert out.contract_verdict == {}
+
+
+def test_direct_navigate_use_rejects_api_only_data_acquisition(tmp_path):
+    root = tmp_path / "shopping" / "final_candidate"
+    root.mkdir(parents=True)
+    (root / "index.json").write_text(json.dumps({
+        "site": "shopping", "status": "candidate", "primitives": [{
+            "primitive_id": "shopping/catalog/search_products_graphql",
+            "method_code": (
+                "async def search_products_graphql(self, query):\n"
+                "    return await self.page.request.get('/graphql')\n"
+            ),
+            "feature": "catalog", "method": "search_products_graphql",
+            "capability": "return typed product search records",
+            "owns": ["Issue a GraphQL product search request"],
+            "browser_effects": {"navigates_live_page": False},
+            "output_contract": {"properties": {"products": {"type": "array"}}},
+        }],
+    }))
+
+    def fake_llm(system, user):
+        if system.startswith("Classify exactly two structural properties"):
+            return {"chained_open_world": False, "upstream_entity": "",
+                    "downstream_operation": "", "reason": "single search"}
+        if system.startswith("Route site primitives"):
+            assert '"task_type": "navigate"' in user
+            return {
+                "decision": "use",
+                "primitive_ids": ["shopping/catalog/search_products_graphql"],
+                "primitive_calls": [{
+                    "primitive_id": "shopping/catalog/search_products_graphql",
+                    "bindings": {"query": "task.query"},
+                    "closed_acquisition": "product search",
+                }],
+                "reason": "search data is available", "remaining_gap": [],
+            }
+        raise AssertionError("deterministic navigation guard must reject before verifier")
+
+    out = E.retrieve_direct_primitives(
+        'Search for "switch accessories"', tmp_path, site="shopping",
+        runtime_context={"task_type": "navigate", "available_bindings": [
+            "runtime.base_url", "runtime.browser_page",
+        ]},
+        llm_fn=fake_llm,
+    )
+
+    assert out.decision == "skip"
+    assert out.primitives == []
+    assert "live browser state" in out.reason
+    assert out.proposal["primitive_calls"] == []
+
+
+def test_direct_navigate_use_accepts_metadata_projected_live_browser_effect(tmp_path):
+    root = tmp_path / "map" / "final_candidate"
+    root.mkdir(parents=True)
+    (root / "index.json").write_text(json.dumps({
+        "site": "map", "status": "candidate", "primitives": [{
+            "primitive_id": "map/routes/get_route_summary",
+            "method_code": (
+                "async def get_route_summary(self, origin, destination):\n"
+                "    await self.page.goto('/directions')\n"
+                "    await self.page.locator('#route_from').fill(origin)\n"
+                "    return {'final_url': self.page.url}\n"
+            ),
+            "feature": "routes", "method": "get_route_summary",
+            "capability": "navigate the live directions UI",
+            "owns": ["Navigate to and submit the site's directions page"],
+            "output_contract": {"properties": {"final_url": {"type": "string"}}},
+        }],
+    }))
+
+    def fake_llm(system, user):
+        if system.startswith("Classify exactly two structural properties"):
+            return {"chained_open_world": False, "upstream_entity": "",
+                    "downstream_operation": "", "reason": "named endpoints"}
+        if system.startswith("Route site primitives"):
+            assert '"navigates_live_page": true' in user
+            assert "method_code" not in user
+            return {
+                "decision": "use", "primitive_ids": ["map/routes/get_route_summary"],
+                "primitive_calls": [{
+                    "primitive_id": "map/routes/get_route_summary",
+                    "bindings": {"origin": "task.origin", "destination": "task.destination"},
+                    "closed_acquisition": "live directions page",
+                }],
+                "reason": "establishes final route page", "remaining_gap": [],
+            }
+        return {
+            "verdict": "accept",
+            "checks": {"input_reachability": "pass", "guarantee_sufficiency": "pass",
+                       "closed_acquisition": "pass"},
+            "closed_acquisitions": ["live directions page"],
+            "reason": "navigation is closed",
+        }
+
+    out = E.retrieve_direct_primitives(
+        "Get directions from A to B", tmp_path, site="map",
+        runtime_context={"task_type": "navigate", "available_bindings": [
+            "runtime.base_url", "runtime.browser_page",
+        ]}, llm_fn=fake_llm,
+    )
+
+    assert out.decision == "use"
+    assert [item["primitive_id"] for item in out.primitives] == [
+        "map/routes/get_route_summary"
+    ]
 
 
 def test_direct_primitive_router_does_not_fake_late_binding_in_one_shot_prompt(tmp_path):
@@ -382,7 +586,7 @@ def test_direct_primitive_router_does_not_fake_late_binding_in_one_shot_prompt(t
                 "reason": "search then route", "remaining_gap": ["choose hotel"],
                 "task_structure": "ambiguous_open_world_chain",
             }
-        if system.startswith("Classify exactly one structural property"):
+        if system.startswith("Classify exactly two structural properties"):
             return {
                 "chained_open_world": True,
                 "upstream_entity": "a hotel",
@@ -463,6 +667,83 @@ def test_deterministic_guard_rejects_population_reducers_over_partial_collection
     )
 
 
+def test_deterministic_guard_requires_topology_for_street_side_place_selection():
+    coordinate_search = {
+        "primitive_id": "map/places/search_places",
+        "output_contract": {"properties": {
+            "results": {"type": "array", "items": {"type": "object", "properties": {
+                "name": {"type": "string"}, "latitude": {"type": "number"},
+                "longitude": {"type": "number"},
+            }}},
+        }},
+        "guarantees": {"completeness": "partial"},
+    }
+
+    reason = E.deterministic_direct_contract_guard(
+        "Find the bus stop on the museum side of the street near CMU",
+        [coordinate_search], site="map",
+    )
+
+    assert "topology" in reason
+    # Ordinary proximity remains eligible; it does not require a street-side relation.
+    assert E.deterministic_direct_contract_guard(
+        "Find an Apple Store near Pitt", [coordinate_search], site="map",
+    ) is None
+
+
+def test_downstream_only_open_candidate_operator_is_marked_late_bound():
+    route = {
+        "primitive_id": "travel/objective/measure",
+        "does_not_own": [
+            "Choosing which destination to query",
+            "Ranking or deduplicating multiple destinations",
+        ],
+        "output_contract": {"properties": {
+            "duration_seconds": {"type": "number"},
+        }},
+    }
+    proposal = {
+        "decision": "adapt",
+        "primitive_ids": [route["primitive_id"]],
+        "primitive_calls": [{
+            "primitive_id": route["primitive_id"],
+            "bindings": {"destination": "task.category"},
+        }],
+    }
+
+    out = E.annotate_direct_late_binding(
+        "Find the closest provider and measure travel time", proposal, [route],
+    )
+
+    assert out["late_bind_required"] is True
+    assert out["late_bind_policy"] == {
+        "input_source": "validated_upstream_candidate_record",
+        "forbid_unresolved_category_binding": True,
+    }
+
+
+def test_candidate_acquisition_and_named_inputs_do_not_get_false_late_binding():
+    search = {
+        "primitive_id": "catalog/candidates/search",
+        "does_not_own": ["Ranking candidates"],
+        "output_contract": {"properties": {"results": {"type": "array"}}},
+    }
+    selected = {"decision": "use", "primitive_ids": [search["primitive_id"]]}
+    assert "late_bind_required" not in E.annotate_direct_late_binding(
+        "Find the nearest matching item", selected, [search],
+    )
+
+    detail = {
+        "primitive_id": "catalog/detail/read",
+        "does_not_own": ["Choosing which item"],
+        "output_contract": {"properties": {"price": {"type": "number"}}},
+    }
+    selected = {"decision": "use", "primitive_ids": [detail["primitive_id"]]}
+    assert "late_bind_required" not in E.annotate_direct_late_binding(
+        "Read the price of the fully named item", selected, [detail],
+    )
+
+
 def test_deterministic_guard_requires_actual_all_pages_binding_not_schema_support():
     orders = {
         "primitive_id": "shopping/orders/list_authenticated_customer_orders_graphql",
@@ -485,6 +766,41 @@ def test_deterministic_guard_requires_actual_all_pages_binding_not_schema_suppor
                                         "bindings": {"retrieval_mode": "all_pages",
                                                      "page_number": 1}}]},
     ) is None
+
+
+def test_deterministic_guard_rejects_unclosed_qualified_population_exposure():
+    reason = E.deterministic_direct_contract_guard(
+        "Tell me when I last ordered my conditioner?",
+        [],
+        site="shopping",
+        exposure_risk={
+            "chained_open_world": False,
+            "unclosed_qualified_population": True,
+        },
+    )
+    assert "qualification field absent" in reason
+
+
+def test_candidate_capability_reachability_marks_only_exact_unmet_ids():
+    summary = E._candidate_capability_reachability([
+        {
+            "primitive_id": "shopping/orders/list",
+            "requires": [],
+            "provides": ["shopping.orders"],
+        },
+        {
+            "primitive_id": "shopping/orders/detail",
+            "requires": ["shopping.authenticated_customer_session",
+                         "caller supplies an order id"],
+            "provides": ["shopping.order_detail"],
+        },
+    ], {"available_states": []})
+    assert summary == [
+        {"primitive_id": "shopping/orders/list", "unmet_capability_requires": []},
+        {"primitive_id": "shopping/orders/detail", "unmet_capability_requires": [
+            "shopping.authenticated_customer_session"
+        ]},
+    ]
 
 
 def test_minimal_proposal_prunes_partial_fallbacks_and_unused_auth():
@@ -525,16 +841,26 @@ def test_minimal_proposal_prunes_partial_fallbacks_and_unused_auth():
 def test_reads_valid_primitive_execution_events(tmp_path):
     (tmp_path / "primitive_execution_trace.jsonl").write_text("\n".join([
         json.dumps({"primitive_id": "gitlab/commits/list", "scratch_step_id": "S1",
+                    "event": "candidate_set_ready"}),
+        json.dumps({"primitive_id": "gitlab/commits/list", "scratch_step_id": "S1",
                     "event": "entered"}),
+        json.dumps({"primitive_id": "gitlab/commits/list", "event": "fallback_completed",
+                    "source_independent": True,
+                    "acquisition_complete_for_scope": False}),
         "not-json",
         json.dumps({"primitive_id": "gitlab/commits/list", "event": "completed"}),
         json.dumps({"primitive_id": "gitlab/commits/list", "event": "unknown"}),
     ]))
     assert E.read_primitive_execution_trace(tmp_path) == [
         {"primitive_id": "gitlab/commits/list", "scratch_step_id": "S1",
-         "event": "entered", "line": 1},
+         "event": "candidate_set_ready", "line": 1},
+        {"primitive_id": "gitlab/commits/list", "scratch_step_id": "S1",
+         "event": "entered", "line": 2},
         {"primitive_id": "gitlab/commits/list", "scratch_step_id": "",
-         "event": "completed", "line": 3},
+         "event": "fallback_completed", "line": 3,
+         "source_independent": True, "acquisition_complete_for_scope": False},
+        {"primitive_id": "gitlab/commits/list", "scratch_step_id": "",
+         "event": "completed", "line": 5},
     ]
 
 

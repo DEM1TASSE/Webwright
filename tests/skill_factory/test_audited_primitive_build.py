@@ -29,7 +29,7 @@ def extraction(workflow):
         "guarantees": {
             "collection_scope": "page", "completeness": "partial",
             "supports_absence_proof": False,
-            "configuration": {"kind": "none", "supported_values": [],
+            "configuration": {"kind": "none", "input_field": None, "supported_values": [],
                               "coupled_site_parameters_hidden": True},
         },
         "acceptance_checks": ["the commit page loaded and parsed without error"],
@@ -43,7 +43,7 @@ def primitive(pid="gitlab/list_commits", feature=None):
     value = {
         "primitive_id": pid, "method": "list_commits",
         "capability": "List typed GitLab commit records.",
-        "method_code": "def list_commits(self, project):\n    return []\n",
+        "method_code": "async def list_commits(self, project):\n    return []\n",
         "owns": ["GitLab commit selectors and parsing"],
         "does_not_own": ["task filtering and answer formatting"],
         "input_contract": {"project": "str"},
@@ -53,7 +53,7 @@ def primitive(pid="gitlab/list_commits", feature=None):
         "guarantees": {
             "collection_scope": "page", "completeness": "partial",
             "supports_absence_proof": False,
-            "configuration": {"kind": "none", "supported_values": [],
+            "configuration": {"kind": "none", "input_field": None, "supported_values": [],
                               "coupled_site_parameters_hidden": True},
         },
         "acceptance_checks": ["the commit page loaded and parsed without error"],
@@ -178,7 +178,9 @@ def test_consolidation_requires_exact_coverage():
 def test_update_keeps_identity_and_contract_but_replaces_generated_code():
     old = primitive()
     replacement = primitive()
-    replacement["method_code"] = "def list_commits(self, project):\n    return [{'title': project}]\n"
+    replacement["method_code"] = (
+        "async def list_commits(self, project):\n    return [{'title': project}]\n"
+    )
     replacement["source_evidence"].append({
         "workflow_id": "w2", "template_id": 20, "code_quote": SOURCE,
         "explanation": "The second workflow supports the same GitLab commit operation.",
@@ -254,14 +256,16 @@ def test_covered_candidate_normalizes_candidate_result_container_alias():
     target["output_contract"] = {
         "type": "object", "properties": {"results": {
             "type": "array", "items": {"type": "object", "properties": {
-                "latitude": {"type": "number"}, "longitude": {"type": "number"},
+                "latitude": {"type": "number", "semantic_role": "location_latitude"},
+                "longitude": {"type": "number", "semantic_role": "location_longitude"},
             }},
         }},
     }
     extracted = extraction(WORKFLOWS[0])
     extracted["candidates"][0]["output_contract"] = {
         "type": "array", "items": {"type": "object", "properties": {
-            "lat": {"type": "string"}, "lon": {"type": "string"},
+            "lat": {"type": "string", "semantic_role": "location_latitude"},
+            "lon": {"type": "string", "semantic_role": "location_longitude"},
         }},
     }
     raw = {
@@ -281,47 +285,69 @@ def test_covered_candidate_normalizes_candidate_result_container_alias():
     assert not any("drops extracted output fields" in error for error in errors)
 
 
-def test_semantic_output_fields_normalize_site_record_naming_without_hiding_real_fields():
+def test_semantic_output_fields_use_explicit_roles_without_site_alias_tables():
     from webwright.skill_factory.audited_primitive_build import _semantic_output_fields
 
-    candidate = {"properties": {"orders": {"items": {"properties": {
-        "display_date": {}, "display_order_total": {}, "status": {}, "detail_url": {},
-    }}}}}
-    target = {"properties": {"orders": {"items": {"properties": {
-        "order_date_display": {}, "order_total_display": {}, "status_display": {},
-        "order_detail_url": {},
-    }}}}}
-    assert _semantic_output_fields(candidate) <= _semantic_output_fields(target)
-    assert "nickname" in _semantic_output_fields({"properties": {"nickname": {}}})
+    candidate = {"properties": {
+        "local_label": {"type": "string", "semantic_role": "entity_display_name"},
+    }}
+    target = {"properties": {
+        "remote_title": {"type": "string", "semantic_role": "entity_display_name"},
+    }}
+    assert _semantic_output_fields(candidate) == _semantic_output_fields(target)
+    assert _semantic_output_fields({"properties": {"local_label": {}}}) == {"local_label"}
 
 
-def test_semantic_output_fields_normalize_magento_graphql_flattening():
+def test_required_semantic_output_fields_ignore_optional_observations_and_use_roles():
+    from webwright.skill_factory.audited_primitive_build import (
+        _required_semantic_output_fields,
+    )
+
+    extracted = {
+        "type": "object",
+        "properties": {
+            "results": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "local_label": {"semantic_role": "entity_display_name"},
+                        "href": {"semantic_role": "entity_url"},
+                    },
+                    "required": ["local_label"],
+                },
+            }
+        },
+        "required": ["results"],
+    }
+    assert _required_semantic_output_fields(extracted) == {"entity_display_name"}
+
+
+def test_semantic_output_fields_compare_flat_and_wrapped_contracts_by_role():
     from webwright.skill_factory.audited_primitive_build import _semantic_output_fields
 
     extracted = {"fields": {"records": {"items": {"fields": {
-        "product_url": {}, "minimum_final_price_value": {}, "currency": {},
+        "source_value": {"semantic_role": "objective_value"},
+        "source_unit": {"semantic_role": "objective_unit"},
     }}}}}
-    generated = {"properties": {"products": {"items": {"properties": {
-        "url": {}, "price_range": {"properties": {"minimum_price": {
-            "properties": {"final_price": {"properties": {
-                "value": {}, "currency": {},
-            }}},
-        }}},
+    generated = {"properties": {"results": {"items": {"properties": {
+        "measurement": {"properties": {
+            "value": {"semantic_role": "objective_value"},
+            "unit": {"semantic_role": "objective_unit"},
+        }},
     }}}}}
     assert _semantic_output_fields(extracted) <= _semantic_output_fields(generated)
 
 
-def test_semantic_output_fields_ignore_compact_container_names_and_normalize_review_id():
+def test_semantic_output_fields_ignore_compact_container_names():
     from webwright.skill_factory.audited_primitive_build import _semantic_output_fields
 
     many = {"records": {"items": {"fields": {"id": {}, "detail": {}}}}}
-    one = {"properties": {"record": {"properties": {
-        "review_id": {}, "review_text": {},
-    }}}}
+    one = {"properties": {"record": {"properties": {"id": {}, "detail": {}}}}}
     assert _semantic_output_fields(many) == _semantic_output_fields(one) == {"id", "detail"}
 
 
-def test_semantic_output_fields_normalize_auth_facts_and_hide_private_token_values():
+def test_semantic_output_fields_hide_private_token_values_without_renaming_other_fields():
     from webwright.skill_factory.audited_primitive_build import _semantic_output_fields
 
     extracted = {"properties": {
@@ -329,29 +355,16 @@ def test_semantic_output_fields_normalize_auth_facts_and_hide_private_token_valu
         "dashboard_url": {"type": "string"},
         "form_key": {"type": "string"},
     }}
-    existing = {"properties": {
-        "is_authenticated": {"type": "boolean"},
-        "final_url": {"type": "string"},
-        "form_key_present": {"type": "boolean"},
-    }}
-
-    assert _semantic_output_fields(extracted) <= _semantic_output_fields(existing)
+    assert _semantic_output_fields(extracted) == {"authenticated", "dashboard_url"}
     assert "form_key" not in _semantic_output_fields(extracted)
 
 
-def test_semantic_output_fields_compare_flat_and_wrapped_review_contracts():
+def test_semantic_output_fields_do_not_guess_benchmark_specific_aliases():
     from webwright.skill_factory.audited_primitive_build import _semantic_output_fields
 
-    extracted = {"properties": {"review": {"properties": {
-        "review_id": {}, "product_name": {}, "nickname": {}, "summary": {},
-        "review_text": {},
-    }}}}
-    richer_flat = {"properties": {
-        "review_id": {}, "product": {}, "nickname": {}, "title": {}, "detail": {},
-        "rating": {},
-    }}
-
-    assert _semantic_output_fields(extracted) <= _semantic_output_fields(richer_flat)
+    left = {"properties": {"local_name": {}}}
+    right = {"properties": {"remote_title": {}}}
+    assert _semantic_output_fields(left) != _semantic_output_fields(right)
 
 
 def test_covered_auth_candidate_can_drop_private_token_but_not_semantic_facts():
@@ -359,13 +372,15 @@ def test_covered_auth_candidate_can_drop_private_token_but_not_semantic_facts():
     target["primitive_id"] = "shopping_admin/login_admin"
     target["method"] = "login_admin"
     target["output_contract"] = {"type": "object", "properties": {
-        "is_authenticated": {"type": "boolean"},
-        "final_url": {"type": "string"},
+        "is_authenticated": {"type": "boolean", "semantic_role": "authenticated_state"},
+        "final_url": {"type": "string", "semantic_role": "result_url"},
         "form_key_present": {"type": "boolean"},
     }}
     extracted = extraction(WORKFLOWS[0])
     extracted["candidates"][0]["output_contract"] = {
-        "authenticated": "boolean", "dashboard_url": "string", "form_key": "string",
+        "authenticated": {"type": "boolean", "semantic_role": "authenticated_state"},
+        "dashboard_url": {"type": "string", "semantic_role": "result_url"},
+        "form_key": "string",
     }
     raw = {
         "operations": [],
@@ -386,25 +401,28 @@ def test_covered_auth_candidate_can_drop_private_token_but_not_semantic_facts():
     assert not any("drops extracted output fields" in error for error in errors)
 
 
-def test_primitive_rejects_opaque_viewbox_string_contract():
-    from webwright.skill_factory.audited_primitive_build import validate_primitive
-
+def test_semantic_configuration_names_its_typed_input_without_site_heuristics():
     candidate = primitive()
     candidate["input_contract"] = {
         "type": "object", "properties": {
-            "viewbox": {"type": "string"},
+            "variant": {"type": "string", "enum": ["compact", "expanded"]},
         },
+    }
+    candidate["guarantees"]["configuration"] = {
+        "kind": "semantic_enum", "input_field": "variant",
+        "supported_values": ["compact", "expanded"],
+        "coupled_site_parameters_hidden": True,
     }
     errors = validate_primitive(
         candidate, site="gitlab", workflows={"w1": WORKFLOWS[0]},
     )
-    assert "viewbox input must be a typed bounds object, not a serialized string" in errors
+    assert not any("configuration" in error or "configured input" in error for error in errors)
 
 
 def test_merge_and_split_generate_complete_classified_replacements():
     second = primitive("gitlab/get_commits")
     second["method"] = "get_commits"
-    second["method_code"] = "def get_commits(self, project):\n    return []\n"
+    second["method_code"] = "async def get_commits(self, project):\n    return []\n"
     pool = {"gitlab/list_commits": primitive(), "gitlab/get_commits": second}
     merged = primitive("gitlab/commits/list_commits", "commits")
     final, errors, coverage = validate_consolidation(
@@ -417,7 +435,7 @@ def test_merge_and_split_generate_complete_classified_replacements():
     a = primitive("gitlab/commits/list_commits", "commits")
     b = primitive("gitlab/commits/get_commit", "commits")
     b["method"] = "get_commit"
-    b["method_code"] = "def get_commit(self, sha):\n    return {'sha': sha}\n"
+    b["method_code"] = "async def get_commit(self, sha):\n    return {'sha': sha}\n"
     b["input_contract"] = {"sha": "str"}
     final, errors, _ = validate_consolidation(
         {"operations": [{"op": "SPLIT", "source": "gitlab/list_commits",
@@ -426,6 +444,133 @@ def test_merge_and_split_generate_complete_classified_replacements():
         workflows={x["id"]: x for x in WORKFLOWS},
     )
     assert not errors and {x["method"] for x in final} == {"list_commits", "get_commit"}
+
+
+def test_split_applies_aligned_feature_assignments_to_missing_replacement_features():
+    source = primitive("shopping/list_orders")
+    auth = primitive("shopping/auth/get_customer_token")
+    auth["method"] = "get_customer_token"
+    auth["method_code"] = "async def get_customer_token(self, project):\n    return []\n"
+    orders = primitive("shopping/orders/list_orders")
+    orders["method"] = "list_orders"
+    orders["method_code"] = "async def list_orders(self, project):\n    return []\n"
+
+    final, errors, _ = validate_consolidation(
+        {"operations": [{
+            "op": "SPLIT",
+            "source": "shopping/list_orders",
+            "feature_assignments": ["auth", "orders"],
+            "replacements": [auth, orders],
+        }]},
+        site="shopping",
+        pool={"shopping/list_orders": source},
+        workflows={x["id"]: x for x in WORKFLOWS},
+    )
+
+    assert not errors
+    assert [item["feature"] for item in final] == ["auth", "orders"]
+
+
+def test_split_rejects_feature_assignment_count_mismatch():
+    source = primitive()
+    a = primitive("gitlab/commits/list_commits", "commits")
+    b = primitive("gitlab/commits/get_commit", "commits")
+    b["method"] = "get_commit"
+    b["method_code"] = "async def get_commit(self, project):\n    return []\n"
+
+    _, errors, _ = validate_consolidation(
+        {"operations": [{
+            "op": "SPLIT", "source": "gitlab/list_commits",
+            "feature_assignments": ["commits"], "replacements": [a, b],
+        }]},
+        site="gitlab", pool={"gitlab/list_commits": source},
+        workflows={x["id"]: x for x in WORKFLOWS},
+    )
+
+    assert any("feature_assignments must align one-to-one" in error for error in errors)
+
+
+def test_split_rejects_conflicting_explicit_feature_and_assignment():
+    source = primitive()
+    a = primitive("gitlab/commits/list_commits", "commits")
+    b = primitive("gitlab/commits/get_commit", "commits")
+    b["method"] = "get_commit"
+    b["method_code"] = "async def get_commit(self, project):\n    return []\n"
+
+    _, errors, _ = validate_consolidation(
+        {"operations": [{
+            "op": "SPLIT", "source": "gitlab/list_commits",
+            "feature_assignments": ["auth", "commits"], "replacements": [a, b],
+        }]},
+        site="gitlab", pool={"gitlab/list_commits": source},
+        workflows={x["id"]: x for x in WORKFLOWS},
+    )
+
+    assert any("conflicts with feature_assignments" in error for error in errors)
+
+
+def test_split_rejects_new_secret_intermediate_input_and_complete_mode_downgrade():
+    source = primitive("shopping/list_orders")
+    source["guarantees"].update({
+        "collection_scope": "scope", "completeness": "complete",
+        "supports_absence_proof": True,
+    })
+    source["input_contract"] = {
+        "type": "object", "properties": {
+            "email": {"type": "string"}, "password": {"type": "string"},
+            "fetch_all_pages": {"type": "boolean"},
+        }, "required": ["email", "password"],
+    }
+    auth = primitive("shopping/auth/get_token", "auth")
+    auth["method"] = "get_token"
+    auth["method_code"] = "async def get_token(self, email, password):\n    return {}\n"
+    auth["input_contract"] = {
+        "type": "object", "properties": {
+            "email": {"type": "string"}, "password": {"type": "string"},
+        }, "required": ["email", "password"],
+    }
+    auth["output_contract"] = {
+        "type": "object", "properties": {"is_authenticated": {"type": "boolean"}},
+        "required": ["is_authenticated"],
+    }
+    page = primitive("shopping/orders/list_orders_page", "orders")
+    page["method"] = "list_orders_page"
+    page["method_code"] = "async def list_orders_page(self, bearer_token):\n    return []\n"
+    page["input_contract"] = {
+        "type": "object", "properties": {"bearer_token": {"type": "string"}},
+        "required": ["bearer_token"],
+    }
+    page["guarantees"].update({"completeness": "partial", "supports_absence_proof": False})
+
+    _, errors, _ = validate_consolidation(
+        {"operations": [{
+            "op": "SPLIT", "source": "shopping/list_orders",
+            "replacements": [auth, page],
+        }]},
+        site="shopping", pool={"shopping/list_orders": source},
+        workflows={x["id"]: x for x in WORKFLOWS},
+    )
+
+    assert any(
+        "introduces private intermediate public inputs ['bearer_token']" in error
+        for error in errors
+    )
+    assert any("downgrades a complete source acquisition" in error for error in errors)
+    assert any("drops the source absence-proof capability" in error for error in errors)
+
+
+def test_primitive_rejects_private_authentication_material_in_public_output():
+    value = primitive()
+    value["output_contract"] = {
+        "type": "object", "properties": {"token": {"type": "string"}},
+        "required": ["token"],
+    }
+
+    errors = validate_primitive(
+        value, site="gitlab", workflows={"w1": WORKFLOWS[0]},
+    )
+
+    assert "output_contract exposes private authentication material: token" in errors
 
 
 def test_consolidation_rejects_same_feature_and_input_contract_collision():
@@ -555,6 +700,94 @@ def test_gate_requires_typed_seconds_when_duration_text_is_exposed():
     assert "duration_text requires typed duration_seconds in the output contract" not in errors
 
 
+def test_gate_rejects_hard_coded_deployment_origin():
+    value = primitive()
+    value["method_code"] = (
+        "def list_commits(self, project):\n"
+        "    return self.page.goto('http://source-deployment.invalid/projects/' + project)\n"
+    )
+    errors = validate_primitive(value, site="gitlab", workflows={"w1": WORKFLOWS[0]})
+    assert "method_code hard-codes a deployment origin; derive it from runtime context" in errors
+
+
+def test_gate_requires_async_public_playwright_method():
+    value = primitive()
+    value["method_code"] = "def list_commits(self, project):\n    return []\n"
+    errors = validate_primitive(value, site="gitlab", workflows={"w1": WORKFLOWS[0]})
+    assert "public method list_commits must be async def for async Playwright" in errors
+
+
+def test_gate_rejects_relative_python_playwright_navigation():
+    value = primitive()
+    value["method_code"] = (
+        "async def list_commits(self, project):\n"
+        "    await self.page.goto('/projects/' + project)\n"
+        "    return []\n"
+    )
+    errors = validate_primitive(value, site="gitlab", workflows={"w1": WORKFLOWS[0]})
+    assert any("Playwright navigation/request uses a relative" in error for error in errors)
+
+
+def test_gate_rejects_requests_only_raise_for_status_on_playwright_response():
+    value = primitive()
+    value["method_code"] = (
+        "async def list_commits(self, project):\n"
+        "    response = await self.page.request.get(project)\n"
+        "    response.raise_for_status()\n"
+        "    return []\n"
+    )
+    errors = validate_primitive(value, site="gitlab", workflows={"w1": WORKFLOWS[0]})
+    assert any("APIResponse has no raise_for_status" in error for error in errors)
+
+
+def test_gate_rejects_page_global_generic_close_control():
+    value = primitive()
+    value["method_code"] = (
+        "async def list_commits(self, project):\n"
+        "    await self.page.get_by_role('button', name='Close').first.click()\n"
+        "    return []\n"
+    )
+    errors = validate_primitive(value, site="gitlab", workflows={"w1": WORKFLOWS[0]})
+    assert any("page-global generic Close" in error for error in errors)
+
+
+def test_consolidation_merge_cannot_drop_a_source_input_mode():
+    coordinates = primitive("gitlab/routes/get_route_coordinates", "routes")
+    coordinates["input_contract"] = {
+        "origin": {"properties": {"latitude": {}, "longitude": {}}},
+        "destination": {"properties": {"latitude": {}, "longitude": {}}},
+    }
+    text = primitive("gitlab/routes/get_route_text", "routes")
+    text["input_contract"] = {"origin_query": "str", "destination_query": "str"}
+    replacement = primitive("gitlab/routes/list_commits", "routes")
+    replacement["input_contract"] = text["input_contract"]
+    _, errors, _ = validate_consolidation(
+        {"operations": [{
+            "op": "MERGE", "sources": ["coords", "text"], "feature": "routes",
+            "replacement": replacement, "reason": "merge",
+        }]},
+        site="gitlab", pool={"coords": coordinates, "text": text},
+        workflows={"w1": WORKFLOWS[0]},
+    )
+    assert any("MERGE drops source input modes" in error for error in errors)
+
+
+def test_contract_semantic_roles_avoid_site_specific_alias_tables():
+    from webwright.skill_factory.audited_primitive_build import _contract_leaf_fields
+
+    source = {"type": "object", "properties": {
+        "source_name": {"type": "string", "semantic_role": "source"},
+        "target_label": {"type": "string", "semantic_role": "target"},
+        "execution_variant": {"type": "string", "semantic_role": "mode"},
+    }}
+    replacement = {"type": "object", "properties": {
+        "source": {"type": "string"},
+        "target": {"type": "string"},
+        "mode": {"type": "string"},
+    }}
+    assert _contract_leaf_fields(source) == _contract_leaf_fields(replacement)
+
+
 def test_gate_rejects_unsafe_or_underspecified_guarantees():
     value = primitive()
     value["guarantees"]["supports_absence_proof"] = True
@@ -564,6 +797,7 @@ def test_gate_rejects_unsafe_or_underspecified_guarantees():
     value = primitive()
     value["guarantees"]["configuration"] = {
         "kind": "semantic_enum",
+        "input_field": None,
         "supported_values": [],
         "coupled_site_parameters_hidden": True,
     }
@@ -580,9 +814,12 @@ def test_gate_rejects_unsafe_or_underspecified_guarantees():
         "type": "object",
         "properties": {"backend": {"type": "string", "enum": ["a", "b"]}},
     }
+    value["guarantees"]["configuration"] = {
+        "kind": "semantic_enum", "input_field": "backend",
+        "supported_values": ["a"], "coupled_site_parameters_hidden": True,
+    }
     errors = validate_primitive(value, site="gitlab", workflows={"w1": WORKFLOWS[0]})
-    assert "public configuration enum requires semantic_enum guarantees" in errors
-    assert "guarantees supported_values must match public configuration enum" in errors
+    assert "guarantees supported_values must match the configured input enum" in errors
 
 
 def test_evidence_gate_records_template_escape_equivalence():
@@ -656,14 +893,78 @@ def test_full_build_saves_batch_and_consolidation_snapshots(tmp_path):
     result = build_audited_site_library(
         site="gitlab", workflows=WORKFLOWS, output=tmp_path,
         batch_size=8, seed=3, llm_fn=fake,
+        behavior_smoke_feedback={"list_commits": {"ok": True}},
     )
     assert result["batch_count"] == 1
     assert (tmp_path / "batches/batch_000/snapshot/primitive_pool.json").exists()
     assert (tmp_path / "pre_consolidation/primitive_pool.json").exists()
     assert (tmp_path / "consolidation/coverage.json").exists()
+    consolidation_input = json.loads((tmp_path / "consolidation/input.json").read_text())
+    assert consolidation_input["behavior_smoke_feedback"]["list_commits"]["ok"] is True
     index = json.loads((tmp_path / "final_candidate/index.json").read_text())
     assert index["approved"] is False
     assert index["primitives"][0]["feature"] == "commits"
+
+
+def test_full_build_reaudits_previously_accepted_consolidation_with_current_validator(tmp_path):
+    calls = []
+
+    def initial_fake(system, user):
+        value = json.loads(user)
+        if value.get("review_kind") == "primitive_boundary_quality":
+            return {"verdicts": [{
+                "operation_index": 0, "verdict": "PASS", "reason": "clean",
+            }], "rejection_verdicts": []}
+        if "workflow" in value:
+            return extraction(value["workflow"])
+        if "batch" in value:
+            return {
+                "operations": [{"op": "ADD", "replacement": primitive()}],
+                "workflow_attribution": [{
+                    "workflow_id": "w1", "decision": "CONTRIBUTED",
+                    "operation_indices": [0],
+                }],
+                "candidate_attribution": [{
+                    "candidate_id": "w1::list_commits", "decision": "ADD",
+                    "operation_index": 0,
+                }],
+            }
+        return {"operations": [{
+            "op": "KEEP", "source": "gitlab/list_commits", "feature": "commits",
+        }]}
+
+    build_audited_site_library(
+        site="gitlab", workflows=[WORKFLOWS[0]], output=tmp_path,
+        batch_size=4, seed=3, llm_fn=initial_fake,
+    )
+    invalid = {"operations": [{
+        "op": "KEEP", "source": "gitlab/list_commits", "feature": "BadFeature",
+    }]}
+    (tmp_path / "consolidation/attempts.json").write_text(json.dumps([{
+        "attempt": 1, "proposal": invalid, "errors": [],
+    }]))
+    (tmp_path / "consolidation/proposal.json").write_text(json.dumps(invalid))
+    (tmp_path / "consolidation/validation.json").write_text(json.dumps({
+        "accepted": True, "errors": [],
+    }))
+
+    def retry_fake(system, user):
+        value = json.loads(user)
+        calls.append(value)
+        assert value["previous_rejected_proposal"] == invalid
+        assert any("feature" in error for error in value["validation_feedback"])
+        return {"operations": [{
+            "op": "KEEP", "source": "gitlab/list_commits", "feature": "commits",
+        }]}
+
+    build_audited_site_library(
+        site="gitlab", workflows=[WORKFLOWS[0]], output=tmp_path,
+        batch_size=4, seed=3, llm_fn=retry_fake, max_attempts=3,
+    )
+
+    assert len(calls) == 1
+    validation = json.loads((tmp_path / "consolidation/validation.json").read_text())
+    assert validation["accepted"] is True
 
 
 def test_parallel_initial_batches_share_no_incremental_pool_and_consolidate_once(tmp_path):

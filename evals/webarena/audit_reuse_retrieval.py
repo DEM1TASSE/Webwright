@@ -11,7 +11,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from cross_task_eval import (  # noqa: E402
-    configure_router_model, prepare_workflow_hint, retrieve_direct_primitives,
+    configure_router_model, credentials_for, prepare_workflow_hint,
+    retrieve_direct_primitives,
 )
 from run_reuse_eval import build_jobs, workflow_map  # noqa: E402
 
@@ -38,10 +39,15 @@ def main():
     ap.add_argument("--workflow-events", required=True)
     ap.add_argument("--primitive-library", required=True)
     ap.add_argument("--model-config", required=True)
+    ap.add_argument(
+        "--deployment-config",
+        help="Optional deployment config used to mirror runner-provided credential bindings.",
+    )
     ap.add_argument("--output", required=True)
     ap.add_argument("--sites", nargs="*", help="Optional site subset for resumable parallel audit")
     args = ap.parse_args()
     split, dataset = load(args.split), load(args.dataset)
+    deployment = load(args.deployment_config) if args.deployment_config else None
     validate_no_leakage(split)
     tasks = {row["task_id"]: row for row in dataset}
     skills = workflow_map(args.workflow_events)
@@ -49,7 +55,7 @@ def main():
     selected_sites = set(args.sites or split["train"])
 
     rows = []
-    for site, template_id, task_id in build_jobs(split, "t1"):
+    for site, task_type, template_id, task_id in build_jobs(split, "t1"):
         if site not in selected_sites:
             continue
         skill_id = skills.get((site, template_id))
@@ -60,7 +66,7 @@ def main():
             "reason": "exact template skill" if skill_id else "no three-gold workflow skill",
         })
 
-    for site, template_id, task_id in build_jobs(split, "t2"):
+    for site, task_type, template_id, task_id in build_jobs(split, "t2"):
         if site not in selected_sites:
             continue
         task = tasks[task_id]
@@ -77,8 +83,18 @@ def main():
                          "template_id": template_id, "task_id": task_id,
                          "decision": "error", "error": str(error)})
         try:
+            runtime_context = {
+                "available_bindings": ["runtime.base_url", "runtime.browser_page"],
+                "available_states": [],
+                "task_type": task_type,
+            }
+            if deployment and credentials_for(task, deployment):
+                runtime_context["available_bindings"].extend([
+                    "runtime.credentials.username", "runtime.credentials.password",
+                ])
             primitive = retrieve_direct_primitives(
                 task["intent"], args.primitive_library, site=site, max_primitives=5,
+                runtime_context=runtime_context,
             )
             rows.append({
                 "partition": "t2", "arm": "primitive", "site": site,
@@ -86,6 +102,13 @@ def main():
                 "decision": primitive.decision,
                 "primitive_ids": [item["primitive_id"] for item in primitive.primitives],
                 "reason": primitive.reason, "remaining_gap": primitive.remaining_gap,
+                "late_bind_required": bool(
+                    (primitive.proposal or {}).get("late_bind_required")
+                ),
+                "late_bind_reason": str(
+                    (primitive.proposal or {}).get("late_bind_reason") or ""
+                ),
+                "contract_verdict": primitive.contract_verdict,
             })
         except Exception as error:
             rows.append({"partition": "t2", "arm": "primitive", "site": site,

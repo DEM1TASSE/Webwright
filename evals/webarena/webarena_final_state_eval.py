@@ -17,6 +17,7 @@ import tempfile
 import types
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 import yaml
 
@@ -156,7 +157,15 @@ def resolve_placeholders(value: Any, environments: dict) -> Any:
         for placeholder, config in environments.items():
             urls = config.get("urls") or []
             if urls:
-                result = result.replace(placeholder, str(urls[0]).rstrip("/"))
+                deployment_url = str(urls[0]).rstrip("/")
+                parsed = urlsplit(deployment_url)
+                # DNS hostnames are case-insensitive.  Magento canonicalizes its redirect target
+                # to lowercase, while some deployment manifests use an uppercase machine name;
+                # official WebArena's URL matcher compares netloc strings case-sensitively.
+                # Normalize only the authority and preserve case-sensitive path/query data.
+                if parsed.netloc:
+                    deployment_url = urlunsplit(parsed._replace(netloc=parsed.netloc.lower()))
+                result = result.replace(placeholder, deployment_url)
         return result
     if isinstance(value, list):
         return [resolve_placeholders(item, environments) for item in value]
@@ -178,7 +187,20 @@ def validate_final_state(value: dict) -> list[str]:
         errors.append("document_status must be null or an HTTP status integer")
     if not isinstance(value.get("answer", ""), str):
         errors.append("answer must be a string")
+    if "storage_state_path" in value and not isinstance(value["storage_state_path"], str):
+        errors.append("storage_state_path must be a string when supplied")
     return errors
+
+
+def _resolve_run_artifact(state_path: Path, relative_path: str, label: str) -> Path:
+    artifact = (state_path.parent / relative_path).resolve()
+    try:
+        artifact.relative_to(state_path.parent.resolve())
+    except ValueError as error:
+        raise ValueError(f"{label} escapes the run directory") from error
+    if not artifact.is_file():
+        raise ValueError(f"missing {label}: {artifact}")
+    return artifact
 
 
 def evaluate_saved_state(
@@ -192,16 +214,23 @@ def evaluate_saved_state(
     if errors:
         return {"score": None, "status": "invalid_final_state", "errors": errors}
     if "html" not in final_state:
-        html_path = (state_path.parent / final_state["html_path"]).resolve()
         try:
-            html_path.relative_to(state_path.parent.resolve())
-        except ValueError:
+            html_path = _resolve_run_artifact(
+                state_path, final_state["html_path"], "saved DOM"
+            )
+        except ValueError as error:
             return {"score": None, "status": "invalid_final_state",
-                    "errors": ["html_path escapes the run directory"]}
-        if not html_path.is_file():
-            return {"score": None, "status": "invalid_final_state",
-                    "errors": [f"missing saved DOM: {html_path}"]}
+                    "errors": [str(error)]}
         final_state["html"] = html_path.read_text(encoding="utf-8")
+    storage_state = None
+    if final_state.get("storage_state_path"):
+        try:
+            storage_state = _resolve_run_artifact(
+                state_path, final_state["storage_state_path"], "browser storage state"
+            )
+        except ValueError as error:
+            return {"score": None, "status": "invalid_final_state",
+                    "errors": [str(error)]}
     task = load_task(tasks_path, task_id)
     if not task:
         return {"score": None, "status": "missing_task", "errors": [str(task_id)]}
@@ -221,7 +250,10 @@ def evaluate_saved_state(
                 from playwright.sync_api import sync_playwright
                 playwright = sync_playwright().start()
                 browser = playwright.chromium.launch(headless=True)
-                page = browser.new_page()
+                context = browser.new_context(
+                    storage_state=str(storage_state) if storage_state else None
+                )
+                page = context.new_page()
                 page.set_content(final_state["html"], wait_until="domcontentloaded")
             else:
                 page = types.SimpleNamespace()

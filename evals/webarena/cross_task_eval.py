@@ -35,20 +35,18 @@ Before using supplied material, state which part of the task its output contract
 capabilities remain uncovered. Relevant but partial material is evidence, not a complete plan; do
 not spend effort adapting it when it does not materially advance the missing capability.
 Only when the task requires a subjective classification: optimize precision, state a short
-inclusion and exclusion rule, make record-level decisions with rationales, and verify that the
-executed included set matches the semantic plan. Do not replace those decisions with an approximate
-broad keyword list.
-For catalog category/range tasks, a product whose displayed title directly states the requested
-category or function is an in-scope record. Do not exclude it because of packaging, fit, wording,
-or an imagined quality distinction that the goal did not request; exclude accessories and records
-whose displayed title does not actually describe the requested product/function.
-When a task names the current website/store as the venue of the user's purchases, that name scopes
-the site's authenticated order history; it is not an additional per-order merchant filter unless
-the acquired records expose merchant identity and the goal actually distinguishes merchants.
-Preserve transaction semantics independently of acquisition. Unless the current goal explicitly
-requests them, canceled/refunded orders are not completed spending or sales; do not aggregate them
-merely because a primitive returned them. Likewise, "items sold" means summed site-reported
-quantities, not the number of distinct line-item rows.
+inclusion and exclusion rule, and decompose each record into atomic claims with an aspect, polarity,
+and evidence span before filtering or aggregation. Praise or criticism about one aspect must not
+cancel an explicit claim about another aspect, and a coarse score must not veto explicit text.
+Evaluate the complete acquired population before selecting matches; do not replace these decisions
+with a broad keyword list or lock onto the first loose match.
+For category/range tasks, require displayed evidence for the requested category or function, but do
+not invent a narrower quality, packaging, or wording distinction that the goal did not request.
+Treat a named website, dataset, account, collection, or venue as source scope, not as an additional
+per-record predicate unless the goal distinguishes that attribute and acquired records expose it.
+Preserve event state, time, and subject provenance independently of acquisition. Aggregate only
+records whose lifecycle state belongs to the requested event, and distinguish a reported quantity
+from the number of distinct records or rows.
 
 ## Required final output
 Write $WORKSPACE_DIR/agent_response.json as:
@@ -76,7 +74,11 @@ This is a NAVIGATE task. Complete the requested navigation in a real Playwright 
 before closing the browser, wait for the destination to settle and save the state from that same
 live page:
 
-1. Write `await page.content()` verbatim to `$WORKSPACE_DIR/final_state.html`.
+1. Preserve live form-control state before serialization: without changing any values, mirror each
+   input's current `value`/`checked`, each textarea's current value, and each select option's current
+   selected state into the corresponding HTML attributes/text. Then write `await page.content()`
+   verbatim to `$WORKSPACE_DIR/final_state.html`. This lets the official evaluator restore the same
+   live form state rather than stale initial markup.
 2. Write `$WORKSPACE_DIR/final_state.json` as:
    {"final_url": page.url, "html_path": "final_state.html",
     "document_status": <the final document HTTP status integer or null>, "answer": ""}
@@ -98,7 +100,9 @@ VANILLA_FINAL_STATE_SPEC = """
 
 ## Final browser-state capture
 Complete the objective using the real Playwright page. Immediately before closing the browser,
-wait for the final page to settle, write `await page.content()` verbatim to
+wait for the final page to settle. Without changing any values, mirror live input `value`/`checked`,
+textarea value, and selected option state into the corresponding HTML attributes/text; then write
+`await page.content()` verbatim to
 `$WORKSPACE_DIR/final_state.html`, and write `$WORKSPACE_DIR/final_state.json` as:
 {"final_url": page.url, "html_path": "final_state.html",
  "document_status": <the final document HTTP status integer or null>, "answer": ""}
@@ -282,15 +286,24 @@ def read_primitive_execution_trace(run_dir: Path) -> list[dict]:
         event = str(value.get("event") or "")
         primitive_id = str(value.get("primitive_id") or "")
         if event not in {
-            "entered", "completed", "acceptance_passed", "acceptance_failed", "fallback_used",
+            "candidate_set_ready", "constraints_frozen", "candidate_evaluated",
+            "entered", "completed", "acceptance_passed", "acceptance_failed",
+            "fallback_used", "fallback_completed",
         } or not primitive_id:
             continue
-        events.append({
+        normalized = {
             "primitive_id": primitive_id,
             "scratch_step_id": str(value.get("scratch_step_id") or ""),
             "event": event,
             "line": line_number,
-        })
+        }
+        for field in (
+            "structural_pass", "semantic_pass", "source_independent",
+            "acquisition_complete_for_scope",
+        ):
+            if field in value and isinstance(value[field], bool):
+                normalized[field] = value[field]
+        events.append(normalized)
     return events
 
 
@@ -403,7 +416,12 @@ def normalize_official_answer(run_dir):
     state = load_json(path)
     answer = state.get("answer", "")
     status = state.get("document_status")
-    answer_needs_change = not isinstance(answer, str)
+    response = load_json(Path(run_dir) / "agent_response.json")
+    # NOT_FOUND_ERROR is the structured task contract.  Do not let arbitrary agent-rendered
+    # sentinels such as "NONE" or "No result" leak into WebArena's textual evaluator: the same
+    # proven-absence outcome must always render as the official N/A token.
+    not_found = response.get("status") == "NOT_FOUND_ERROR"
+    answer_needs_change = not_found or not isinstance(answer, str)
     status_needs_change = status is not None and not isinstance(status, int)
     if not answer_needs_change and not status_needs_change:
         return False
@@ -413,7 +431,7 @@ def normalize_official_answer(run_dir):
                           encoding="utf-8")
     normalizations = []
     if answer_needs_change:
-        if answer is None:
+        if not_found or answer is None:
             rendered = "N/A"
         elif isinstance(answer, list):
             rendered = ", ".join(
@@ -423,7 +441,10 @@ def normalize_official_answer(run_dir):
         else:
             rendered = json.dumps(answer, ensure_ascii=False)
         state["answer"] = rendered
-        normalizations.append("structured_answer_to_official_text_v1")
+        normalizations.append(
+            "not_found_status_to_official_na_v1"
+            if not_found else "structured_answer_to_official_text_v1"
+        )
     if status_needs_change:
         text_status = str(status).strip()
         state["document_status"] = int(text_status) if text_status.isdigit() else None
@@ -436,6 +457,9 @@ def normalize_official_answer(run_dir):
 def score_navigate(tid, run_dir, config, webarena_tasks, webarena_root, model_config=None):
     normalize_official_answer(run_dir)
     output = run_dir / "webarena_final_state_eval.json"
+    # A forced rerun may already contain a score from an older artifact.  Never reinterpret that
+    # stale file as the result of a failed evaluator subprocess.
+    output.unlink(missing_ok=True)
     command = [
         sys.executable, str(HERE / "webarena_final_state_eval.py"),
         "--task-id", str(tid),
@@ -448,6 +472,12 @@ def score_navigate(tid, run_dir, config, webarena_tasks, webarena_root, model_co
     if model_config:
         command += ["--model-config", str(model_config)]
     proc = subprocess.run(command, capture_output=True, text=True)
+    if proc.returncode != 0 or not output.exists():
+        return None, {
+            "module_path": None,
+            "git_commit": None,
+            "error": (proc.stderr or proc.stdout).strip()[-2000:],
+        }
     try:
         result = load_json(output)
     except (OSError, ValueError):
@@ -499,6 +529,26 @@ def evaluator_provenance(eval_python):
         "git_commit": commit,
         "null_expected_fix": has_fix,
     }
+
+
+def agent_subprocess_env(python_executable=None, environ=None):
+    """Keep generated shell commands in the runner's Python environment.
+
+    Starting the outer process with ``.venv/bin/python`` does not itself update PATH.
+    Without this shim, an agent's later ``python final_script.py`` can resolve to a
+    system interpreter that lacks Playwright even though the runner environment has it.
+    """
+    # Do not resolve the executable symlink: ``.venv/bin/python`` normally points to a
+    # system binary, but its *unresolved* parent is exactly the directory PATH must expose.
+    executable = Path(python_executable or sys.executable).absolute()
+    env = dict(os.environ if environ is None else environ)
+    bin_dir = str(executable.parent)
+    old_parts = [part for part in str(env.get("PATH") or "").split(os.pathsep) if part]
+    env["PATH"] = os.pathsep.join(
+        [bin_dir, *[part for part in old_parts if part != bin_dir]]
+    )
+    env["VIRTUAL_ENV"] = str(executable.parent.parent)
+    return env
 
 
 def prepare_routed_hint(task, library, *, primitive_record_path=None, route_fn=None):
@@ -563,6 +613,11 @@ def verify_direct_primitive_contract(
         "selected output, without leaving an internal site identifier/configuration gap; "
         "(2) guarantee_sufficiency: the primitive guarantees are strong enough for the claim "
         "made for the specific local acquisition it replaces, not necessarily for the final task. "
+        "Judge the narrowest contract-supported acquisition performed by each selected call. If "
+        "proposal prose overclaims a final-task field that the contract does not output but the "
+        "same call still fully closes a narrower useful acquisition, report that narrower closed "
+        "acquisition and do not reject the entire selection solely for the prose overclaim. Reject "
+        "when no useful closed acquisition remains after removing unsupported claims. "
         "A page/search/detail acquisition may pass even when workflow code must repeat it, select "
         "candidates, paginate, filter, or format, provided the contract exposes usable records and "
         "a defensible continuation/stopping signal. Ranked/partial/query-scoped results still "
@@ -570,6 +625,13 @@ def verify_direct_primitive_contract(
         "or absence. A scope-level multi-query primitive may nevertheless close the concrete local "
         "acquisition of executing, merging, and deduplicating every caller-supplied search; it does "
         "not thereby prove that the caller chose an exhaustive query family. When a task requires "
+        "a population reducer (first/latest/most/etc.) over records qualified by a named property, "
+        "a complete but unqualified collection is not a useful closed replacement when its records "
+        "lack that qualification field and every candidate must still undergo a separate site "
+        "acquisition. ACCEPT only if selected contracts provide the qualification field or a "
+        "reachable closed enrichment keyed by an identifier guaranteed by the collection. This does "
+        "not apply when the reducer ranges over every returned record without another qualifier. "
+        "When a task requires "
         "a non-default value or a combination of independently "
         "exposed site-configuration inputs, source examples are not sufficient: an explicit "
         "`guarantees` field must enumerate or validate the supported combination, otherwise "
@@ -616,6 +678,71 @@ def _schema_keys(value):
         for child in value:
             keys.update(_schema_keys(child))
     return keys
+
+
+def annotate_direct_late_binding(task, proposal, candidates):
+    """Mark downstream-only reuse whose concrete input depends on open candidate selection.
+
+    This is deliberately domain-agnostic.  It does not try to identify a particular website,
+    entity type, or primitive name; it combines task wording with machine-readable output and
+    boundary metadata.  Candidate-producing primitives remain eligible immediately, while a
+    downstream scalar/detail/operator must wait for a concrete upstream record.
+    """
+    proposal = dict(proposal or {})
+    if str(proposal.get("decision") or "").lower() not in {"use", "adapt"}:
+        return proposal
+    text = str(task).lower()
+    if not (
+        re.search(r"\b(nearest|closest|nearby|vicinity)\b", text)
+        or re.search(
+            r"\bwithin\s+(?:about\s+)?\d+(?:\.\d+)?\s*"
+            r"(?:minutes?|mins?|hours?|hrs?|miles?|kilometers?|kilometres?|km)\b",
+            text,
+        )
+    ):
+        return proposal
+
+    by_id = {str(item.get("primitive_id") or ""): item for item in candidates}
+    selected = [
+        by_id[str(pid)] for pid in proposal.get("primitive_ids") or []
+        if str(pid) in by_id
+    ]
+    if not selected:
+        return proposal
+
+    collection_keys = {
+        "results", "records", "items", "candidates", "places", "products", "rows",
+        "orders", "reviews", "commits", "issues", "contributors",
+    }
+    # A selected candidate acquisition may still be partial, but it is not a downstream-only
+    # operator.  Existing completeness guards decide whether exposing that acquisition is safe.
+    if any(
+        _schema_keys(item.get("output_contract") or {}) & collection_keys
+        for item in selected
+    ):
+        return proposal
+
+    boundary_gaps = " ".join(
+        str(value).lower()
+        for item in selected for value in item.get("does_not_own") or []
+    )
+    if not re.search(
+        r"\b(choos(?:e|ing)|select(?:ion|ing)?|candidate|rank(?:ing)?|"
+        r"looping over multiple|multiple destinations?|threshold)\b",
+        boundary_gaps,
+    ):
+        return proposal
+
+    proposal["late_bind_required"] = True
+    proposal["late_bind_reason"] = (
+        "the selected primitive is a downstream operator, while the task must first establish "
+        "a concrete candidate from an open set"
+    )
+    proposal["late_bind_policy"] = {
+        "input_source": "validated_upstream_candidate_record",
+        "forbid_unresolved_category_binding": True,
+    }
+    return proposal
 
 
 def _task_has_population_reducer(task):
@@ -679,7 +806,7 @@ def minimize_direct_primitive_proposal(task, proposal, candidates):
 
 
 def deterministic_direct_contract_guard(
-    task, selected, *, site, exposure_risk=None, proposal=None,
+    task, selected, *, site, exposure_risk=None, proposal=None, runtime_context=None,
 ):
     """Reject a few explicit pre-planning hazards without pretending to understand semantics.
 
@@ -691,6 +818,25 @@ def deterministic_direct_contract_guard(
     text = str(task).lower()
     if (exposure_risk or {}).get("chained_open_world") is True:
         return "unresolved chained acquisition cannot be late-bound in a one-shot prompt"
+    if (exposure_risk or {}).get("unclosed_qualified_population") is True:
+        return (
+            "population reducer depends on a qualification field absent from the collection "
+            "and no contract-closed enrichment is reachable"
+        )
+
+    if (runtime_context or {}).get("task_type") == "navigate" and str(
+        (proposal or {}).get("decision") or ""
+    ).lower() == "use":
+        def leaves_live_browser_state(primitive):
+            return bool(
+                (primitive.get("browser_effects") or {}).get("navigates_live_page")
+            )
+
+        if not any(leaves_live_browser_state(primitive) for primitive in selected):
+            return (
+                "NAVIGATE use requires a primitive that establishes the requested live browser "
+                "state; API/data acquisition alone cannot close final-page navigation"
+            )
 
     collection_keys = {
         "results", "records", "orders", "reviews", "items", "places", "candidates",
@@ -722,15 +868,55 @@ def deterministic_direct_contract_guard(
         for primitive in selected
     ):
         return "open-world map candidate discovery is partial and unsafe before planning"
+    if site == "map" and re.search(
+        r"\b(side of (?:the )?street|opposite(?: side)?|across from)\b", text,
+    ) and any(
+        "/places/" in str(primitive.get("primitive_id") or "")
+        for primitive in selected
+    ):
+        outputs = set().union(*(
+            _schema_keys(primitive.get("output_contract") or {}) for primitive in selected
+        )) if selected else set()
+        if not outputs & {"geometry", "bearing", "side", "road_segment", "relation"}:
+            return (
+                "map place-search coordinates do not establish the requested street-side or "
+                "opposite/across topology relation"
+            )
     return None
 
 
-def classify_direct_exposure_risk(task, candidates, proposed_ids, *, llm_fn=None):
-    """Detect a semantic branch that downstream pre-planning code could anchor incorrectly."""
+def _candidate_capability_reachability(candidates, runtime_context=None):
+    """Project exact capability IDs; prose preconditions stay for the contract verifier."""
+    capability_id = re.compile(r"^[A-Za-z0-9_.:-]+$")
+    available = {
+        str(value) for value in (runtime_context or {}).get("available_states") or []
+        if capability_id.fullmatch(str(value))
+    }
+    for candidate in candidates:
+        available.update(
+            str(value) for value in candidate.get("provides") or []
+            if capability_id.fullmatch(str(value))
+        )
+    return [
+        {
+            "primitive_id": str(candidate.get("primitive_id") or ""),
+            "unmet_capability_requires": [
+                str(value) for value in candidate.get("requires") or []
+                if capability_id.fullmatch(str(value)) and str(value) not in available
+            ],
+        }
+        for candidate in candidates
+    ]
+
+
+def classify_direct_exposure_risk(
+    task, candidates, proposed_ids, *, runtime_context=None, llm_fn=None,
+):
+    """Detect semantic branches that pre-planning code exposure could anchor incorrectly."""
     if llm_fn is None:
         from webwright.skill_factory.llm import llm_json as llm_fn
     return llm_fn(
-        "Classify exactly one structural property of a web task. Set chained_open_world=true "
+        "Classify exactly two structural properties of a web task. Set chained_open_world=true "
         "only when BOTH are required: (1) choose or resolve an upstream entity that is not fully "
         "named by the user, such as selecting one venue/product from a brand/category or vicinity; "
         "and (2) use that chosen entity as the anchor/input for a distinct downstream acquisition, "
@@ -740,10 +926,31 @@ def classify_direct_exposure_risk(task, candidates, proposed_ids, *, llm_fn=None
         "airport, then find the nearest supermarket from that hotel. Example false: find the "
         "nearest pharmacy from fully named CMU. Example false: route between two fully named "
         "places. Do not treat ordinary filtering and ranking within one candidate set as a chain. "
+        "Separately set unclosed_qualified_population=true only when the task applies a reducer or "
+        "absence claim (first/latest/most/least/etc.) to records satisfying a named qualifier, the "
+        "available complete collection does not output that qualifier, and no candidate contract "
+        "offers a reachable closed enrichment keyed by an identifier/state guaranteed by that "
+        "collection. Reachability is exact: every enrichment `requires` capability must appear in "
+        "runtime available_states or in a selected primitive's `provides`, and its identifier input "
+        "must be explicitly guaranteed by an earlier output. Never equate similarly named values "
+        "such as order_number and site-local order_id without a declared conversion, and never treat "
+        "API-internal authentication as a browser session unless `provides` says so. Example true: "
+        "'when did I last order conditioner' when order-list records omit "
+        "line items and the detail contract cannot consume their identifier/session. Example false: "
+        "'status of my latest order' when status is in every order record. Example false: 'date of "
+        "my first purchase' because no extra record qualifier is required. Example false: 'latest "
+        "completed order' when status is present in the collection. "
+        "The supplied candidate_capability_reachability is deterministic and authoritative. Any "
+        "candidate with non-empty unmet_capability_requires is not a reachable enrichment; do not "
+        "invent a provider from prose, scratch work, implicit login, or the overall runtime. "
         "Return only JSON {\"chained_open_world\":true|false,"
+        "\"unclosed_qualified_population\":true|false,"
         "\"upstream_entity\":\"...\","
         "\"downstream_operation\":\"...\",\"reason\":\"...\"}.",
-        json.dumps({"task": task, "proposed_primitive_ids": proposed_ids,
+        json.dumps({"task": task, "runtime_context": runtime_context or {},
+                    "proposed_primitive_ids": proposed_ids,
+                    "candidate_capability_reachability":
+                        _candidate_capability_reachability(candidates, runtime_context),
                     "candidate_contracts": candidates}, ensure_ascii=False),
     )
 
@@ -762,17 +969,21 @@ def retrieve_direct_primitives(
             str(item.get("primitive_id")) for item in candidates if item.get("primitive_id")
         ]
         risk = classify_direct_exposure_risk(
-            current_task, candidates, candidate_ids, llm_fn=llm_fn,
+            current_task, candidates, candidate_ids,
+            runtime_context=runtime_context, llm_fn=llm_fn,
         ) or {}
         # A false negative exposes candidate-acquisition code before the semantic anchor is fixed,
         # which is the costly error. Confirm negative classifications once and use the safer
         # positive verdict on disagreement; the later typed-contract gate still limits exposure.
-        if risk.get("chained_open_world") is False:
+        if (risk.get("chained_open_world") is False
+                and risk.get("unclosed_qualified_population") is not True):
             confirmation = classify_direct_exposure_risk(
-                current_task, candidates, candidate_ids, llm_fn=llm_fn,
+                current_task, candidates, candidate_ids,
+                runtime_context=runtime_context, llm_fn=llm_fn,
             ) or {}
             route_state["exposure_risk_confirmation"] = confirmation
-            if confirmation.get("chained_open_world") is True:
+            if (confirmation.get("chained_open_world") is True
+                    or confirmation.get("unclosed_qualified_population") is True):
                 risk = confirmation
         route_state["exposure_risk"] = risk
         proposal = llm_fn(
@@ -789,6 +1000,10 @@ def retrieve_direct_primitives(
             "perform, or would anchor the agent on an incomplete strategy. For open-ended "
             "category/vicinity/nearest/all tasks, candidate "
             "discovery is core: never ADAPT using only a single-query or single-page search primitive. "
+            "Likewise, for first/latest/most/etc. among records satisfying a named property, an "
+            "otherwise complete collection does not replace the core candidate-set acquisition when "
+            "its output lacks that qualification field and each record still needs separate site "
+            "inspection. Select a contract-closed, identifier-reachable enrichment too, or SKIP. "
             "When an available scope-level primitive executes multiple caller-supplied searches and "
             "merges/deduplicates their records, prefer it for candidate acquisition; the workflow still "
             "chooses query terms, semantic filters, and final ranking. If no such broader acquisition "
@@ -807,7 +1022,21 @@ def retrieve_direct_primitives(
             "per acquisition role plus only dependencies required by requires/provides. Do not "
             "add weaker HTML/page fallbacks when a selected typed acquisition closes the same "
             "role. runtime_context lists runner-provided inputs; bind them without requiring "
-            "their values in the task text. For every selected primitive declare concrete planned "
+            "their values in the task text. runtime_context.task_type is authoritative. For a "
+            "NAVIGATE task, USE requires a selected primitive that itself establishes the requested "
+            "live final page/URL/DOM state; an API/data lookup alone is not complete navigation. "
+            "ADAPT is allowed only when the data primitive replaces a necessary precursor and the "
+            "remaining live-page navigation is stated explicitly. If a selected primitive closes "
+            "one useful acquisition but another website fact "
+            "explicitly requested by the task remains uncovered, choose ADAPT, name that fact in "
+            "remaining_gap, and preserve scratch acquisition for it; do not call the whole task "
+            "covered and do not SKIP merely because the local primitive is partial at task level. "
+            "Each primitive_calls.closed_acquisition must name only the site operation and typed "
+            "facts actually guaranteed by that primitive contract. Never include a final-answer "
+            "field absent from the output contract in that claim. remaining_gap must contain only "
+            "work explicitly required by the current task: do not invent a comparison, difference, "
+            "ranking, or derived output that the task did not request. For every selected primitive "
+            "declare concrete planned "
             "bindings. A conditional collection proves completeness only when this call explicitly "
             "binds retrieval_mode=all_pages and page_number=1. Select at most five. Return JSON "
             "{\"decision\":\"use|adapt|skip\",\"primitive_ids\":[],"
@@ -820,16 +1049,20 @@ def retrieve_direct_primitives(
                         "candidates": candidates}, ensure_ascii=False),
         )
         proposal = minimize_direct_primitive_proposal(current_task, proposal, candidates)
+        proposal = annotate_direct_late_binding(current_task, proposal, candidates)
         proposed_ids = [str(x) for x in (proposal or {}).get("primitive_ids") or []]
-        is_chained = risk.get("chained_open_world") is True
-        if is_chained:
+        has_exposure_hazard = (
+            risk.get("chained_open_world") is True
+            or risk.get("unclosed_qualified_population") is True
+        )
+        if has_exposure_hazard:
             # This runner has one prompt boundary. Exposing a supposedly "late-bound" route/detail
             # method here still changes planning before the upstream entity is selected. Until the
             # runtime has a real second injection phase, chained tasks must remain scratch.
             proposal = dict(proposal or {})
             proposal.update({
-                "decision": "skip", "primitive_ids": [],
-                "reason": "direct exposure risk gate: unresolved chained acquisition",
+                "decision": "skip", "primitive_ids": [], "primitive_calls": [],
+                "reason": "direct exposure risk gate: unresolved semantic acquisition",
             })
         elif risk.get("chained_open_world") is not False and str(
             (proposal or {}).get("decision") or ""
@@ -838,7 +1071,7 @@ def retrieve_direct_primitives(
             # back to scratch preserves the control arm's capability and makes this gate fail-safe.
             proposal = dict(proposal or {})
             proposal.update({
-                "decision": "skip", "primitive_ids": [],
+                "decision": "skip", "primitive_ids": [], "primitive_calls": [],
                 "reason": "direct exposure risk gate: malformed classification",
             })
         selected_by_id = {str(item.get("primitive_id")): item for item in candidates}
@@ -846,10 +1079,11 @@ def retrieve_direct_primitives(
                     if pid in selected_by_id]
         guard_reason = deterministic_direct_contract_guard(
             current_task, proposed, site=site, exposure_risk=risk, proposal=proposal,
+            runtime_context=runtime_context,
         )
         if guard_reason:
             proposal = dict(proposal or {})
-            proposal.update({"decision": "skip", "primitive_ids": [],
+            proposal.update({"decision": "skip", "primitive_ids": [], "primitive_calls": [],
                              "reason": "deterministic contract guard: " + guard_reason})
         return proposal
 
@@ -935,6 +1169,7 @@ def run_one(args, split, dataset, config):
     runtime_context = {
         "available_bindings": ["runtime.base_url", "runtime.browser_page"],
         "available_states": [],
+        "task_type": task_type,
     }
     if credentials:
         runtime_context["available_bindings"].extend([
@@ -1064,6 +1299,23 @@ def run_one(args, split, dataset, config):
             "reason": workflow["reason"], "remaining_gap": [],
             "skill_id": workflow["skill_id"],
         }
+    elif mode == "package":
+        # External skill package (SkillWeaver skillnet): retrieve, then prepend the source of the
+        # selected functions.  No catalog entry, no contract, no gate -- prompt hint only.
+        configure_router_model(args.model_config)
+        sys.path.insert(0, str(HERE))
+        from skillnet_hint import prepare_package_hint
+        pkg = prepare_package_hint(
+            task["intent"], site, args.skillnet_root, url,
+            record_path=Path(args.runs) / f"{key}.skillnet_retrieval.json",
+            max_functions=args.skillnet_max_functions,
+        )
+        prompt = prepend_nonempty_hint(prompt, pkg["hint"])
+        offered = [{"primitive_id": name, "content_hash": ""} for name in pkg["skill_ids"]]
+        route_out = {
+            "route_stage": "package", "route_decision": pkg["decision"],
+            "reason": pkg["reason"][:2000], "remaining_gap": [],
+        }
     elif mode == "routed":
         configure_router_model(args.model_config)
         route_out = prepare_routed_hint(
@@ -1088,6 +1340,7 @@ def run_one(args, split, dataset, config):
             stdout=f,
             stderr=subprocess.STDOUT,
             start_new_session=True,
+            env=agent_subprocess_env(),
         )
         deadline = time.monotonic() + args.timeout
         while proc.poll() is None and time.monotonic() < deadline:
@@ -1207,7 +1460,7 @@ def run_one(args, split, dataset, config):
 def summarize(split, results_dir, routed_library):
     records = {p.stem: load_json(p) for p in Path(results_dir).glob("task*_*.json")}
     heldout_ids = [tid for x in split["heldout"] for tid in x["task_ids"]]
-    comparison_mode = next((mode for mode in ("primitive", "routed", "oracle")
+    comparison_mode = next((mode for mode in ("package", "primitive", "routed", "oracle")
                             if any(key.endswith(f"_{mode}") for key in records)), "oracle")
     pairs, wins, losses = [], [], []
     for tid in heldout_ids:
@@ -1292,7 +1545,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=["validate", "plan", "run", "table"])
     parser.add_argument("task_id", nargs="?", type=int)
-    parser.add_argument("mode", nargs="?", choices=["scratch", "workflow", "primitive", "routed", "oracle"])
+    parser.add_argument("mode", nargs="?", choices=["scratch", "workflow", "primitive", "routed", "oracle", "package"])
     parser.add_argument("--split", default=str(HERE / "cross_task_split.json"))
     parser.add_argument("--dataset", default=os.environ.get("WEBARENA_DATASET", ""))
     parser.add_argument("--config", default=os.environ.get("WEBARENA_CONFIG", ""))
@@ -1316,6 +1569,9 @@ def main(argv=None):
         default=[],
         help="Force an exact generated primitive selection for oracle attribution; repeatable.",
     )
+    # skillnet(package) arm: an external SkillWeaver skill package, surfaced as a prompt hint only
+    parser.add_argument("--skillnet-root", default="/home/t-demiwang/project/SkillWeaver/skillnet")
+    parser.add_argument("--skillnet-max-functions", type=int, default=5)
     parser.add_argument("--runs", default=str(HERE / ".runs"))
     parser.add_argument("--results", default=str(HERE / "cross_task_results"))
     parser.add_argument("--model-config", default="model_openai.yaml")

@@ -98,3 +98,10 @@ def test_write_job_deployment_config_records_assignment(tmp_path):
     saved = json.loads(path.read_text())
     assert saved["environments"]["__MAP__"]["urls"] == ["http://m1"]
     assert saved["assignment"]["task_id"] == 3
+
+
+def test_optional_eval_flags_enable_scratch_first_without_changing_default():
+    assert MODULE.append_optional_eval_flags(["run"], scratch_first=False) == ["run"]
+    assert MODULE.append_optional_eval_flags(["run"], scratch_first=True) == [
+        "run", "--scratch-first",
+    ]

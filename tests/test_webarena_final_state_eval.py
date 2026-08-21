@@ -27,6 +27,19 @@ def test_validate_final_state_accepts_external_dom_file():
     }) == []
 
 
+def test_placeholder_resolution_canonicalizes_hostname_case_only():
+    value = {
+        "reference_url": "__SHOPPING__/CatalogSearch/result/?q=Mixed+Case",
+    }
+    resolved = E.resolve_placeholders(value, {
+        "__SHOPPING__": {"urls": ["http://GCRSANDBOX410.Example.COM:7770"]},
+    })
+
+    assert resolved["reference_url"] == (
+        "http://gcrsandbox410.example.com:7770/CatalogSearch/result/?q=Mixed+Case"
+    )
+
+
 def test_saved_dom_cannot_escape_run_directory(tmp_path):
     outside = tmp_path.parent / "outside.html"
     outside.write_text("<html></html>")

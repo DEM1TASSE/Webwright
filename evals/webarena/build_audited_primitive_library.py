@@ -18,6 +18,58 @@ from webwright.skill_factory.llm import configure_llm, llm_json
 from generate_site_package_candidates import clean_workflow, load
 
 
+def compact_behavior_feedback(value):
+    """Keep release-relevant counterexamples without re-injecting large page dumps."""
+    if not isinstance(value, dict):
+        return value
+    compact = {}
+    for name, row in value.items():
+        if not isinstance(row, dict):
+            compact[name] = row
+            continue
+        item = {"ok": bool(row.get("ok"))}
+        if row.get("ok"):
+            result = row.get("value")
+            if isinstance(result, dict):
+                item["value_summary"] = {
+                    key: child for key, child in result.items()
+                    if key in {
+                        "duration_seconds", "duration_text", "distance_text",
+                        "distance_meters", "acquisition_mode", "travel_mode",
+                        "transport_mode", "raw_summary_text_present", "document_status",
+                    } and isinstance(child, (str, int, float, bool, type(None)))
+                }
+                for collection_key in ("results", "places"):
+                    rows = result.get(collection_key)
+                    if isinstance(rows, list):
+                        item["value_summary"][collection_key + "_count"] = len(rows)
+                        if rows and isinstance(rows[0], dict):
+                            item["value_summary"][collection_key + "_fields"] = sorted(rows[0])
+            else:
+                item["value_summary"] = str(result)[:500]
+        else:
+            item["error"] = str(row.get("error") or "")[:2000]
+            if row.get("page_url"):
+                item["page_url"] = str(row["page_url"])
+            controls, seen = [], set()
+            for control in row.get("control_diagnostics") or []:
+                if not isinstance(control, dict):
+                    continue
+                normalized = {
+                    key: control.get(key) for key in (
+                        "tag", "id", "name", "type", "placeholder", "aria_label"
+                    ) if control.get(key) is not None
+                }
+                signature = tuple(sorted(normalized.items()))
+                if normalized and signature not in seen:
+                    seen.add(signature)
+                    controls.append(normalized)
+            if controls:
+                item["control_diagnostics"] = controls[:20]
+        compact[name] = item
+    return compact
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--manifest", required=True)
@@ -44,6 +96,10 @@ def main():
         help="Reuse accepted extraction/batch snapshots but rerun consolidation and rendering.",
     )
     parser.add_argument(
+        "--behavior-feedback",
+        help="Optional JSON from a package behavior smoke; failed probes guide consolidation retry.",
+    )
+    parser.add_argument(
         "--rebuild-from-batch", type=int,
         help="Reuse earlier accepted batch snapshots and regenerate this batch and all later ones.",
     )
@@ -52,6 +108,10 @@ def main():
         help="Webwright YAML containing an explicit top-level model mapping.",
     )
     args = parser.parse_args()
+    behavior_feedback = (
+        compact_behavior_feedback(load(args.behavior_feedback))
+        if args.behavior_feedback else None
+    )
     model_config = yaml.safe_load(Path(args.model_config).read_text(encoding="utf-8")) or {}
     if not isinstance(model_config.get("model"), dict):
         raise ValueError(f"{args.model_config}: missing model configuration")
@@ -88,6 +148,11 @@ def main():
             max_attempts=args.max_attempts,
             rebuild_from_batch=args.rebuild_from_batch,
             max_workers=args.workers,
+            behavior_smoke_feedback=(
+                behavior_feedback.get(site)
+                if isinstance(behavior_feedback, dict) and site in behavior_feedback
+                else behavior_feedback
+            ),
         )
         return site, result
 
