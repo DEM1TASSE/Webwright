@@ -37,6 +37,34 @@ Key files:
 - `evals/webarena/reuse_split_v1_eval_results_v12_mixed_paired/summary.json`
 - `evals/webarena/primitive_rt_v1_library_v11_public/`
 
+## WORKFLOW REFERENCE — frozen, but not a positive result
+
+Tag: `web-skill-factory-workflow-reference-v1`
+
+Frozen commit: `590beeab9b539cf938466e56128c4e5695a469ef`
+
+This is the pre-cross-template same-template workflow factory: it aligns several
+gold-admitted instances of one template, expands parameters/patterns, and emits a
+standalone workflow. It does not import or consume site primitives.
+
+| Evaluation | Scratch | Workflow | Interpretation |
+|---|---:|---:|---|
+| T1 same-template, unseen instances | 44/70 (62.9%) | 42/70 (60.0%) | -2 tasks; steps 15.29 -> 13.70 |
+| T2 cross-template adapt ablation | 43/59 (72.9%) | 33/59 (55.9%) | negative; do not use as cross-template default |
+
+This tag is the best **frozen/reproducible workflow reference**, not evidence that
+workflow reuse improves accuracy. Keep it for the same-template baseline and for the
+workflow-vs-primitive ablation. The workflow arm needs another development cycle before
+it can receive a `BEST` label.
+
+Key files:
+
+- `src/webwright/skill_factory/update.py`
+- `src/webwright/skill_factory/learn.py`
+- `src/webwright/skill_factory/retrieve.py`
+- `evals/webarena/reuse_split_v1_report_zh.md`
+- `evals/webarena/reuse_split_v1_workflow_library/`
+
 ## DEV — promising, not the reported best
 
 These versions were developed after inspecting the 156-task set. They are development
