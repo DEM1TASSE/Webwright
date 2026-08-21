@@ -57,7 +57,8 @@ def needs_replay(task: dict) -> bool:
 WRITE_VERB = re.compile(
     r"^\s*(create|post|add|submit|draft|leave a|reply|invite|assign|fork|upload|delete|remove"
     r"|update|change|set |edit|rename|reduce|increase|cancel|subscribe|unsubscribe|star |vote"
-    r"|upvote|downvote|approve|merge|close |reopen)\b", re.I)
+    r"|upvote|downvote|like|dislike|buy|order|purchase|approve|merge|close |reopen)\b",
+    re.I)
 
 # "Create an orders report from ... to ..." renders a filtered view in the Magento admin. It
 # reads as a write and is not one, so the verb alone would move five report tasks into the
