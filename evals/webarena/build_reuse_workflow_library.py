@@ -36,7 +36,11 @@ def main():
     ap.add_argument("--work-root", required=True)
     ap.add_argument("--model-config", required=True)
     ap.add_argument("--verify", choices=["off", "shape", "strict"], default="strict")
+    ap.add_argument("--pipeline-profile", choices=["minimal", "strict"], default="strict")
     ap.add_argument("--min-gold-sources", type=int, default=3)
+    ap.add_argument("--sites", nargs="*", help="Optional site subset for independent lanes")
+    ap.add_argument("--template-ids", nargs="*", type=int,
+                    help="Train-only development subset; the frozen split is unchanged")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
@@ -54,13 +58,22 @@ def main():
     work_root, library = Path(args.work_root), Path(args.library)
     events_path = work_root / "build_events.json"
     events = load(events_path) if events_path.exists() else []
+    # Only a successful build is terminal. A previous shortage/failed attempt must be retried
+    # when a regenerated admission manifest adds gold sources or infrastructure is repaired.
     completed = {(row["site"], str(row["template_id"])) for row in events
-                 if row.get("status") in {"built", "insufficient_gold_sources"}}
+                 if row.get("status") == "built"}
     for site, template_id, records in eligible_templates(split, manifests):
+        if args.sites and site not in set(args.sites):
+            continue
+        if args.template_ids and int(template_id) not in set(args.template_ids):
+            continue
         if (site, template_id) in completed:
             continue
         site_library = library / site
         event = {"site": site, "template_id": int(template_id), "gold_sources": len(records)}
+        event["source_grade"] = ("insufficient" if not records else
+                                 "reference" if len(records) == 1 else
+                                 "refined" if len(records) == 2 else "generalized")
         if len(records) < args.min_gold_sources:
             event["status"] = "insufficient_gold_sources"
             events.append(event)
@@ -89,7 +102,8 @@ def main():
             sys.executable, str(Path(__file__).with_name("build_exact_workflow_template.py")),
             "--records", str(records_path), "--dataset", args.dataset,
             "--library", str(site_library), "--verify", args.verify,
-            "--output", str(build_output),
+            "--source-grade", event["source_grade"],
+            "--pipeline-profile", args.pipeline_profile, "--output", str(build_output),
         ]
         event["command"] = cmd
         if args.dry_run:

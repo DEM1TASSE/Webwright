@@ -88,6 +88,10 @@ def main():
     parser.add_argument("--sites", nargs="*", help="Optional site subset for resumable builds")
     parser.add_argument("--max-attempts", type=int, default=3)
     parser.add_argument(
+        "--verification-profile", choices=["minimal", "strict"], default="strict",
+        help="minimal keeps executable shape/identity/provenance; strict adds semantic quality policy.",
+    )
+    parser.add_argument(
         "--max-output-tokens", type=int, default=24000,
         help="Maximum tokens for each extraction/update/quality response.",
     )
@@ -153,6 +157,7 @@ def main():
                 if isinstance(behavior_feedback, dict) and site in behavior_feedback
                 else behavior_feedback
             ),
+            verification_profile=args.verification_profile,
         )
         return site, result
 

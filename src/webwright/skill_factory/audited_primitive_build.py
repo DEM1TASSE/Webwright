@@ -1041,6 +1041,42 @@ def validate_primitive(value: dict, *, site: str, workflows: dict[str, dict], cl
     return errors
 
 
+def validate_primitive_minimal(
+    value: dict, *, site: str, workflows: dict[str, dict], classified=False
+) -> list[str]:
+    """Minimum viable admission: executable shape, identity, and auditable provenance only."""
+    errors = []
+    name = value.get("method")
+    feature = value.get("feature") if classified else None
+    expected_id = f"{site}/{feature}/{name}" if classified else f"{site}/{name}"
+    if not isinstance(name, str) or not _SAFE.fullmatch(name):
+        errors.append("method must be safe snake_case")
+    if classified and (not isinstance(feature, str) or not _SAFE.fullmatch(feature)):
+        errors.append("feature must be safe snake_case")
+    if value.get("primitive_id") != expected_id:
+        errors.append(f"primitive_id must be {expected_id!r}")
+    for key in ("capability", "method_code", "input_contract", "output_contract",
+                "source_evidence"):
+        if not value.get(key):
+            errors.append(f"{key} must be non-empty")
+    _, code_errors = _parse_methods(str(value.get("method_code") or ""), str(name or ""))
+    errors.extend(code_errors)
+    method_code = str(value.get("method_code") or "")
+    if re.search(r"https?://[A-Za-z0-9]", method_code):
+        errors.append("method_code hard-codes a deployment origin")
+    evidence_ids = []
+    for i, evidence in enumerate(value.get("source_evidence") or []):
+        wid = str(evidence.get("workflow_id")) if isinstance(evidence, dict) else ""
+        evidence_ids.append(wid)
+        if wid not in workflows:
+            errors.append(f"evidence[{i}] cites unknown workflow")
+        elif str(evidence.get("template_id")) != str(workflows[wid].get("template_id")):
+            errors.append(f"evidence[{i}] template mismatch")
+    if len(evidence_ids) != len(set(evidence_ids)):
+        errors.append("source_evidence may cite each workflow at most once")
+    return errors
+
+
 def validate_quality_verdicts(
     raw: dict, operations: list[dict], candidate_attribution: list[dict] | None = None
 ) -> list[str]:
@@ -1080,6 +1116,7 @@ def validate_quality_verdicts(
 def validate_build_proposal(
     raw: dict, *, site: str, batch: list[dict], pool: dict[str, dict],
     all_workflows: dict[str, dict] | None = None, extractions: list[dict] | None = None,
+    verification_profile: str = "strict",
 ):
     errors, accepted = [], []
     workflow_map = {str(x["id"]): x for x in batch}
@@ -1109,7 +1146,9 @@ def validate_build_proposal(
             errors.append(f"operations[{i}] unknown op {kind!r}")
             continue
         replacement = deepcopy(op.get("replacement") or {})
-        item_errors = validate_primitive(
+        validator = (validate_primitive_minimal
+                     if verification_profile == "minimal" else validate_primitive)
+        item_errors = validator(
             replacement, site=site, workflows=all_workflows or workflow_map
         )
         target = op.get("target_id")
@@ -1117,7 +1156,7 @@ def validate_build_proposal(
             item_errors.append("ADD target already exists")
         if kind == "UPDATE" and target not in pool:
             item_errors.append("UPDATE target does not exist")
-        if kind == "UPDATE" and target in pool:
+        if kind == "UPDATE" and target in pool and verification_profile != "minimal":
             old = pool[target]
             if replacement.get("primitive_id") != target:
                 item_errors.append("UPDATE may not change primitive identity")
@@ -1192,7 +1231,8 @@ def validate_build_proposal(
         elif decision in {"COVERED", "REJECT"}:
             if not str(attr.get("reason") or "").strip():
                 errors.append(f"candidate_attribution[{i}] {decision} needs a reason")
-            if decision == "COVERED" and extractions is not None:
+            if (decision == "COVERED" and extractions is not None
+                    and verification_profile != "minimal"):
                 candidate = next((candidate for extraction in extractions
                                   for candidate in extraction.get("candidates") or []
                                   if str(candidate.get("candidate_id")) == str(attr.get("candidate_id"))), None)
@@ -1233,7 +1273,10 @@ def apply_build_operations(pool: dict[str, dict], operations: list[dict]) -> tup
     return new, diff
 
 
-def validate_consolidation(raw: dict, *, site: str, pool: dict[str, dict], workflows: dict[str, dict]):
+def validate_consolidation(
+    raw: dict, *, site: str, pool: dict[str, dict], workflows: dict[str, dict],
+    verification_profile: str = "strict",
+):
     errors, consumed, final = [], [], []
     for i, op in enumerate(raw.get("operations") or []):
         kind = _op_kind(op)
@@ -1286,12 +1329,15 @@ def validate_consolidation(raw: dict, *, site: str, pool: dict[str, dict], workf
             errors.append(f"operations[{i}] unknown op {kind!r}")
             continue
         for j, replacement in enumerate(replacements):
-            item_errors = validate_primitive(
+            validator = (validate_primitive_minimal
+                         if verification_profile == "minimal" else validate_primitive)
+            item_errors = validator(
                 replacement, site=site, workflows=workflows, classified=True
             )
             errors.extend(f"operations[{i}].replacements[{j}]: {x}" for x in item_errors)
             final.append(replacement)
-        if kind == "MERGE" and sources and all(source in pool for source in sources):
+        if (verification_profile != "minimal" and kind == "MERGE" and sources
+                and all(source in pool for source in sources)):
             source_inputs = set().union(*(
                 _contract_leaf_fields(pool[source].get("input_contract") or {})
                 for source in sources
@@ -1318,7 +1364,8 @@ def validate_consolidation(raw: dict, *, site: str, pool: dict[str, dict], workf
                     f"operations[{i}] MERGE drops source output facts {missing_outputs}; "
                     "preserve the lossless typed union"
                 )
-        elif kind == "SPLIT" and source in pool and replacements:
+        elif (verification_profile != "minimal" and kind == "SPLIT"
+              and source in pool and replacements):
             source_input_fields = _contract_leaf_fields(pool[source].get("input_contract") or {})
             introduced_inputs = set().union(*(
                 _contract_leaf_fields(item.get("input_contract") or {})
@@ -1404,6 +1451,8 @@ def validate_consolidation(raw: dict, *, site: str, pool: dict[str, dict], workf
         )
         contract_groups.setdefault(signature, []).append(primitive.get("primitive_id"))
     for (feature, _), primitive_ids in contract_groups.items():
+        if verification_profile == "minimal":
+            continue
         if feature and len(primitive_ids) > 1:
             errors.append(
                 f"overlapping {feature} primitives share the same input contract: "
@@ -1498,11 +1547,47 @@ def retrieve_pool(batch: list[dict], pool: dict[str, dict], *, top_k: int = 12) 
     return [deepcopy(row[2]) for row in ranked[:top_k]]
 
 
+def minimal_consolidation_proposal(site: str, pool: dict[str, dict]) -> dict:
+    """Consume the full pool deterministically, deduplicating only identical public methods."""
+    by_method = {}
+    for key, primitive in sorted(pool.items()):
+        by_method.setdefault(str(primitive.get("method") or ""), []).append((key, primitive))
+    operations, selections = [], []
+    for method, rows in sorted(by_method.items()):
+        def score(row):
+            key, primitive = row
+            return (
+                len(primitive.get("source_evidence") or []),
+                len(_semantic_output_fields(primitive.get("output_contract") or {})),
+                len(str(primitive.get("method_code") or "")),
+                key,
+            )
+        selected_key, selected = max(rows, key=score)
+        if len(rows) == 1:
+            operations.append({"op": "KEEP", "source": selected_key, "feature": "core"})
+        else:
+            replacement = deepcopy(selected)
+            replacement.pop("candidate_key", None)
+            replacement["feature"] = "core"
+            replacement["primitive_id"] = f"{site}/core/{method}"
+            operations.append({
+                "op": "MERGE", "sources": [key for key, _ in rows],
+                "feature": "core", "replacement": replacement,
+            })
+        selections.append({
+            "method": method, "selected": selected_key,
+            "candidates": [key for key, _ in rows], "score": list(score((selected_key, selected))),
+        })
+    return {"strategy": "minimal_deterministic_method_dedup_v1",
+            "operations": operations, "selections": selections}
+
+
 def build_audited_site_library(
     *, site: str, workflows: list[dict], output: str | Path, batch_size=4, seed=20260810,
     llm_fn: Callable[[str, str], dict], max_attempts: int = 3,
     rebuild_from_batch: int | None = None, max_workers: int = 16,
     behavior_smoke_feedback: dict | None = None,
+    verification_profile: str = "strict",
 ) -> dict:
     """Build independent batch candidates in parallel, then consolidate their union once."""
     output = Path(output)
@@ -1511,7 +1596,9 @@ def build_audited_site_library(
     previous_config = {}
     if (output / "config.json").exists():
         previous_config = json.loads((output / "config.json").read_text(encoding="utf-8"))
-    build_mode = "parallel_initial_v1"
+    if verification_profile not in {"minimal", "strict"}:
+        raise ValueError("verification_profile must be minimal or strict")
+    build_mode = f"parallel_initial_v1_{verification_profile}"
     can_resume_batches = (
         previous_config.get("build_mode") == build_mode
         and previous_config.get("batch_size") == batch_size
@@ -1522,6 +1609,7 @@ def build_audited_site_library(
               "build_mode": build_mode, "max_workers": max_workers,
               "batch_dependency": "frozen_empty_catalog",
               "serial_stage": "consolidation"}
+    config["verification_profile"] = verification_profile
     _dump(output / "config.json", config)
     _dump(output / "workflow_order.json", {
         "batches": [[{"id": x["id"], "task_id": x.get("task_id"),
@@ -1572,6 +1660,26 @@ def build_audited_site_library(
             attempts.append({"attempt": attempt, "proposal": raw, "errors": errors})
             if not errors:
                 break
+        if errors and verification_profile == "minimal":
+            # One malformed/empty model extraction must not discard every other gold workflow
+            # for the site. Keep the failure auditable and convert only this workflow to a
+            # deterministic no-candidate record; no primitive code is invented or hand-edited.
+            raw = {
+                "decision": "SKIP",
+                "candidates": [],
+                "skip_category": "NO_REUSABLE_SITE_CAPABILITY",
+                "reason": (
+                    f"generator_failed_schema_after_{max_attempts}_attempts; "
+                    "excluded by minimal pipeline failure isolation"
+                ),
+                "generator_failure": {"errors": list(errors)},
+            }
+            attempts.append({
+                "attempt": "deterministic_failure_isolation",
+                "proposal": raw,
+                "errors": [],
+            })
+            errors = []
         _dump(directory / "attempts.json", attempts)
         _dump(directory / "extraction.json", raw)
         _dump(directory / "validation.json", {"accepted": not errors, "errors": errors})
@@ -1656,10 +1764,10 @@ def build_audited_site_library(
             ))
             accepted, errors = validate_build_proposal(
                 raw, site=site, batch=batch, pool=frozen_pool, all_workflows=all_workflows,
-                extractions=batch_extractions,
+                extractions=batch_extractions, verification_profile=verification_profile,
             )
             quality = None
-            if not errors:
+            if not errors and verification_profile == "strict":
                 quality_input = {"review_kind": "primitive_boundary_quality", "site": site,
                                  "operations": raw.get("operations") or [],
                                  "candidate_attribution": raw.get("candidate_attribution") or [],
@@ -1733,14 +1841,25 @@ def build_audited_site_library(
     )
     final, coverage = [], {}
     revalidated_from_attempt = None
-    if attempts:
+    if verification_profile == "minimal":
+        raw = minimal_consolidation_proposal(site, pool)
+        final, errors, coverage = validate_consolidation(
+            raw, site=site, pool=pool, workflows=all_workflows,
+            verification_profile=verification_profile,
+        )
+        attempts = [{"attempt": "deterministic_minimal_consolidation",
+                     "proposal": raw, "errors": errors}]
+        if not errors:
+            revalidated_from_attempt = "deterministic_minimal_consolidation"
+    elif attempts:
         latest_revalidation = None
         for previous in reversed(attempts):
             proposal = previous.get("proposal") if isinstance(previous, dict) else None
             if not isinstance(proposal, dict):
                 continue
             candidate_final, candidate_errors, candidate_coverage = validate_consolidation(
-                proposal, site=site, pool=pool, workflows=all_workflows
+                proposal, site=site, pool=pool, workflows=all_workflows,
+                verification_profile=verification_profile,
             )
             if latest_revalidation is None:
                 latest_revalidation = (
@@ -1772,7 +1891,8 @@ def build_audited_site_library(
             llm_fn(_CONSOLIDATE_SYS, json.dumps(attempt_input, ensure_ascii=False)) or {}
         )
         final, errors, coverage = validate_consolidation(
-            raw, site=site, pool=pool, workflows=all_workflows
+            raw, site=site, pool=pool, workflows=all_workflows,
+            verification_profile=verification_profile,
         )
         attempts.append({"attempt": attempt, "proposal": raw, "errors": errors})
         if not errors:
@@ -1791,6 +1911,7 @@ def build_audited_site_library(
     final_dir.mkdir(parents=True, exist_ok=True)
     (final_dir / "package.py").write_text(code, encoding="utf-8")
     index = {"schema_version": 1, "status": "candidate", "approved": False, "site": site,
+             "verification_profile": verification_profile,
              "root_class": expected_class_name(site), "primitives": final,
              "package_sha256": "sha256:" + hashlib.sha256(code.encode()).hexdigest()}
     _dump(final_dir / "index.json", index)

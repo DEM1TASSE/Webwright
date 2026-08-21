@@ -22,6 +22,7 @@ SITE_PLACEHOLDERS = {
     "shopping_admin": "__SHOPPING_ADMIN__",
     "reddit": "__REDDIT__",
     "map": "__MAP__",
+    "wikipedia": "__WIKIPEDIA__",
 }
 
 
@@ -70,7 +71,7 @@ def workflow_map(events_path):
     return {
         (row["site"], row["template_id"]): row["skill_ids"][0]
         for row in load(events_path)
-        if row.get("status") == "built" and row.get("skill_ids")
+        if row.get("status") == "built" and len(row.get("skill_ids") or []) == 1
     }
 
 
@@ -170,6 +171,10 @@ def main():
     ap.add_argument("--sites", nargs="*", help="Optional site subset; keeps the frozen split intact")
     ap.add_argument("--exclude-task-ids", nargs="*", type=int, default=[],
                     help="Recovery-only exclusions; the frozen split itself is unchanged")
+    ap.add_argument(
+        "--exclude-missing-workflows", action="store_true",
+        help="T1 only: run the explicitly reported covered subset instead of failing preflight.",
+    )
     ap.add_argument("--task-ids", nargs="*", type=int,
                     help="Development-only subset of the frozen partition")
     ap.add_argument("--timeout", type=int, default=900)
@@ -186,6 +191,30 @@ def main():
         raise SystemExit(str(error)) from error
     deployment_config = load(args.config)
     skills = workflow_map(args.workflow_events)
+    if args.partition == "t1" and args.arm == "workflow":
+        missing = [
+            {"site": site, "template_id": template_id, "task_id": task_id}
+            for site, _, template_id, task_id in jobs
+            if (site, template_id) not in skills
+        ]
+        coverage = {
+            "partition": "t1", "arm": "workflow", "jobs": len(jobs),
+            "covered_jobs": len(jobs) - len(missing), "missing_jobs": len(missing),
+            "missing": missing,
+        }
+        coverage_path = Path(args.runs_root) / "t1" / "workflow" / "coverage.json"
+        coverage_path.parent.mkdir(parents=True, exist_ok=True)
+        coverage_path.write_text(
+            json.dumps(coverage, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+        if missing:
+            if not args.exclude_missing_workflows:
+                raise SystemExit(
+                    f"T1 workflow coverage incomplete: {len(missing)}/{len(jobs)} jobs; "
+                    f"see {coverage_path}"
+                )
+            missing_ids = {row["task_id"] for row in missing}
+            jobs = [job for job in jobs if job[3] not in missing_ids]
     # A process may run only a site subset while another subset is running concurrently.  A
     # shared compatibility split lets the later process overwrite the earlier process's task
     # membership.  Keep the small cross_task_eval compatibility manifest site-local instead.

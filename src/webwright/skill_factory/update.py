@@ -203,6 +203,9 @@ def _refine(traces: list[Trace], library: Library, verify: str = "off",
     param_names = list((traces[0].meta.get("params") or {}).keys())
 
     blocks = [f"## Template\n{template}\n\n## Required output_schema for retrieved_data\n{json.dumps(schema)}\n"]
+    guidance = str(traces[0].meta.get("generation_guidance") or "").strip()
+    if guidance:
+        blocks.append("## Pipeline generation profile\n" + guidance)
     if existing and existing.code:
         blocks.append(f"## CURRENT library skill (improve THIS, do not rewrite)\n```python\n{existing.code}\n```")
     label = "NEW solutions" if existing else "Solutions"
