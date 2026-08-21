@@ -25,7 +25,8 @@ def tasks_by_id(path):
 
 
 def task_text(task):
-    return str(task.get("ques") or task.get("task") or task.get("task_description") or "")
+    return str(task.get("ques") or task.get("task") or task.get("confirmed_task")
+               or task.get("task_description") or "")
 
 
 def task_website(task):
