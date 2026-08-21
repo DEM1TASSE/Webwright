@@ -142,6 +142,36 @@ def append_optional_eval_flags(cmd, *, scratch_first=False):
     return cmd
 
 
+def serial_scope_lanes(jobs, serial_groups_path):
+    """Return one ordered lane per official write scope.
+
+    Every selected task must occur in exactly one scope.  Silently falling back to a
+    site-wide or singleton lane would make a malformed scheduling manifest look safe.
+    """
+    groups = load(serial_groups_path)
+    if not isinstance(groups, dict):
+        raise ValueError("serial groups must be a JSON object mapping scope to task ids")
+    placements = {}
+    for scope, task_ids in groups.items():
+        if not isinstance(task_ids, list):
+            raise ValueError(f"serial group {scope!r} must contain a list of task ids")
+        for raw_task_id in task_ids:
+            task_id = int(raw_task_id)
+            if task_id in placements:
+                raise ValueError(
+                    f"task {task_id} occurs in multiple serial groups: "
+                    f"{placements[task_id]!r}, {scope!r}"
+                )
+            placements[task_id] = str(scope)
+    missing = sorted(task_id for _, _, _, task_id in jobs if task_id not in placements)
+    if missing:
+        raise ValueError(f"selected serial tasks missing from serial groups: {missing[:20]}")
+    lanes = {}
+    for job in jobs:
+        lanes.setdefault(placements[job[3]], []).append(job)
+    return list(lanes.values())
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--partition", required=True, choices=["t1", "t2"])
@@ -166,6 +196,11 @@ def main():
     )
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--per-site-workers", type=int, default=1)
+    ap.add_argument(
+        "--serial-groups",
+        help=("Official serial_groups.json. Each write scope becomes a single-worker lane; "
+              "--workers remains the global cap across lanes."),
+    )
     ap.add_argument("--round-robin-deployments", action="store_true",
                     help="Distribute each site's tasks across every URL in its config.")
     ap.add_argument("--sites", nargs="*", help="Optional site subset; keeps the frozen split intact")
@@ -295,10 +330,15 @@ def main():
             rows.append(row)
         return rows
 
+    try:
+        lanes = (serial_scope_lanes(jobs, args.serial_groups) if args.serial_groups
+                 else site_lanes(jobs, args.per_site_workers))
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
+
     failures = 0
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as pool:
-        futures = [pool.submit(lane, items)
-                   for items in site_lanes(jobs, args.per_site_workers)]
+        futures = [pool.submit(lane, items) for items in lanes]
         for future in concurrent.futures.as_completed(futures):
             failures += sum(row["status"] == "process_error" for row in future.result())
     return int(failures > 0)
