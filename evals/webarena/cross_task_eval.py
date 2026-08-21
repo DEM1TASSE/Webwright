@@ -957,11 +957,34 @@ def classify_direct_exposure_risk(
 
 def retrieve_direct_primitives(
     task, library, *, site, max_primitives=5, runtime_context=None, llm_fn=None,
+    routing_profile="strict",
 ):
     """Metadata-first primitive routing without a scratch-first plan."""
     from webwright.skill_factory.audited_primitive_retrieve import retrieve_audited_primitives
     if llm_fn is None:
         from webwright.skill_factory.llm import llm_json as llm_fn
+    if routing_profile == "minimal":
+        def minimal_decide(current_task, candidates):
+            return llm_fn(
+                "Select the smallest useful set of generated site primitives from metadata. "
+                "USE when they cover the website acquisition; ADAPT when they replace at least "
+                "one concrete acquisition while ordinary task code completes the rest; otherwise "
+                "SKIP. Select only primitives whose required inputs are available from the task, "
+                "runtime_context, or an earlier selected output. Do not infer capabilities absent "
+                "from the contracts. Return JSON {\"decision\":\"use|adapt|skip\","
+                "\"primitive_ids\":[],\"primitive_calls\":[{\"primitive_id\":\"...\","
+                "\"bindings\":{},\"closed_acquisition\":\"...\"}],\"reason\":\"...\","
+                "\"remaining_gap\":[]}. Select at most five.",
+                json.dumps({"task": current_task, "runtime_context": runtime_context or {},
+                            "candidates": candidates}, ensure_ascii=False),
+            )
+
+        return retrieve_audited_primitives(
+            task, library, site=site, max_primitives=max_primitives,
+            decide_fn=minimal_decide, verify_fn=None, scratch_plan=None,
+        )
+    if routing_profile != "strict":
+        raise ValueError("routing_profile must be minimal or strict")
     route_state = {}
 
     def decide(current_task, candidates):
@@ -1270,10 +1293,11 @@ def run_one(args, split, dataset, config):
             scratch_plan=scratch_plan,
         ) if args.scratch_first else retrieve_direct_primitives(
             task["intent"], args.candidate_library, site=site, max_primitives=5,
-            runtime_context=runtime_context,
+            runtime_context=runtime_context, routing_profile=args.primitive_routing_profile,
         ))
         primitive_hint = render_audited_primitive_hint(
             retrieval, include_code=not args.primitive_metadata_only,
+            instruction_profile=args.primitive_routing_profile,
         )
         # SKIP with no selected primitive must be an exact no-op on the solve prompt.  Prefixing
         # even an empty hint with a newline makes the control prompt byte-different.
@@ -1605,6 +1629,10 @@ def main(argv=None):
     parser.add_argument(
         "--primitive-metadata-only", action="store_true",
         help="Development ablation only: route normally but withhold selected primitive code.",
+    )
+    parser.add_argument(
+        "--primitive-routing-profile", choices=["minimal", "strict"], default="strict",
+        help="minimal uses one metadata routing decision and no secondary semantic verifier.",
     )
     parser.add_argument(
         "--vanilla-task-interface", action="store_true",

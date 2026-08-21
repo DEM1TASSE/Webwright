@@ -482,8 +482,10 @@ def retrieve_audited_primitives(
 
 
 def render_audited_primitive_hint(
-    result: AuditedRetrieval, *, include_code: bool = True,
+    result: AuditedRetrieval, *, include_code: bool = True, instruction_profile: str = "strict",
 ) -> str:
+    if instruction_profile not in {"minimal", "strict"}:
+        raise ValueError("instruction_profile must be minimal or strict")
     plan_hint = render_frozen_scratch_plan(result.scratch_plan) if result.scratch_plan else ""
     if not result.primitives:
         return plan_hint
@@ -524,7 +526,13 @@ def render_audited_primitive_hint(
                      "candidate. Do not execute the primitive merely to probe candidates, and do "
                      "not let its implementation define the upstream candidate set. If the set "
                      "cannot be established, preserve the scratch solution without calling it.")
-    if result.scratch_plan:
+    if instruction_profile == "minimal":
+        lines.insert(3, "Reuse only acquisitions supported by the selected contracts. Vendor the "
+                     "selected methods into the standalone final script, bind inputs from the task "
+                     "or runtime, and fall back to ordinary browser work if a primitive fails or "
+                     "returns unusable data. Primitive output is evidence, not automatically the "
+                     "final answer; still complete every requested task requirement.")
+    elif result.scratch_plan:
         lines[3:3] = [
             "Apply only the approved local patches below. Do not redesign, replace, or reorder "
             "the rest of the frozen scratch plan. " + (

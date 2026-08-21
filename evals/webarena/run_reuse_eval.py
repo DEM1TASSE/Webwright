@@ -194,6 +194,10 @@ def main():
         help=("Freeze a task-only scratch plan before primitive metadata routing and allow "
               "primitives to replace only named plan steps."),
     )
+    ap.add_argument(
+        "--primitive-routing-profile", choices=["minimal", "strict"], default="strict",
+        help="Primitive consumer routing/verification profile passed to each task.",
+    )
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--per-site-workers", type=int, default=1)
     ap.add_argument(
@@ -295,6 +299,8 @@ def main():
             cmd += ["--webarena-tasks", args.webarena_tasks,
                     "--webarena-root", args.webarena_root]
         append_optional_eval_flags(cmd, scratch_first=args.scratch_first)
+        if args.arm == "primitive":
+            cmd += ["--primitive-routing-profile", args.primitive_routing_profile]
         if task_type == "navigate":
             if not args.webarena_tasks or not args.webarena_root:
                 return {"site": site, "task_id": task_id, "status": "process_error",
