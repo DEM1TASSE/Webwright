@@ -76,6 +76,21 @@ python skills/official-webarena/scripts/official_webarena.py pipeline \
 
 Use `--timeout` to bound the agent subprocess. A timeout still reports the discovered run directory but does not score unless a valid final state exists.
 
+## Running the whole benchmark
+
+One task at a time is the section above. Running all 812 has a scheduling problem the
+single-task path does not: a task that writes must not run beside one that reads what it wrote,
+and the failure is silent -- a lower score, never an error.
+
+`references/lanes.md` is the single source for that: how tasks are split into a read-only lane
+and a write lane, how the write lane is cut into chains by write scope, the exact commands for
+each, the reset -> readiness -> auth -> fingerprint sequence that has to precede a batch, and
+the failure modes measured while running it (contention masquerading as task timeouts, the lane
+that has to sit on its own deployment, why replay is a separate phase rather than a flag).
+
+Read it before launching a batch. Do not reconstruct the flow from the scripts' docstrings --
+those describe each script's own mechanics and deliberately do not repeat the operational order.
+
 ## Completion checks
 
 Before reporting a result, verify all of the following:
