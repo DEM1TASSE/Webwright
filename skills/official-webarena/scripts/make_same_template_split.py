@@ -17,12 +17,60 @@ A template needs at least four instances to appear here: three go to training, s
 has nothing left to hold out. Smaller templates are not lost -- they take part in the
 cross-template tier, where the unit is the template rather than the instance.
 """
-import argparse, collections, json, os, pathlib, random
+import argparse, collections, hashlib, importlib.util, json, os, pathlib, random, sys
 
 ROOT = pathlib.Path(os.environ.get('WEBARENA_HARNESS_ROOT', '/data/ww_official'))
+VERIFIED = pathlib.Path(os.environ.get(
+    'WEBARENA_VERIFIED_JSON',
+    '/home/t-demiwang/Code-Web-Agent/webarena-verified/assets/dataset/webarena-verified.json'))
 LABEL = {'shopping': 'Shopping', 'shopping_admin': 'ShopAdmin', 'gitlab': 'GitLab',
          'reddit': 'Reddit', 'map': 'Map', 'wikipedia': 'Wiki'}
 ORDER = ['Shopping', 'ShopAdmin', 'GitLab', 'Reddit', 'Map', 'Multi']
+
+
+def load_guard():
+    """The write-verb guard, loaded from the copy sitting beside this script.
+
+    Importing it from wherever WEBARENA_HARNESS_ROOT happens to point means the same commit can
+    produce different splits depending on which checkout is on that path.
+    """
+    spec = importlib.util.spec_from_file_location(
+        'partition_tasks', pathlib.Path(__file__).with_name('partition_tasks.py'))
+    module = importlib.util.module_from_spec(spec)
+    argv, sys.argv = sys.argv, ['partition_tasks']
+    try:
+        spec.loader.exec_module(module)
+    except SystemExit:
+        pass
+    finally:
+        sys.argv = argv
+    return module
+
+
+def verified_types(path):
+    out = {}
+    for task in json.loads(pathlib.Path(path).read_text()):
+        kind = 'retrieve'
+        for item in (task.get('eval') or []):
+            expected = item.get('expected')
+            if isinstance(expected, dict) and expected.get('task_type'):
+                kind = expected['task_type']
+                break
+        out[task['task_id']] = kind
+    return out
+
+
+def fingerprint(*paths):
+    """Hash every input and the generator itself, so a split names what produced it."""
+    out = {}
+    for path in paths:
+        path = pathlib.Path(path)
+        out[path.name] = hashlib.sha256(path.read_bytes()).hexdigest()[:16]
+    here = pathlib.Path(__file__)
+    out[here.name] = hashlib.sha256(here.read_bytes()).hexdigest()[:16]
+    out['partition_tasks.py'] = hashlib.sha256(
+        here.with_name('partition_tasks.py').read_bytes()).hexdigest()[:16]
+    return out
 
 
 def main():
@@ -39,7 +87,13 @@ def main():
     budget = float(args.budget) if frac else int(args.budget)
     tasks = json.loads((ROOT / 'webarena_official/config_files/test.raw.json').read_text())
     by_id = {t['task_id']: t for t in tasks}
-    mutating = set(json.loads((ROOT / 'partition/serial_ids.json').read_text()))
+    # Derived here rather than read from partition/, whose serial_ids.json is a product of a
+    # different script run against a different checkout. Same rule as the cross-template split:
+    # Verified's annotation, overridden to mutating when the intent's leading verb writes.
+    guard = load_guard()
+    kinds = verified_types(VERIFIED)
+    mutating = {i for i, t in by_id.items()
+                if kinds.get(i) == 'mutate' or guard.writes_despite_annotation(t)}
     dom = lambda i: ('Multi' if len(by_id[i]['sites']) > 1
                      else LABEL.get(by_id[i]['sites'][0], by_id[i]['sites'][0]))
 
@@ -63,10 +117,14 @@ def main():
         t1_train += pick
         t1_test += [i for i in ids if i not in set(pick)]
         kept_templates.append(tid)
-    (out / 'same_template.json').write_text(json.dumps(
-        {'tier': 'same_template', 'train': sorted(t1_train), 'test': sorted(t1_test),
-         'templates': kept_templates, 'budget': args.budget, 'seed': args.seed,
-         'selection': 'random within template'}, indent=1) + '\n')
+    payload = {'tier': 'same_template', 'train': sorted(t1_train), 'test': sorted(t1_test),
+               'templates': kept_templates, 'budget': args.budget, 'seed': args.seed,
+               'selection': 'random within template',
+               'fingerprint': fingerprint(ROOT / 'webarena_official/config_files/test.raw.json',
+                                          VERIFIED)}
+    (out / 'same_template.json').write_text(json.dumps(payload, indent=1) + '\n')
+    (out / 'same_template_train_ids.json').write_text(json.dumps(payload['train']) + '\n')
+    (out / 'same_template_test_ids.json').write_text(json.dumps(payload['test']) + '\n')
 
     def line(name, ids):
         c = collections.Counter(dom(i) for i in ids)

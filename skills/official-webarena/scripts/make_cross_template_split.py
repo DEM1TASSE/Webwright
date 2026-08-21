@@ -23,7 +23,7 @@ Two labelling details, both checked rather than assumed:
               instances on map alone and two on map plus shopping_admin. The template is keyed
               by the union of its instances' sites, which puts it in Multi-site.
 """
-import argparse, collections, json, os, pathlib, random
+import argparse, collections, hashlib, importlib.util, json, os, pathlib, random, sys
 
 ROOT = pathlib.Path(os.environ.get('WEBARENA_HARNESS_ROOT', '/data/ww_official'))
 VERIFIED = pathlib.Path(os.environ.get(
@@ -36,6 +36,51 @@ TYPES = ['retrieve', 'navigate', 'mutate']
 WRITE_VERB = None
 
 
+def load_guard():
+    """The write-verb guard, loaded from the copy sitting beside this script.
+
+    Importing it from wherever WEBARENA_HARNESS_ROOT happens to point means the same commit can
+    produce different splits depending on which checkout is on that path.
+    """
+    spec = importlib.util.spec_from_file_location(
+        'partition_tasks', pathlib.Path(__file__).with_name('partition_tasks.py'))
+    module = importlib.util.module_from_spec(spec)
+    argv, sys.argv = sys.argv, ['partition_tasks']
+    try:
+        spec.loader.exec_module(module)
+    except SystemExit:
+        pass
+    finally:
+        sys.argv = argv
+    return module
+
+
+def verified_types(path):
+    out = {}
+    for task in json.loads(pathlib.Path(path).read_text()):
+        kind = 'retrieve'
+        for item in (task.get('eval') or []):
+            expected = item.get('expected')
+            if isinstance(expected, dict) and expected.get('task_type'):
+                kind = expected['task_type']
+                break
+        out[task['task_id']] = kind
+    return out
+
+
+def fingerprint(*paths):
+    """Hash every input and the generator itself, so a split names what produced it."""
+    out = {}
+    for path in paths:
+        path = pathlib.Path(path)
+        out[path.name] = hashlib.sha256(path.read_bytes()).hexdigest()[:16]
+    here = pathlib.Path(__file__)
+    out[here.name] = hashlib.sha256(here.read_bytes()).hexdigest()[:16]
+    out['partition_tasks.py'] = hashlib.sha256(
+        here.with_name('partition_tasks.py').read_bytes()).hexdigest()[:16]
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--seed', type=int, default=42)
@@ -43,27 +88,13 @@ def main():
                     help='defaults to the splits/ directory beside this skill')
     args = ap.parse_args()
 
-    import importlib.util, sys
-    spec = importlib.util.spec_from_file_location(
-        'pt', ROOT / 'webwright/skills/official-webarena/scripts/partition_tasks.py')
-    pt = importlib.util.module_from_spec(spec)
-    argv, sys.argv = sys.argv, ['x']
-    try:
-        spec.loader.exec_module(pt)
-    except SystemExit:
-        pass
-    sys.argv = argv
+    pt = load_guard()
 
     tasks = json.loads((ROOT / 'webarena_official/config_files/test.raw.json').read_text())
     by_id = {t['task_id']: t for t in tasks}
-    verified = {t['task_id']: t for t in json.loads(VERIFIED.read_text())}
 
-    def task_type(tid):
-        for e in (verified[tid].get('eval') or []):
-            x = e.get('expected')
-            if isinstance(x, dict) and x.get('task_type'):
-                return x['task_type']
-        return 'retrieve'
+    kinds = verified_types(VERIFIED)
+    task_type = kinds.get
 
     templates = collections.defaultdict(list)
     for t in tasks:
@@ -109,9 +140,11 @@ def main():
     out = pathlib.Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     (out / 'cross_template.json').write_text(json.dumps(
-        {'train': train, 'test': test, 'train_templates': train_t, 'test_templates': test_t,
+        {'tier': 'cross_template', 'train': train, 'test': test,
+         'train_templates': train_t, 'test_templates': test_t,
          'seed': args.seed, 'unit': 'intent_template_id',
          'stratified_by': ['site', 'task_type'],
+         'fingerprint': fingerprint(ROOT / 'webarena_official/config_files/test.raw.json', VERIFIED),
          'template_meta': {str(k): v for k, v in sorted(meta.items())}}, indent=1) + '\n')
     (out / 'cross_template_train_ids.json').write_text(json.dumps(train) + '\n')
     (out / 'cross_template_test_ids.json').write_text(json.dumps(test) + '\n')

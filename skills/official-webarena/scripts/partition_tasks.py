@@ -111,6 +111,9 @@ def main() -> int:
     (out / "parallel_ids.json").write_text(json.dumps(sorted(parallel)) + "\n")
     (out / "serial_groups.json").write_text(
         json.dumps({k: sorted(v) for k, v in sorted(groups.items())}, indent=1) + "\n")
+    # serial_groups.json carries the same ids keyed by write scope, but a plain list is what
+    # --task-ids takes, and reconstructing it by hand outside this script is how it drifts.
+    (out / "serial_ids.json").write_text(json.dumps(sorted(serial)) + "\n")
     (out / "replay_ids.json").write_text(json.dumps(replay) + "\n")
 
     deepest = max(len(v) for v in groups.values())
