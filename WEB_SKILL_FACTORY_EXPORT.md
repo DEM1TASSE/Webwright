@@ -8,8 +8,8 @@
 | 用途 | Git ref | 定位 |
 |---|---|---|
 | 复现正式 Primitive 结果 | [`web-skill-factory-best`](https://github.com/DEM1TASSE/Webwright/tree/web-skill-factory-best) | 唯一 `BEST`，冻结于 `100a0e3` |
-| 查看全部可公开代码和实验分类 | [`web-skill-factory-all-code-20260821`](https://github.com/DEM1TASSE/Webwright/tree/web-skill-factory-all-code-20260821) | All-code handoff；从 `VERSION_INDEX.md` 开始 |
-| 复现同模板 Workflow baseline | [`web-skill-factory-workflow-reference-v1`](https://github.com/DEM1TASSE/Webwright/tree/web-skill-factory-workflow-reference-v1) | 冻结 tag，指向 `590beeab`；不是正收益版本 |
+| 查看全部可公开代码和实验分类 | [`web-skill-factory-all`](https://github.com/DEM1TASSE/Webwright/tree/web-skill-factory-all) | All-code handoff；从 `VERSION_INDEX.md` 开始 |
+| 复现同模板 Workflow baseline | [`590beeab`](https://github.com/DEM1TASSE/Webwright/tree/590beeab) | all 历史中的冻结 commit；不是正收益版本 |
 
 ## Primitive BEST
 
@@ -30,7 +30,7 @@ audited library；没有手写 primitive。正式 WebArena template-disjoint T2 
 
 ## Workflow reference
 
-`web-skill-factory-workflow-reference-v1` 是 pre-cross-template workflow factory：用同一
+`590beeab` 是 pre-cross-template workflow factory：用同一
 template 的多个 gold-admitted instances 做参数和 pattern 泛化，输出 standalone workflow，
 不 import primitive package。
 
@@ -47,7 +47,7 @@ Workflow 的意义是提供 same-template baseline 和 workflow-vs-primitive abl
 ## All-code 分支如何阅读
 
 首先阅读
-[`VERSION_INDEX.md`](https://github.com/DEM1TASSE/Webwright/blob/web-skill-factory-all-code-20260821/VERSION_INDEX.md)。
+[`VERSION_INDEX.md`](https://github.com/DEM1TASSE/Webwright/blob/web-skill-factory-all/VERSION_INDEX.md)。
 它将实验分成：
 
 - `BEST`：可用于正式结果的 Primitive V12；
@@ -72,7 +72,7 @@ git clone --branch web-skill-factory-best https://github.com/DEM1TASSE/Webwright
 获取全部可公开代码：
 
 ```bash
-git clone --branch web-skill-factory-all-code-20260821 https://github.com/DEM1TASSE/Webwright.git
+git clone --branch web-skill-factory-all https://github.com/DEM1TASSE/Webwright.git
 ```
 
 获取冻结 workflow reference：
@@ -80,7 +80,7 @@ git clone --branch web-skill-factory-all-code-20260821 https://github.com/DEM1TA
 ```bash
 git clone https://github.com/DEM1TASSE/Webwright.git
 cd Webwright
-git checkout web-skill-factory-workflow-reference-v1
+git checkout 590beeab
 ```
 
 ## 完整私有导出
