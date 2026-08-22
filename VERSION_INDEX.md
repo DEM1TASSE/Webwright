@@ -115,8 +115,9 @@ directories in the private handoff package.
 - `evals/odysseys/`: Odysseys runner and rubric export.
 - `tests/`: unit and pipeline tests.
 
-Historical implementations remain reachable through the archival merge history of this
-branch. The old experiment branch pointers were removed after their tips were verified as
-ancestors of `web-skill-factory-all-20260821`. They are intentionally not copied into parallel
+Historical implementations remain reachable both through the archival merge history of
+this branch and through their original experiment branch pointers. The dated `all` and
+`best` branches are the recommended handoff entry points; the older branches remain for
+provenance and audit. Historical implementations are intentionally not copied into parallel
 `v5/`, `v6/`, ... source trees, because that would create multiple editable copies of the
 same modules.
