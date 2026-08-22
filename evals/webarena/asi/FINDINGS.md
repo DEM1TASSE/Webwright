@@ -208,7 +208,9 @@ ASI **没有检索**（`RETRIEVABLE_ACTIONS_DICT` 五个站点全空，那套 gt
 
 ```
 EXPORT-2/webwright-asi-skill/
-  FINDINGS.md                 本文
+  FINDINGS.md                 本文：结论与分析
+  RESULTS.md                  纯数字：判分状态、库使用、按站点/lane/type、逐题 220 行
+  PROVENANCE.md               代码在哪个仓库、哪个分支、哪个 commit
   README.md                   目录说明与复现步骤
   PROMPT_FREEZE.json          冻结的 prompt + 全部哈希 + 偏离清单
   prompt_freeze/              10 个站点组合的完整 prompt 原文
@@ -221,7 +223,7 @@ EXPORT-2/webwright-asi-skill/
   analysis/vs_full812_scratch.txt     与旧基线的临时对比（附不可引用理由）
   logs/                       完整运行日志
   splits/                     划分与 lane 定义
-  trajectories-readlane-raw.tgz       只读 lane 全部轨迹（1.8G）
+  trajectories-all-raw.tgz            全部 226 题的完整轨迹（读+写 lane）
   discarded_mixed_spec/       被作废那轮的结果与日志
 ```
 

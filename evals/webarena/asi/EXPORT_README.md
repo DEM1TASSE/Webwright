@@ -1,5 +1,7 @@
 # ASI 库 × Webwright agent — 跨 harness 迁移臂（2026-08-21）
 
+**先看 `FINDINGS.md`（结论与分析）和 `RESULTS.md`（数字）。代码出处见 `PROVENANCE.md`。**
+
 把 Agent Skill Induction 诱导出的技能库注入 Webwright 的 agent，在官方 WebArena
 cross-template 留出集（399 题）上评测。与 primitive / scratch 两个臂**同 harness、同 split、
 同实例**，只多一个注入块。
@@ -50,7 +52,7 @@ analysis/vs_full812_scratch.txt   与旧 scratch 基线的临时对比（附不�
 analysis/analysis_asi.json        逐题：correct / steps / 引用到的函数名 / bid 抄写
 logs/                     asi_arm.log、asi.parallel.log、reset_inst4.log
 splits/                   cross-template 划分 + 并行/串行 lane + reuse_split
-trajectories-readlane-raw.tgz     只读 lane 全部轨迹（1.8G）
+trajectories-all-raw.tgz          全部 226 题的完整轨迹（读+写 lane）
 discarded_mixed_spec/     被作废那一轮的结果与日志，见下
 ```
 
