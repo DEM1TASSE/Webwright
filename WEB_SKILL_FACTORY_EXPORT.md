@@ -7,13 +7,13 @@
 
 | 用途 | Git ref | 定位 |
 |---|---|---|
-| 复现正式 Primitive 结果 | [`web-skill-factory-best`](https://github.com/DEM1TASSE/Webwright/tree/web-skill-factory-best) | 唯一 `BEST`，冻结于 `100a0e3` |
-| 查看全部可公开代码和实验分类 | [`web-skill-factory-all`](https://github.com/DEM1TASSE/Webwright/tree/web-skill-factory-all) | All-code handoff；从 `VERSION_INDEX.md` 开始 |
+| 复现正式 Primitive 结果 | [`web-skill-factory-best-20260821`](https://github.com/DEM1TASSE/Webwright/tree/web-skill-factory-best-20260821) | 唯一 `BEST`，冻结于 `100a0e3` |
+| 查看全部可公开代码和实验分类 | [`web-skill-factory-all-20260821`](https://github.com/DEM1TASSE/Webwright/tree/web-skill-factory-all-20260821) | All-code handoff；从 `VERSION_INDEX.md` 开始 |
 | 复现同模板 Workflow baseline | [`590beeab`](https://github.com/DEM1TASSE/Webwright/tree/590beeab) | all 历史中的冻结 commit；不是正收益版本 |
 
 ## Primitive BEST
 
-`web-skill-factory-best` 是 V12 direct primitive pipeline。它消费 V11 pipeline 自动生成的
+`web-skill-factory-best-20260821` 是 V12 direct primitive pipeline。它消费 V11 pipeline 自动生成的
 audited library；没有手写 primitive。正式 WebArena template-disjoint T2 paired 结果：
 
 | Arm | Success | Mean agent steps |
@@ -22,7 +22,7 @@ audited library；没有手写 primitive。正式 WebArena template-disjoint T2 
 | Primitive | 100/156 (64.1%) | 11.90 |
 | Delta | **+4.5 pp** | **-9.8%** |
 
-该冻结版本由 `web-skill-factory-best` 分支直接定位。权威说明和机器可读结果位于：
+该冻结版本由 `web-skill-factory-best-20260821` 分支直接定位。权威说明和机器可读结果位于：
 
 - `evals/webarena/primitive_v12_pipeline_review_zh-CN.md`
 - `evals/webarena/reuse_split_v1_eval_results_v12_mixed_paired/summary.json`
@@ -47,7 +47,7 @@ Workflow 的意义是提供 same-template baseline 和 workflow-vs-primitive abl
 ## All-code 分支如何阅读
 
 首先阅读
-[`VERSION_INDEX.md`](https://github.com/DEM1TASSE/Webwright/blob/web-skill-factory-all/VERSION_INDEX.md)。
+[`VERSION_INDEX.md`](https://github.com/DEM1TASSE/Webwright/blob/web-skill-factory-all-20260821/VERSION_INDEX.md)。
 它将实验分成：
 
 - `BEST`：可用于正式结果的 Primitive V12；
@@ -66,13 +66,13 @@ Odysseys 和测试。互斥的历史实现通过 archival Git history 保留，�
 复现 BEST：
 
 ```bash
-git clone --branch web-skill-factory-best https://github.com/DEM1TASSE/Webwright.git
+git clone --branch web-skill-factory-best-20260821 https://github.com/DEM1TASSE/Webwright.git
 ```
 
 获取全部可公开代码：
 
 ```bash
-git clone --branch web-skill-factory-all https://github.com/DEM1TASSE/Webwright.git
+git clone --branch web-skill-factory-all-20260821 https://github.com/DEM1TASSE/Webwright.git
 ```
 
 获取冻结 workflow reference：
