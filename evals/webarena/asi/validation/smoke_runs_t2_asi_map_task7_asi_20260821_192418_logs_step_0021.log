@@ -1,0 +1,99 @@
+import asyncio, json, os, re
+from pathlib import Path
+from playwright.async_api import async_playwright
+
+WORKSPACE = Path(os.environ.get("WORKSPACE_DIR", ".")).resolve()
+RUN_DIR = WORKSPACE / "final_runs" / "run_007"
+SCREENSHOTS = RUN_DIR / "screenshots"
+LOG_PATH = RUN_DIR / "final_script_log.txt"
+START_URL = "http://gcrsandbox410.redmond.corp.microsoft.com:3000"
+
+def log(msg: str):
+    with LOG_PATH.open("a", encoding="utf-8") as f:
+        f.write(msg + "\n")
+    print(msg)
+
+async def write_outputs(page, answer_data, status_code):
+    payload = answer_data if answer_data else None
+    status = "SUCCESS" if answer_data else "NOT_FOUND_ERROR"
+    (WORKSPACE / "agent_response.json").write_text(json.dumps({
+        "task_type": "RETRIEVE",
+        "status": status,
+        "retrieved_data": payload,
+        "error_details": None
+    }, indent=2), encoding="utf-8")
+    (WORKSPACE / "final_state.html").write_text(await page.content(), encoding="utf-8")
+    (WORKSPACE / "final_state.json").write_text(json.dumps({
+        "final_url": page.url,
+        "html_path": "final_state.html",
+        "document_status": status_code,
+        "answer": payload
+    }, indent=2), encoding="utf-8")
+    log("final response: " + json.dumps(payload))
+
+async def close_any_welcome(page):
+    for _ in range(4):
+        buttons = page.get_by_role("button", name="Close")
+        count = await buttons.count()
+        clicked = False
+        for i in range(count):
+            try:
+                await buttons.nth(i).click(timeout=800)
+                await page.wait_for_timeout(250)
+                clicked = True
+                break
+            except Exception:
+                continue
+        if not clicked:
+            break
+
+async def main():
+    RUN_DIR.mkdir(parents=True, exist_ok=True)
+    SCREENSHOTS.mkdir(parents=True, exist_ok=True)
+    LOG_PATH.write_text("", encoding="utf-8")
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        context = await browser.new_context(viewport={"width": 1280, "height": 1800})
+        page = await context.new_page()
+        resp = await page.goto(START_URL, wait_until="domcontentloaded")
+        status = resp.status if resp else None
+        await page.wait_for_timeout(1500)
+        await close_any_welcome(page)
+        log("step 1 action: opened start page and dismissed welcome dialogs to access search and routing controls")
+        await page.screenshot(path=str(SCREENSHOTS / "final_execution_1_home.png"))
+
+        await page.locator('input[name="query"]').last.fill("Allegheny County Airport")
+        await page.locator('input[type="submit"][value="Go"]').last.click()
+        await page.wait_for_timeout(5000)
+        nonintl_text = await page.locator("body").inner_text()
+        log("step 2 action: searched Allegheny County Airport as a nearby candidate and captured site evidence for a non-international county airport listing")
+        log("noninternational candidate evidence: " + re.sub(r"\s+", " ", nonintl_text)[:900])
+        await page.screenshot(path=str(SCREENSHOTS / "final_execution_2_noninternational_candidate_search.png"))
+
+        route_page = await context.new_page()
+        resp2 = await route_page.goto(START_URL, wait_until="domcontentloaded")
+        status = resp2.status if resp2 else status
+        await route_page.wait_for_timeout(1500)
+        await close_any_welcome(route_page)
+        await route_page.locator('input[name="route_from"]').last.fill("Carnegie Mellon University, Pittsburgh, PA")
+        await route_page.locator('input[name="route_to"]').last.fill("Pittsburgh International Airport")
+        await route_page.locator('input.routing_go').last.click()
+        await route_page.wait_for_timeout(7000)
+        body = await route_page.locator("body").inner_text()
+        to_val = await route_page.locator('input[name="route_to"]').last.input_value()
+        m = re.search(r"Distance:\s*([^\.]+)\.", body)
+        distance = m.group(1).strip() if m else None
+        log("step 3 action: opened car directions from Carnegie Mellon University to Pittsburgh International Airport and captured displayed route distance and resolved airport address")
+        log(f"resolved destination: {to_val}")
+        log(f"displayed driving distance: {distance}")
+        await route_page.screenshot(path=str(SCREENSHOTS / "final_execution_3_route_to_pittsburgh_international.png"))
+
+        answer = [to_val] if to_val and distance and "33km" in distance.replace(" ", "") else []
+        await write_outputs(route_page, answer, status)
+        await browser.close()
+
+if __name__ == "__main__":
+    asyncio.run(main())
+
+--- RUN007 LOG ---
+step 1 action: opened start page and dismissed welcome dialogs to access search and routing controls
