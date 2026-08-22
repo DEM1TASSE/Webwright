@@ -1,0 +1,204 @@
+# shopping_admin candidate primitive package
+
+Status: candidate; not promoted.
+
+## Feature classes
+
+### `core`
+
+- `shopping_admin/core/add_order_comment_and_notify_customer` — submit an order comment on the shopping_admin order detail page with optional customer email notification
+  - Owns: On an order detail page, fill the order history comment field, Set the site checkbox controlling customer email notification, Submit the comment via the page's comment form, Verify the new comment appears in order comments history after submission
+  - Does not own: Finding the target order, Generating the message text, Providing email credentials or secret material, Guaranteeing external email delivery beyond the site recording notification intent/history
+  - Evidence workflows: task495_t280
+- `shopping_admin/core/add_order_comment_with_customer_notification` — Submit an order history comment on the current order detail page with optional customer email notification.
+  - Owns: Fill the order history comment textarea, Set the Notify Customer by Email checkbox, Submit the comment through the order detail UI, Verify the submitted comment text becomes visible on the order page afterward
+  - Does not own: Finding the target order, Composing the message content, Choosing whether notification should be sent based on business rules, Proving downstream email delivery outside the admin UI
+  - Evidence workflows: task494_t280
+- `shopping_admin/core/cancel_order_by_order_id` — cancel an existing Magento admin order by its internal order_id from the order detail page
+  - Owns: navigate to the shopping_admin Magento admin order detail URL for a given internal order_id, invoke the site's visible Cancel action for that order, confirm the cancellation in the site confirmation modal, verify the resulting order detail page shows canceled status for the same order
+  - Does not own: discovering or searching for the target order_id, deciding which order should be canceled, supplying authentication credentials directly, cross-order batch cancellation, returning raw page HTML or screenshots as the capability output
+  - Evidence workflows: task473_t257
+- `shopping_admin/core/cancel_order_by_order_number` — cancel an order from the shopping admin order detail page using its order number
+  - Owns: navigate to the admin sales order grid, locate an order row by displayed order number in the grid, open the order detail page from the grid row, detect whether the order is pending vs already canceled based on displayed page status/message, invoke the site's cancel action and confirm the modal when cancellation is available, verify the final order page shows canceled state
+  - Does not own: choosing which order number to cancel for a broader business task, cross-order iteration or searching beyond the demonstrated grid lookup, returning screenshots, raw DOM, or workflow logging artifacts, providing or exposing authentication secrets or storage state, fallback cancellation through any non-site-local mechanism
+  - Evidence workflows: task471_t257, task474_t257
+- `shopping_admin/core/filter_orders_by_status` — Apply the Magento Admin Orders grid status filter and acquire the resulting filtered orders result slice state
+  - Owns: Navigate to the shopping_admin Magento Admin orders grid page, Open the Orders grid filters panel, Set the dedicated status filter control via select[name="status"] using a supported displayed status value, Apply filters and wait for the Orders grid to refresh, Verify the active status filter is displayed on the page, Parse result-slice state from the page, including whether records are present and displayed count text
+  - Does not own: Choosing which business status should be investigated beyond the site-supported enum, Cross-status comparison or fraud analysis, Iterating across multiple statuses, Extracting all order rows across pagination, Ranking, summarizing, or formatting a human answer
+  - Evidence workflows: task676_t253
+- `shopping_admin/core/filter_products_by_name` — Apply the shopping_admin product-grid name filter and acquire the resulting filtered page scope
+  - Owns: Open the shopping_admin product catalog grid, Clear/reset pre-existing filters when the site exposes those controls, Populate the `input[name="name"]` filter field with a caller-provided name query, Submit filters with the site's Apply Filters control, Return page-scoped evidence of the filtered result state
+  - Does not own: Enumerate all matching products across all pages, Prove absence of matching products site-wide, Choose which names to query, Parse full typed product records from the grid rows, which this workflow does not do
+  - Evidence workflows: task503_t287
+- `shopping_admin/core/find_product_in_catalog_by_keyword` — Search the shopping_admin catalog product grid by keyword and open a matching product's edit page
+  - Owns: Navigate to the catalog product index grid, Clear existing grid filters via the site's Clear all control when present, Fill the grid's `Search by keyword` field, Submit the grid search, Confirm the searched term appears in the resulting page text, Open the first matching product via its Edit action
+  - Does not own: Choosing the search terms to run, Repeating searches across many SKUs, Guaranteeing uniqueness of the match, Parsing full typed product rows from the grid, Applying task-specific validation that a specific parent product contains the SKU
+  - Evidence workflows: task504_t287
+- `shopping_admin/core/generate_coupons_report` — generate the Shopping Admin coupons sales report for a specified date range and confirm the report results page is displayed
+  - Owns: navigate to the Shopping Admin coupons report page using authenticated browser context, populate the report filter's From and To date inputs using the site's expected date field selectors, submit the site's Show Report control for the coupons report, wait for the resulting coupons report results state to load and verify report generation via the site's visible results marker, return the resulting report page URL and the applied date range as typed output
+  - Does not own: authentication or credential acquisition beyond requiring an authenticated browser session, saving screenshots, HTML snapshots, or workflow-specific artifact files, summarizing, aggregating, or interpreting report contents beyond confirming the report was generated, extracting typed coupon report rows, totals, or metrics not parsed in the source evidence
+  - Evidence workflows: task712_t271
+- `shopping_admin/core/get_catalog_products_by_keyword_page` — retrieve a page-scoped catalog search result slice from the shopping admin products grid by keyword
+  - Owns: Open the shopping admin catalog product grid, Clear existing grid filters using the site's Clear all control when present, Enter a keyword into the site's Search by keyword field, Submit the grid search using the site's Search button, Return typed evidence for the resulting page slice based on visible product text on the loaded results page
+  - Does not own: Exhaustive traversal of all result pages, Selecting one desired product among matching results, Inferring variant relationships from separate product pages, Mutating catalog entries
+  - Evidence workflows: task781_t742
+- `shopping_admin/core/get_dashboard_top_search_terms` — extract the Top Search Terms table records from the shopping admin dashboard
+  - Owns: navigate to the shopping admin dashboard using existing authenticated browser state, locate the dashboard section labeled 'Top Search Terms', parse displayed table rows into typed records with search term text, uses count, and optional results count, return records in displayed order
+  - Does not own: choosing how many top terms to keep, summarizing to only the first result, cross-widget aggregation or analytics beyond the displayed table, providing or managing credentials
+  - Evidence workflows: task41_t285
+- `shopping_admin/core/get_order_detail` — open a shopping_admin order detail page and extract typed order detail fields shown on the page
+  - Owns: Navigate to a specific order detail URL within shopping_admin using existing authenticated browser state, Wait for order detail page content that includes Billing Address and Order Status, Extract the displayed billing contact/name from the Billing Address section, Extract the displayed order status from the detail page
+  - Does not own: Discovering which order detail URL to open, Filtering or listing orders, Guaranteeing that the detail page status matches a caller's expectation beyond returning the displayed value, Editing order data
+  - Evidence workflows: task200_t366
+- `shopping_admin/core/get_order_detail_status` — retrieve an admin order detail page and parse typed cancellation/status facts for a specific order
+  - Owns: Navigate to the shopping_admin order detail URL for a given order_id using authenticated browser state, Read the rendered order detail page text, Verify the displayed order number matches the requested order, Parse objective status facts exposed on the page, including whether a cancellation confirmation message is present and whether the displayed order status is Canceled
+  - Does not own: Perform the order cancellation mutation, Search across multiple orders or paginate through the orders grid, Decide which order_id to inspect, Return raw page text or screenshots as the primary output, Aggregate results across multiple order pages
+  - Evidence workflows: task472_t257
+- `shopping_admin/core/get_order_details_from_order_page` — open an order detail page and extract typed order details from the shopping_admin admin UI
+  - Owns: Open the order detail page from a row-scoped View action or current detail URL, Read stable displayed order detail fields from the rendered page, Parse typed order identity, customer name, and order status from the detail page
+  - Does not own: Selecting which order to inspect, Mutating comments or notification settings, Interpreting business intent from the extracted fields
+  - Evidence workflows: task495_t280
+- `shopping_admin/core/get_order_skus_from_order_detail` — Open a shopping admin order detail page and extract product SKU values shown for items in that order.
+  - Owns: Navigating to an order detail URL within shopping admin, Reading rendered order detail content, Parsing SKU values from displayed order/item text and tables, Returning de-duplicated SKU strings for the order
+  - Does not own: Choosing which order to inspect, Deriving the order detail URL from business logic over multiple orders, Inferring non-displayed SKU values, Aggregating results across multiple orders, Ranking or filtering orders before inspection
+  - Evidence workflows: task290_t234
+- `shopping_admin/core/get_order_totals_from_order_detail` — Open an order detail page and extract displayed order total amounts, including subtotal and grand total.
+  - Owns: Navigating to an order detail URL within shopping_admin, Waiting for the order detail page to finish loading, Reading the displayed order totals section from the rendered page, Parsing currency amounts for subtotal and grand total into semantically distinct fields, Preserving displayed currency text for extracted totals
+  - Does not own: Finding or choosing which order detail URL to open, Comparing multiple orders, Inferring product spend semantics beyond exposing the site's displayed subtotal, Any mutation on the order, Returning raw page text or DOM
+  - Evidence workflows: task291_t234
+- `shopping_admin/core/get_orders_grid_row_by_display_number` — locate an order in the admin orders grid by displayed order number and parse its rendered row text
+  - Owns: Navigate to the shopping_admin admin orders listing page, Locate a table row containing a specified displayed order number, Extract the rendered row text for that matched row as a typed page-scoped record
+  - Does not own: Provide complete enumeration of all orders, Prove an order does not exist site-wide, Open or mutate the order from the grid, Interpret business meaning of every column beyond the rendered row text demonstrated here, Rank or filter multiple orders beyond exact row match on displayed number
+  - Evidence workflows: task472_t257
+- `shopping_admin/core/get_product_edit_header` — Open a shopping admin product edit page by product ID and read header/title identity text for that product.
+  - Owns: Navigate to the product edit URL for a given product ID within shopping_admin admin, Wait for the edit page to load, Read visible page identity fields evidenced by the workflow: document title and primary h1 header
+  - Does not own: Deriving brand semantics from the title or header text, Validating caller-supplied expected brand tokens, Searching for product IDs, Mutating product data
+  - Evidence workflows: task185_t368
+- `shopping_admin/core/get_product_review_details` — Open a shopping admin product review detail page by review ID and extract typed review fields
+  - Owns: Navigate to the admin review detail endpoint for a given review ID, Extract stable form-backed review fields from the detail page, Parse title, detail text, nickname, and selected rating option from the page
+  - Does not own: Discovering review IDs beyond caller-provided input, Interpreting review text sentiment, Combining multiple reviews into a summary
+  - Evidence workflows: task215_t249
+- `shopping_admin/core/get_product_review_details_by_review_id` — retrieve typed details for a single product review from the shopping admin review edit page
+  - Owns: navigation to the shopping admin product review edit page for a specified review id, reading stable review form fields exposed on the admin review page, returning typed review content fields from the site-rendered form, distinguishing a readable review form from a not-found or inaccessible page by required selector presence
+  - Does not own: discovering which review id to inspect from a caller's product-selection strategy, summarizing review text into reasons customers like a product, cross-review aggregation, sentiment analysis, ranking, or filtering by task-specific notions such as positive review, authentication secret handling beyond consuming existing authenticated browser state
+  - Evidence workflows: task121_t250
+- `shopping_admin/core/get_product_reviews_from_product_page` — retrieve typed customer reviews displayed on a shopping product detail page for a specific product URL
+  - Owns: Navigate to a product detail page URL on the shopping site, Open the reviews section via the site's in-page reviews anchor, Wait until review items are rendered, Extract each visible review as a typed record with title and content
+  - Does not own: Finding the correct product URL from a product name, Admin-side report filtering or counting reviews, Interpreting review text into summarized reasons customers like the product, Cross-review aggregation, sentiment analysis, or answer formatting
+  - Evidence workflows: task119_t250
+- `shopping_admin/core/get_product_reviews_section_text` — Open a shopping_admin product detail page and acquire the rendered customer reviews section text for that product
+  - Owns: navigate to a product detail URL on shopping_admin, open the product page Reviews tab via the site-specific selector, wait until the reviews section is visibly populated with review content, return typed acquisition containing the product URL and rendered reviews section text
+  - Does not own: infering sentiment or summarizing disliked aspects from review text, extracting structured per-review records such as rating, author, or date, which this workflow did not parse, cross-product search or discovery of product URLs, answer formatting
+  - Evidence workflows: task217_t249
+- `shopping_admin/core/get_product_stock_status` — read the stock status value from a product edit page in the shopping admin
+  - Owns: Open a product edit page by admin product edit URL, Locate the stock status select control, Return the canonical stock status value from the form
+  - Does not own: Choosing which products to inspect, Saving edits, Interpreting multiple products collectively, Searching products grid
+  - Evidence workflows: task502_t287
+- `shopping_admin/core/get_sales_orders_report_rows` — Run the shopping admin Sales > Orders report for a specified period/date range/order-status filter and return typed report rows from the results table.
+  - Owns: Navigation to the shopping admin sales orders report page, Setting site-native report filter controls: period type, from date, to date, order status mode, selected order statuses, Submitting the report, Parsing the rendered results table into typed rows keyed by displayed reporting period with numeric order count
+  - Does not own: Choosing which months to include in a final answer, Restricting to January-May 2023 specifically, Formatting output as MM:COUNT, Cross-row aggregation, ranking, or summarization beyond fields objectively present in the report
+  - Evidence workflows: task108_t270
+- `shopping_admin/core/get_sales_report_rows` — Retrieve typed sales report rows from the shopping admin sales report page for a specified reporting configuration.
+  - Owns: Navigate to the shopping admin sales report page, Apply demonstrated report form controls for period granularity, date range, order-status filtering, and show-empty-rows, Submit the report request, Wait for the report table to load, Parse report table rows into typed records from the rendered grid
+  - Does not own: Choosing which months to keep for a downstream task, Formatting the final MM:COUNT answer string, Aggregating or comparing results across multiple report runs, Interpreting non-demonstrated report types or columns
+  - Evidence workflows: task107_t270
+- `shopping_admin/core/list_configurable_product_child_variants` — retrieve child variant records linked from a configurable product edit page in the shopping admin
+  - Owns: Open a product edit page by admin product edit URL, Inspect product-link anchors on that page, Identify child variant edit links belonging to the configurable parent, Return typed child variant records with displayed name and edit URL
+  - Does not own: Searching for a specific product by keyword, Choosing which parent product to inspect, Updating stock status, Counting whether the number of variants matches an expected task-specific total, Filtering variants by caller-specific business rules beyond page-demonstrated parent/child relationship
+  - Evidence workflows: task502_t287
+- `shopping_admin/core/list_orders` — List order records from the shopping admin orders grid with optional status filtering, preserving displayed order for the current result page.
+  - Owns: Navigate to the shopping admin orders page, Consume authenticated browser state already present in the runtime context, Clear existing active filters when present to remove prior UI filter state before applying requested filters, Open the Filters UI and apply a status filter through the site's native controls, Read typed order rows from the orders grid on the resulting page, Preserve the page's displayed row order in the returned collection
+  - Does not own: Choosing how many returned orders to use, Summing payment amounts across orders, Interpreting displayed order as 'last' beyond the current page's native sort/display, Cross-page pagination or exhaustive retrieval across all orders, Ranking, aggregation, or answer formatting
+  - Evidence workflows: task195_t367, task494_t280
+- `shopping_admin/core/list_orders_by_status` — List orders from the shopping admin Orders page filtered by order status
+  - Owns: Navigate within shopping admin to the Orders list page, Open and use the Orders filter UI, Set the status filter via the site status dropdown, Apply the filter and read resulting order rows from the Orders table, Return typed order records for the filtered result slice together with active filter evidence
+  - Does not own: Choosing which status is relevant to a user task beyond the provided enum input, Cross-page pagination or exhaustive traversal beyond the demonstrated loaded page, Ranking, summarization, or selecting only certain orders from the returned rows, Returning raw DOM or page HTML as the capability output
+  - Evidence workflows: task677_t253
+- `shopping_admin/core/list_orders_by_status_from_orders_grid` — List order records from the shopping_admin Orders grid filtered by order status.
+  - Owns: Navigating to the admin Orders grid, Clearing persisted grid filters before applying the requested status filter, Opening the Filters panel if needed, Applying the Orders grid status filter using the site's status select control, Waiting for the grid loading mask/network idle after filter changes, Parsing visible grid rows into typed order summary records
+  - Does not own: Choosing which status to inspect for a higher-level business task beyond the provided enum input, Counting customers, ranking by cancellation frequency, or selecting a top customer, Selecting the most recent order for a customer, Cross-page aggregation beyond the single acquired grid page, Computing spend totals or interpreting subtotal as the final answer
+  - Evidence workflows: task291_t234
+- `shopping_admin/core/list_orders_by_status_from_orders_grid_page` — Retrieve typed order rows from the shopping_admin orders grid for a selected status filter on the current results page.
+  - Owns: Navigate to the shopping_admin admin orders grid page, Open the orders grid filter UI, Set the site status filter using the grid's status select control, Apply filters and wait for the filtered grid state to render, Parse visible order table rows into typed order records from the current page, Parse the page-displayed result count for the filtered grid
+  - Does not own: Choosing which status is relevant to a business question beyond the supported enum, Aggregating rows across multiple pages, Computing which customer has the most cancellations, Ranking, counting, or summarizing customers, Proving absence of matching orders across all history unless pagination is separately exhausted, Returning raw page text or raw DOM as the capability output
+  - Evidence workflows: task288_t234, task678_t253
+- `shopping_admin/core/list_orders_from_orders_grid` — List order records from the shopping admin orders grid across available paginated grid pages in the current view, returning typed order summary records.
+  - Owns: Navigating the shopping admin orders grid, Optionally clearing saved filters via the site UI when present, Reading typed order summary fields from grid rows, Following the site's Next-page pagination control to collect additional grid rows demonstrated by the workflow
+  - Does not own: Choosing business logic filters such as only canceled orders, Counting cancellations per customer, Selecting the customer with the most cancellations, Ranking by recency across returned orders, Opening an order detail page, Extracting SKUs from order detail content
+  - Evidence workflows: task290_t234
+- `shopping_admin/core/list_product_reviews` — list reviews shown for a specific product in the shopping admin and return typed review records from the Product Reviews section
+  - Owns: Navigate to a product edit page within shopping_admin admin context, Open the 'Product Reviews' section for that product, Wait for the site-rendered review grid to load and inspect the displayed records count, Parse the displayed review table into typed review-list records scoped to that product page
+  - Does not own: Choosing which product to inspect based on user intent, Summarizing or inferring why customers like the product, Ranking, sentiment aggregation, or answer composition across reviews, Opening an individual review detail page unless exposed by a separate primitive
+  - Evidence workflows: task120_t250
+- `shopping_admin/core/list_products_by_quantity_range` — List product records from the shopping admin products grid filtered by an inclusive quantity range.
+  - Owns: Navigate to the shopping admin product catalog grid using authenticated browser state, Open the grid filters UI, Set the quantity range filter using the site's `qty[from]` and `qty[to]` controls, Apply filters and wait for the filtered grid to load, Parse filtered grid/page text into typed product summary records evidenced by the workflow: product_id, product_name, quantity_display, Return records for the currently acquired filtered result slice
+  - Does not own: Choosing which quantity values are relevant to the caller's task, Inferring brand from product name tokens, Ranking, deduplicating, or aggregating records across multiple calls, Proving absence outside the acquired filtered result slice, Opening individual product edit pages
+  - Evidence workflows: task185_t368
+- `shopping_admin/core/list_search_term_report_rows` — list search term report rows from the shopping admin Search Terms Report page, with optional site-native sorting by Hits
+  - Owns: Navigate to the shopping admin Search Terms Report page using existing authenticated browser state, Wait for the report grid tbody to load and contain visible text, Trigger the page's column-header sort control for the Hits column, Read typed row records from the rendered report table
+  - Does not own: Choosing how many rows to keep (for example top 2) beyond the caller-provided max_rows truncation of the currently loaded page, Formatting rows into a prose answer, Cross-call ranking or aggregation beyond the site's own current sort order, General-purpose table extraction from arbitrary admin pages
+  - Evidence workflows: task42_t285
+- `shopping_admin/core/run_bestsellers_report` — generate the shopping admin bestsellers report for a specified date range and period granularity, returning report execution status evidence
+  - Owns: Navigate to the shopping admin bestsellers report page within the authenticated admin site, Fill the report filter controls for from date, to date, and period type, Submit the site report form using the Show Report action, Wait for the report results state to render and detect either a non-empty result indicator ('records found') or the site's empty-state message ('We couldn't find any records.'), Return typed execution evidence about whether the report rendered and what result-state text was observed
+  - Does not own: Authentication credential acquisition or storage-state creation, Choosing business-specific report dates beyond provided inputs, Interpreting the business meaning of the report output, Extracting tabular bestseller rows, since the workflow only verifies report execution/result-state text and does not parse rows into typed records, Filesystem logging, screenshots, and final HTML archival
+  - Evidence workflows: task713_t271
+- `shopping_admin/core/run_shipping_report_by_date_range` — run the shopping admin shipping report for a specified date range and load the results page
+  - Owns: Navigate to the shopping admin shipping report page, Fill the shipping report date range controls, Submit the report form using the page's Show Report action, Wait for the report results state to load using site-visible result indicators
+  - Does not own: Choosing task-specific dates beyond accepting them as inputs, Interpreting or summarizing the business meaning of the report, Extracting typed report rows or aggregations not demonstrated by this workflow, Saving screenshots, HTML snapshots, or workflow-specific answer text
+  - Evidence workflows: task710_t271
+- `shopping_admin/core/scan_products_for_salable_quantity` — Scan the Shopping Admin products grid pages for rows whose displayed Salable Quantity cell exactly matches a target stock text, returning matching product records with page provenance.
+  - Owns: Navigate and read the Shopping Admin catalog products grid using authenticated browser state, Set the grid page size using the displayed `per page` control, Parse the displayed total page count from the grid pagination text, Iterate through grid page numbers using the page-number spinbutton control, Extract each visible table row and its displayed cell texts, Match rows by exact displayed Salable Quantity text such as `Default Stock: 10`, Return matching rows with their source grid page number and parsed SKU when present
+  - Does not own: Deciding which stock text to search for based on business rules, Combining this scan with other filters or alternative inventory concepts, Cross-workflow aggregation or final answer string formatting, Any mutation of product inventory
+  - Evidence workflows: task183_t368
+- `shopping_admin/core/search_catalog_products_by_keyword` — run a keyword search on the shopping admin catalog products grid
+  - Owns: Navigating to the shopping admin catalog product grid, Clearing existing grid filters when the Clear all link is available, Submitting a full-text product search query through the grid search box
+  - Does not own: Parsing product result rows into typed product records, Selecting one product from the results, Summarizing customer opinions, Any review retrieval outside the catalog search UI
+  - Evidence workflows: task123_t250
+- `shopping_admin/core/search_product_reviews_by_detail_query` — run a text filter on the shopping admin product reviews grid using the review detail field
+  - Owns: Navigating to the shopping admin product reviews grid, Applying the grid's detail-text filter with a caller-supplied query string, Waiting for the filtered reviews grid state to load
+  - Does not own: Opening a specific review from the filtered results, Inferring which result is most relevant, Returning raw page HTML or screenshots as the primitive output, Summarizing review sentiment or reasons
+  - Evidence workflows: task123_t250
+- `shopping_admin/core/search_product_reviews_by_product_name` — search the shopping admin product review grid by product name and return matching review edit records
+  - Owns: Navigate to the shopping admin review listing page in authenticated admin context, Optionally reset existing review filters before applying a new search, Fill the product-name review filter and submit the grid search, Parse matching review rows by extracting review edit links from the results table, Return page-scoped typed review stub records for the matching rows
+  - Does not own: Summarizing what customers dislike about a product, Choosing how many matching reviews to inspect, Opening each result detail page and extracting full review text fields, Cross-review aggregation, ranking, or sentiment classification
+  - Evidence workflows: task213_t249
+- `shopping_admin/core/set_product_stock_status` — set and save stock status on a product edit page in the shopping admin
+  - Owns: Open a product edit page by admin product edit URL, Locate the stock status select control, Change the control to a supported stock status option, Click Save and wait for page completion, Detect visible success confirmation after save
+  - Does not own: Discovering which products should be updated, Bulk iteration across many products, Verifying state through the parent configurable product page, Business decision to skip saves when already at the requested value
+  - Evidence workflows: task502_t287
+- `shopping_admin/core/update_cms_page_title` — update the title field of a Magento admin CMS page identified by page_id
+  - Owns: Navigate to the shopping_admin Magento admin CMS page edit URL for a specified CMS page, Locate and fill the CMS page title input (`input[name="title"]`), Submit the edit form using the page Save button, Verify save success from the site confirmation message and persisted title value
+  - Does not own: Discover which CMS page should be edited from a caller's natural-language task, Search or enumerate CMS pages by arbitrary criteria, Update CMS page fields other than the demonstrated title field, Provide or manage credentials or storage state
+  - Evidence workflows: task488_t275, task486_t275
+- `shopping_admin/core/update_order_address` — Update a specific order address record in the shopping admin site
+  - Owns: Navigate to the site-local admin order address edit page for a given address record, Fill the order address form fields demonstrated by the site: street lines, city, country, region/state, and postal code, Submit the address edit via the site's Save Order Address action, Optionally re-read the resulting page/form state to confirm the submitted values persisted on the site
+  - Does not own: Discover which order or address record should be edited from task text, Infer billing vs shipping address IDs when not already known, Decide whether both billing and shipping addresses should be changed, Format the address from freeform user intent, Cross-order verification or comparison across multiple records
+  - Evidence workflows: task541_t240, task540_t240
+- `shopping_admin/core/update_order_address_by_address_id` — update an order address record in the shopping admin by visiting its address edit page and saving new address fields
+  - Owns: Navigating to the shopping_admin order-address edit page at /admin/sales/order/address/address_id/{address_id}/ using an authenticated browser page, Filling the demonstrated address form fields: street line 1, street line 2, city, region/state dropdown by displayed label, and postcode, Submitting the form with the "Save Order Address" action, Returning observable post-save facts such as resulting URL and whether save navigation completed
+  - Does not own: Discovering which address_id corresponds to a given order or whether it is billing vs shipping, Choosing which order address should be edited for a task, Post-save verification on a separate order detail page, Any cross-order or cross-address search/listing, Authentication secret management outside consuming the provided authenticated browser context
+  - Evidence workflows: task538_t240
+- `shopping_admin/core/update_order_shipping_address` — update the shipping address for a specific order in the shopping admin order-management UI
+  - Owns: navigate to the admin orders listing, locate an order by displayed increment/order number in the orders grid, open the order detail view from the matching row, open the shipping-address edit form from the order detail page, fill shipping address fields demonstrated by the workflow: street line 1, city, region/state, postcode, save the edited shipping address, verify the updated address is displayed on the order detail page
+  - Does not own: choosing which order to modify from external task intent beyond supplying the order number, free-form address parsing or normalization beyond the demonstrated typed fields, editing billing address, editing customer identity, items, payment, or other order properties, providing authentication credentials directly as task inputs
+  - Evidence workflows: task539_t240
+- `shopping_admin/core/update_product_inventory_status` — Update a shopping_admin product's quantity and in-stock status from its product edit page
+  - Owns: Navigate to a product edit page within shopping_admin admin, Set `product[quantity_and_stock_status][qty]` to a numeric quantity, Set `product[quantity_and_stock_status][is_in_stock]` to a supported stock-status value exposed by the form, Submit the product form with Save, Read back persisted quantity and stock-status values from the same edit form after save
+  - Does not own: Finding which products should be updated from parent-product text parsing, Enumerating multiple SKUs by repeated search calls, Cross-product orchestration or bulk updates, Business logic deciding that quantity 0 implies a desired stock state, Verifying parent configurable-product variation grid summaries
+  - Evidence workflows: task504_t287, task503_t287
+- `shopping_admin/core/update_product_price` — update a product's price on the shopping admin product edit page and save the change with confirmation.
+  - Owns: navigate within an authenticated shopping_admin browser session to a product edit page by product id, locate the product price input on the product edit form, read the currently displayed price value from the form, write a new price value into the product[price] field, submit the form using the page's Save control, detect visible save-success confirmation on the site, re-read the price field after save to verify the persisted displayed value
+  - Does not own: computing the new target price from business logic such as increasing by 15%, choosing which product id to modify for a larger task, supplying authentication credentials or storage state as task input, cross-product iteration or bulk updates, interpreting success text beyond confirming save success, any filesystem logging or screenshot capture
+  - Evidence workflows: task463_t247
+- `shopping_admin/core/update_product_price_by_product_id` — update a product's price from the shopping admin product edit page
+  - Owns: Navigate to a product edit URL in shopping admin using a product ID, Read the current value of the product price field from the edit form, Set the product price input value, Submit the product edit form with the page's save control, Verify mutation success from the site's success message and persisted field value on the edit page
+  - Does not own: Searching for products by merchant, keyword, color, or size, Computing a new price from a percentage increase, Identifying the correct product ID from catalog results or parent-child variant tables, Cross-product filtering or variant selection logic, Answer formatting
+  - Evidence workflows: task781_t742
+- `shopping_admin/core/update_product_sale_status_by_name` — update a shopping_admin catalog product's Sale checkbox by locating the product through the admin products grid name filter and saving the edit form
+  - Owns: navigate to the shopping_admin admin catalog product grid using existing authenticated browser state, clear pre-existing grid filters when present, open the grid Filters panel, set the product name filter in input[name="name"] and apply filters, open the first Edit link from the filtered results, read and conditionally set input[name="product[sale]"] to the requested checked state, save the product edit form via #save-button, verify post-save page state from the product edit page after save
+  - Does not own: choosing which products should be updated based on higher-level business logic such as 'all shirts' or brand/category inference, repeating the operation over multiple caller-selected product names, discovering all products matching a broader semantic query across multiple pages, formatting a human answer
+  - Evidence workflows: task423_t237
+
+## Approval
+
+Review only. Editing generated package.py invalidates its hash.

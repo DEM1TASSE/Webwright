@@ -1,0 +1,168 @@
+# gitlab candidate primitive package
+
+Status: candidate; not promoted.
+
+## Feature classes
+
+### `core`
+
+- `gitlab/core/add_project_member` — Add a user to a GitLab project as a member by selecting an autocomplete identity and assigning a project role from the project members page
+  - Owns: Navigate to a GitLab project's members management page, Open the Invite members dialog, Search for a user in the site-provided username/email autocomplete, Select a suggested identity from the GitLab UI, Choose a project role from the dialog's role select, Submit the invite/add-member action, Verify success by observing the member in the project's members table
+  - Does not own: Choosing which repository/project to operate on outside the provided project locator, Choosing which usernames to add in bulk, Looping over multiple usernames, Interpreting business intent for which role should be used, Formatting a human-readable final answer
+  - Evidence workflows: task579_t351, task576_t351
+- `gitlab/core/assign_self_as_merge_request_reviewer` — assign the authenticated user as reviewer on a GitLab merge request
+  - Owns: Navigate within an existing GitLab merge request page using runtime-authenticated browser state, Detect and use GitLab's built-in reviewer self-assignment control when present, Fallback to the merge request reviewer editor UI to select the authenticated user as reviewer, Persist the reviewer assignment through the GitLab UI
+  - Does not own: Finding or searching for the correct merge request across multiple projects, Creating a merge request, Choosing which reviewer should be assigned beyond the authenticated user, Returning credentials or managing authentication secrets, General-purpose user search outside the reviewer-assignment flow
+  - Evidence workflows: task807_t335
+- `gitlab/core/create_gitlab_blank_project` — Create a new GitLab blank project with specified name and visibility
+  - Owns: Navigate to GitLab new project page, Choose the 'Create blank project' flow, Fill the project name field, Set project visibility using the site's visibility control, Submit project creation, Detect successful navigation to the created project page, Detect name/slug-already-taken outcome from page text and surface it as a structured result
+  - Does not own: Choosing whether a project should be created for a broader user task, Retrying across multiple possible project names, Adding members after project creation, Returning raw page HTML/text as the primary output
+  - Evidence workflows: task743_t332
+- `gitlab/core/create_issue` — Create a new GitLab issue in a specified repository with optional self-assignment and due date
+  - Owns: Navigate to the repository's new-issue page on GitLab, Fill the issue title field, Trigger GitLab's built-in 'Assign to me' action using the authenticated user context, Set the issue due date using GitLab's issue form field, Submit the issue creation form, Verify creation succeeded by checking the resulting issue page for the created title and displayed due date
+  - Does not own: Choosing which repository to target beyond the caller-supplied repository identifier, Computing task-specific dates such as 'end of Q1 2033' from natural language, Providing or exposing credentials or storage-state contents, General issue triage, filtering, ranking, or formatting answer text, Editing issue description, labels, milestones, or other fields not demonstrated in this workflow
+  - Evidence workflows: task808_t327
+- `gitlab/core/create_merge_request` — create a GitLab merge request between two branches in the current repository and optionally assign a reviewer during creation
+  - Owns: Navigate to the repository's new merge request page on GitLab, Select source branch from the site's branch picker, Select target branch from the site's branch picker, Advance through GitLab's compare-branches flow to the merge request creation form, Optionally select a reviewer from GitLab's reviewer picker before submission, Submit the merge request creation form, Return the created merge request URL and form-derived title when available
+  - Does not own: Choosing which repository to operate on outside the current page/runtime context, Choosing branch names by external business logic, Deciding whether a merge request should be created, Post-creation verification beyond observable creation success, Using external git or filesystem operations
+  - Evidence workflows: task667_t335
+- `gitlab/core/create_merge_request_for_branch_pair` — create a GitLab merge request for a project from a source branch into a target branch
+  - Owns: Navigate to the GitLab new merge request page for a specific project, Supply source and target branch selections through GitLab's merge request creation flow, Submit the GitLab merge request creation form, Return the created merge request URL
+  - Does not own: Searching for an existing merge request before creation, Choosing which project or branches to use based on task intent, Assigning reviewers after the merge request is created, Formatting a human-readable final answer
+  - Evidence workflows: task806_t335
+- `gitlab/core/create_private_project` — Create a new private GitLab project within a chosen namespace.
+  - Owns: Navigate to GitLab new-project page, Select blank project creation flow when present, Fill project name, Choose namespace/group from GitLab namespace picker, Set visibility to private, Submit project creation and wait for resulting project page
+  - Does not own: Checking whether a specific project name should be created, Deriving the desired namespace from user intent outside provided input, Adding members after project creation, Handling duplicate-name business decisions beyond surfacing site outcome
+  - Evidence workflows: task746_t332
+- `gitlab/core/create_project` — Create a new GitLab project through the new-project UI with an evidenced creation mode, chosen namespace, project name, optional slug, and private visibility.
+  - Owns: Navigate to GitLab's new-project UI on the current deployment origin, Select the evidenced creation path for either blank-project creation or the Jekyll template flow, Fill project creation fields supported by the evidenced UI: project name, namespace, optional slug, Set private visibility using the GitLab form controls, Submit project creation and return a typed receipt for the resulting project root URL
+  - Does not own: Deciding whether an existing project should be reused instead of creating one, Choosing task-specific project names, namespaces, or invitees, Adding members after creation, Fallback recovery by navigating to a guessed project URL when creation verification fails
+  - Evidence workflows: task747_t2100, task751_t2100
+- `gitlab/core/create_project_from_template` — Create a new GitLab project from a built-in template with specified name and visibility
+  - Owns: Navigating to GitLab's create-from-template project creation flow, Selecting a built-in template by stable template identifier, Filling the new project name in the create form, Setting project visibility using GitLab visibility semantics, Submitting project creation and waiting for the created project page, Returning created project identity and evidenced template/visibility facts shown after creation
+  - Does not own: Choosing which project name should be used for a broader task, Deciding which template is appropriate for a user's goal beyond the provided enum value, Detecting or deduplicating against pre-existing projects before creation, Editing an existing project's settings after creation, Formatting an end-user answer
+  - Evidence workflows: task753_t332
+- `gitlab/core/create_public_project` — create a new GitLab project with public visibility within the authenticated user's namespace. Supports optionally enabling README initialization during creation.
+  - Owns: Navigate to GitLab new blank project form, Fill project name, Set visibility to public using the site's visibility control, Optionally enable README initialization using GitLab's project option, Submit project creation form, Validate that creation landed on the new project page
+  - Does not own: Checking whether a specific project already exists before creation, Choosing the namespace from caller business logic beyond authenticated default context, Adding members after project creation, Editing repository contents after project creation, Cross-project deduplication or retry policy
+  - Evidence workflows: task745_t332, task557_t87
+- `gitlab/core/find_gitlab_user_candidates_by_name` — query GitLab user search results for a name and return visible matching user candidates from the results page
+  - Owns: Construct the GitLab site-local user search URL for a query, Open the user search results page with scope=users, Parse visible result candidates from the rendered results page into typed records, Return a page-scoped collection of user candidates relevant to the query
+  - Does not own: Choosing which query names to search, Selecting the correct person among candidates using external task context, Navigating to every candidate profile automatically, Following users, Cross-query merge or deduplication
+  - Evidence workflows: task534_t330
+- `gitlab/core/follow_gitlab_user` — Follow a GitLab user from that user's profile page when authenticated.
+  - Owns: Navigate to a GitLab user profile by username, Detect whether the authenticated viewer already follows the user via visible Follow/Unfollow button state, Initiate the follow action by clicking the Follow button on the profile page, Verify post-action state by waiting for Unfollow button visibility
+  - Does not own: Authenticating the user or supplying credentials, Choosing multiple usernames or iterating over a list of users, Cross-user aggregation or deduplication, Returning screenshots, logs, or raw page HTML as the capability output, Using external providers or non-GitLab mechanisms
+  - Evidence workflows: task533_t330
+- `gitlab/core/follow_gitlab_user_profile` — follow a GitLab user from that user's profile page when authenticated
+  - Owns: Navigate to a GitLab user profile by username/path, Confirm profile identity from rendered profile content, Detect current follow state via visible Follow/Unfollow button, Trigger the site-local follow action, Verify success by observing button state change to Unfollow
+  - Does not own: Choosing which users to follow, Repeating over multiple usernames, Supplying or managing credentials directly, Returning screenshots or workflow logs, Cross-user aggregation or deduplication, Using external fallback providers
+  - Evidence workflows: task537_t330
+- `gitlab/core/get_branch_contributor_summary_page` — retrieve contributor summary records from a GitLab repository branch graphs page
+  - Owns: Navigate to a GitLab repository branch contributor graph page using repository path and branch name, Read rendered contributor summary entries from the page, Parse typed contributor records including displayed contributor name and commit count, Preserve displayed contact text shown inline with the commit summary when present
+  - Does not own: Selecting the top contributor by comparing commit counts, Cross-page enrichment with profile fields, Ranking, filtering, or answer formatting, Proving repository-wide absence of contributors outside the fetched branch page
+  - Evidence workflows: task788_t316
+- `gitlab/core/get_gitlab_user_profile_details` — retrieve public GitLab user profile details from a profile page
+  - Owns: Navigate to a GitLab user profile page by account name, Read rendered profile fields from the page, Parse typed profile details including full name, account name, and location when displayed
+  - Does not own: Discovering which user profile to inspect from repository activity, Combining profile fields with contributor statistics, Returning secret authentication material, Guaranteeing presence of optional profile fields such as location or email when not displayed
+  - Evidence workflows: task788_t316
+- `gitlab/core/get_gitlab_user_profile_followers` — retrieve the follower count from a GitLab user profile page
+  - Owns: Navigate to a GitLab user profile page or consume an already reached profile page, Read rendered profile text from the page, Parse the displayed follower count into a typed integer, Return the current profile page URL as the resolved profile location
+  - Does not own: Determining which user profile to inspect from repository analytics, Ranking contributors by commits, Providing authentication secrets, Formatting the answer
+  - Evidence workflows: task787_t316
+- `gitlab/core/get_issue_detail_header` — open a GitLab issue detail page and extract its displayed title and issue state
+  - Owns: Navigate to a provided GitLab issue URL, Read the issue title from the issue page header, Determine the displayed issue state from page text as open or closed when shown
+  - Does not own: Discovering candidate issue URLs, Keyword filtering over issue titles, Ranking or selecting which issue to inspect, Mutating issue state
+  - Evidence workflows: task173_t310
+- `gitlab/core/get_issue_detail_state` — Open a GitLab issue detail page and determine its objective open/closed state from rendered page semantics.
+  - Owns: Navigate to a GitLab issue URL, Read rendered main content of the issue page, Determine canonical issue state from displayed controls/text semantics, Return the resolved page URL after navigation
+  - Does not own: Selecting which issue URL to inspect, Searching or listing issues, Inferring recency or matching by keyword, Formatting the result as a natural-language answer
+  - Evidence workflows: task174_t310
+- `gitlab/core/get_project_contributors_ranking` — Retrieve the contributors ranking shown on a GitLab project's contributors graph page.
+  - Owns: Navigate to a GitLab project contributors/graphs page for a specified project, Read the site-rendered contributor ranking entries from the contributors page, Parse typed contributor records including displayed contributor name and displayed commit count, Return contributors in the ranking order shown by GitLab
+  - Does not own: Searching for which project to inspect, Selecting only the top N contributors, Deriving last names from full names, Cross-project comparison, aggregation, or ranking beyond the single page's displayed order, Returning raw page text or HTML as the capability output
+  - Evidence workflows: task318_t324
+- `gitlab/core/get_project_template_creation_evidence` — Read a GitLab project page and extract whether it shows initialization from a specific built-in template
+  - Owns: Opening an existing GitLab project page, Reading the project page for template initialization evidence, Extracting the displayed template name from the initialization banner when present
+  - Does not own: Creating the project, Inferring template use when no initialization banner is shown, Checking project visibility settings, Searching across multiple projects
+  - Evidence workflows: task753_t332
+- `gitlab/core/get_project_visibility_settings` — Read a GitLab project's edit/settings page and extract the project's visibility setting
+  - Owns: Opening a GitLab project's edit/settings page, Reading GitLab's project visibility section, Parsing the displayed visibility state into a canonical value, Preserving the displayed explanatory text associated with the visibility state
+  - Does not own: Changing the visibility setting, Creating a project, Searching for a project by name, Proving anything about projects other than the specified one
+  - Evidence workflows: task753_t332
+- `gitlab/core/get_repository_branch_contributor_commit_stats` — retrieve contributor commit statistics from a GitLab repository branch contributors graph page
+  - Owns: Navigate to a GitLab repository branch contributor graph page, Read rendered contributor list entries from the page, Parse contributor identity labels and commit-count values from the displayed graph content, Return typed contributor commit-stat records scoped to the requested repository and branch
+  - Does not own: Choosing which contributor is the maximum by commit count, Following a contributor profile link, Extracting follower count from the user profile, Cross-page aggregation beyond the single contributor graph page, Formatting a final answer
+  - Evidence workflows: task787_t316
+- `gitlab/core/get_repository_branch_contributors_ranking` — Retrieve the contributors ranking shown by a GitLab repository branch contributors graph page, including displayed contributor name, displayed email, commit count, and rank order.
+  - Owns: Construct the GitLab branch contributors graph URL from repository path and branch on the current deployment origin, Navigate to the contributors graph page, Wait for rendered contributors graph text indicating branch-scoped commit ranking, Parse displayed contributor records into typed rank, display name, commit count, and displayed email fields
+  - Does not own: Choosing a top-N cutoff such as top 1 or top 3, Repository discovery through site search, Cross-repository aggregation or identity merging across differently displayed contributor rows, Final answer formatting or selecting the single best contributor
+  - Evidence workflows: task314_t324, task311_t323
+- `gitlab/core/invite_gitlab_project_members` — Invite one or more users as members to a GitLab project from the project members page
+  - Owns: Open a project's members management page from a project URL, Launch the 'Invite members' dialog, Use the site member search picker to search for users by displayed name/query, Select multiple users in the invite dialog, Submit the invitation action, Return structured invited-member results tied to the project
+  - Does not own: Creating the project to which members are invited, Choosing which people should be invited for a higher-level task, De-duplicating people across unrelated sources, Assigning undocumented roles or expiration settings not evidenced in this workflow
+  - Evidence workflows: task743_t332
+- `gitlab/core/invite_project_member` — Invite a user to a GitLab project with a specified access role.
+  - Owns: Navigate to a GitLab project's members page using authenticated browser state, Open the project's 'Invite members' dialog, Search/select a GitLab user by username or email in the invite control, Set the project access role in the invite dialog, Submit the invitation through the GitLab UI, Confirm success by checking the members list/filter for the invited account
+  - Does not own: Choosing which project or user should be invited for a caller's broader task, Providing or managing authentication secrets directly, Cross-project iteration or organization-wide membership management, Arbitrary member filtering/aggregation beyond confirming the invited user appears, Interpreting invitation policy beyond the site's displayed role and membership result
+  - Evidence workflows: task482_t294, task485_t294
+- `gitlab/core/invite_project_member_by_username` — invite a GitLab user to a project as a member via the project members UI
+  - Owns: Navigating to a specific project's members page on GitLab, Opening the 'Invite members' dialog, Searching for a user within the invite-member UI by username, Selecting the matching user from the site-provided menu, Setting the project role when exposed by the dialog, Submitting the invitation and waiting for the members page to reflect the change
+  - Does not own: Creating the project itself, Choosing which usernames should be invited, Repeating the operation for multiple usernames, Cross-user deduplication or merge logic, Interpreting missing search results as proof the user does not exist site-wide, Returning browser state or credentials
+  - Evidence workflows: task748_t2100
+- `gitlab/core/invite_project_members` — invite one or more users to a GitLab project from its members page, with optional supported access-level selection for invited members.
+  - Owns: Navigate to the target project's members page, Open the Invite members dialog, Enter one or more usernames into the GitLab member picker, Optionally set the project access level when supported by evidence, Submit the invite action, Reload the members page and verify requested users are visible
+  - Does not own: Creating the project to which members are invited, Determining which users are missing and need inviting as separate business logic, Choosing which project or users should be modified for a higher-level task, Managing credentials or storage state as explicit task input, Cross-project deduplication or orchestration
+  - Evidence workflows: task745_t332, task578_t351
+- `gitlab/core/invite_project_members_with_access_level` — Invite one or more users to a GitLab project's members list with a specified project access level
+  - Owns: Navigate to a GitLab project's project-members page using authenticated browser state, Open the site's 'Invite members' modal, Search/select GitLab users through the modal's member token select control, Set the project access level using the site's access-level dropdown, Submit the invitation through the site's Invite action
+  - Does not own: Choosing which usernames should be invited for a caller's business task, Interpreting external role labels beyond the site's demonstrated access-level choices, Cross-project repetition over caller-chosen project URLs, Post-invite reporting/formatting beyond returning structured invite submission facts, Proving eventual acceptance of invitations by users
+  - Evidence workflows: task577_t351
+- `gitlab/core/list_assigned_dashboard_issues` — List issue summary records from the GitLab issues dashboard for the authenticated user within a dashboard query scope.
+  - Owns: Navigate to the GitLab issues dashboard URL for the authenticated context, Read rendered issue list items from the dashboard page, Extract typed issue summary records including link and rendered summary text from the current dashboard result set order
+  - Does not own: Choosing which keyword to filter for in workflow logic, Interpreting dashboard order as a business concept beyond the displayed result order, Cross-record selection such as picking the first matching issue, Opening an issue detail page, Determining whether an issue is closed from its detail page
+  - Evidence workflows: task174_t310
+- `gitlab/core/list_assigned_issues_dashboard_entries` — list issue records from the authenticated user's assigned GitLab issues dashboard page in the site's displayed order
+  - Owns: Navigate to the authenticated assigned issues dashboard for the current signed-in user, Read issue links rendered on that dashboard page, Return typed issue entry records including displayed title and issue URL in page order
+  - Does not own: Filtering by caller-specific keyword such as "better", Choosing one issue as the latest relevant match from the returned page slice, Cross-page pagination or exhaustive issue discovery, Determining the issue's open/closed state from its detail page
+  - Evidence workflows: task173_t310
+- `gitlab/core/list_dashboard_issues` — List issue records from the GitLab dashboard issues page for the authenticated user under site-supported filters/search, in displayed order
+  - Owns: Navigate to GitLab dashboard issues listing URL, Consume authenticated browser state implicitly, Apply site-supported query parameters for authored issues, state, and search term, Read typed issue summary records from rendered issue list items in page order, Return canonical issue link for each listed record
+  - Does not own: Choosing which user/workflow-specific filters to apply beyond exposed inputs, Ranking or semantic selection such as 'latest updated' beyond preserving displayed order, Opening an issue detail page, Determining issue closed/open state from the detail page, Cross-page aggregation or pagination beyond the single acquired page
+  - Evidence workflows: task175_t310
+- `gitlab/core/list_dashboard_projects_sorted` — List projects shown on the authenticated GitLab dashboard projects page for a requested supported sort order, returning typed project cards with names, links, star counts, and displayed membership role when present.
+  - Owns: Navigate to the authenticated GitLab dashboard projects listing page, Apply a supported dashboard sort order via the site's query parameter, Parse each visible project card from the page into typed records, Extract canonical displayed project full name from the card heading, Extract project URL from the card heading link, Extract star count from the starrers link on each card, Extract displayed membership role from the card text when one of the shown role labels is present
+  - Does not own: Choosing which project among the returned records is 'most starred', Cross-record aggregation such as computing maxima or ties, Filtering records by caller-specific contribution definitions beyond the page's own membership listing, Enumerating projects beyond the acquired dashboard listing scope, Authenticating via secrets exchange; it only consumes existing authenticated browser state
+  - Evidence workflows: task169_t289
+- `gitlab/core/list_project_branch_contributors` — List contributor commit-count records from a GitLab project's branch contributors/graphs page.
+  - Owns: Navigate to a GitLab project contributors graph page for a specified project path and branch, Read the rendered contributors listing from the site page, Parse typed contributor records including contributor display name and commit count from the page
+  - Does not own: Choosing which contributor is top-ranked, Comparing contributors to decide who made the most commits, Aggregating across multiple projects or branches, Returning raw page text or HTML without typed parsing
+  - Evidence workflows: task312_t323
+- `gitlab/core/list_repository_issues_by_label` — List issues for a GitLab repository filtered by a selected issue label and return typed issue records from the issues page.
+  - Owns: Navigate to a GitLab project's issues list page, Apply a GitLab issue-label filter using the site's label filter control/link semantics, Read the resulting issues list page after filtering, Parse visible issue list entries into typed issue records when present, Return the final filtered page URL as filter evidence/context
+  - Does not own: Choosing which repository or label is relevant to a user task, Cross-label discovery or semantic matching beyond the provided label value, Merging results across multiple labels or pages, Ranking, summarizing, or formatting the issues for end-user display, Returning raw page text/DOM as the capability output
+  - Evidence workflows: task105_t349
+- `gitlab/core/list_repository_issues_by_label_filter` — List visible GitLab repository issues for a project issues page filtered by a label and return typed issue summaries from the rendered results page.
+  - Owns: Constructing the GitLab repository issues-page URL for a given project path and label filter, Loading the filtered issues results page in an authenticated browser context, Verifying that the rendered page reflects the requested label filter, Parsing the rendered issues list from page text into typed issue summary records, Returning the current filtered page URL together with parsed visible issue titles
+  - Does not own: Choosing which repository or label is relevant to the user task, Cross-page pagination over multiple result pages, Combining results from multiple labels or repositories, Ranking, summarizing, or formatting the issues for a final answer, Proving that no matching issues exist site-wide beyond the acquired rendered slice
+  - Evidence workflows: task104_t349
+- `gitlab/core/set_profile_status` — Set the authenticated GitLab user's current profile status via the user menu status dialog
+  - Owns: Open the authenticated user dropdown in GitLab header, Open the Edit status dialog, Set status text in the dialog, Optionally choose a status emoji from the site's emoji chooser, Submit/save the status change, Optionally verify the resulting visible status in the reopened user dropdown
+  - Does not own: Authenticating the user or supplying credentials, Providing browser storage state as semantic input, Choosing task-specific phrasing beyond the provided status text, Cross-site status providers or external emoji services, General-purpose page text extraction for callers
+  - Evidence workflows: task420_t361
+- `gitlab/core/set_user_follow_state_by_profile` — ensure the authenticated user follows a GitLab user profile identified by profile path
+  - Owns: Navigate to a GitLab user profile URL on the same deployment, Detect current follow state from the profile page's Follow/Unfollow button, Perform the site-local follow mutation when needed, Verify success by waiting for the Unfollow button state on the profile page
+  - Does not own: Searching for users by arbitrary task-specific names, Choosing which users to act on, Cross-user iteration or deduplication, Returning secret credentials or storage state, Following users through unrelated external providers
+  - Evidence workflows: task535_t330
+- `gitlab/core/set_user_status` — Set the authenticated GitLab user's profile status message and availability flag from the account menu status editor
+  - Owns: Open the authenticated user menu in GitLab's header, Open the site's Edit status modal, Fill the status text input, Set the availability/busy checkbox state, Submit the status change with the site control, Verify the saved status is displayed in the reopened user menu
+  - Does not own: Authenticating or providing credentials, Supplying browser storage state path, Choosing the deployment base URL at runtime, Any external fallback provider or API, General-purpose page text extraction unrelated to status, Task-specific phrasing decisions beyond the provided status text
+  - Evidence workflows: task421_t361
+- `gitlab/core/update_repository_file_via_web_editor_commit` — edit an existing repository file in GitLab's web editor and commit the change
+  - Owns: Open a repository file's direct web edit URL, Replace the full file contents in GitLab's web editor, Fill the commit message field, Submit the commit through the GitLab UI, Navigate to or verify the resulting blob view after commit, Read back rendered file text from the resulting page as commit verification
+  - Does not own: Choosing task-specific file contents, Generating commit message text from user intent, Creating the repository itself, Discovering repository paths or branch names outside explicit inputs, Higher-level content validation beyond confirming the committed page renders the edited file
+  - Evidence workflows: task557_t87
+
+## Approval
+
+Review only. Editing generated package.py invalidates its hash.

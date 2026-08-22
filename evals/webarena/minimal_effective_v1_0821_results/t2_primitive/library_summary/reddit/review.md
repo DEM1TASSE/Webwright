@@ -1,0 +1,124 @@
+# reddit candidate primitive package
+
+Status: candidate; not promoted.
+
+## Feature classes
+
+### `core`
+
+- `reddit/core/create_text_submission` — Create a text post in a specified Reddit forum/subreddit and verify the created submission page displays the posted title and body.
+  - Owns: Navigate to the Reddit submit page, Populate the submission title field, Populate the submission body field, Select the target forum/subreddit from the site form when present, Submit the form, Verify creation succeeded by checking the resulting submission page for the expected title and body text
+  - Does not own: Choosing what content to post, Generating review text, Cross-posting or media/link submission variants, Editing or deleting a submission, Searching for candidate forums, Returning credentials or storage state
+  - Evidence workflows: task612_t9
+- `reddit/core/ensure_forum_subscription_from_thread_sidebar` — Ensure the currently opened Reddit thread's forum/community is in subscribed state using the thread page sidebar.
+  - Owns: Inspect the thread page sidebar for current subscription state, Detect subscribed state via visible 'Unsubscribe' text, If not already subscribed, click the sidebar subscribe control, Re-check sidebar state after the attempted action
+  - Does not own: Opening or selecting the thread page itself, Providing credentials or authentication material, Subscribing by any mechanism other than the thread page sidebar, Guaranteeing mutation success on unauthenticated or unauthorized sessions, Choosing which community to subscribe to independently of the currently opened thread
+  - Evidence workflows: task597_t4
+- `reddit/core/ensure_submission_upvoted` — Ensure the current authenticated user has upvoted a specific Reddit submission by opening its page and toggling the top-level submission vote control if needed.
+  - Owns: Navigate to a subreddit submission page by submission ID and subreddit path, Locate the top-level submission vote form on the submission page, Detect whether the current authenticated user has already upvoted from vote form class or button title, Click the upvote control only when the submission is not already upvoted, Verify post-mutation that the submission reached upvoted state
+  - Does not own: Discovering which submissions should be upvoted, Bulk iteration over caller-selected submission IDs, Supplying or sharing credentials, Mutating comments or other non-top-level vote targets
+  - Evidence workflows: task720_t25
+- `reddit/core/get_latest_forum_post_author` — Get the author of the latest post from a Reddit forum new-sorted listing page.
+  - Owns: Navigate to a subreddit/forum new-sorted page on Reddit, Locate the first post in the post listing, Extract the post author's displayed username from that first post card
+  - Does not own: Choosing which forum/subreddit to inspect beyond a caller-provided forum name, Interpreting that first listed post as the answer to a broader task beyond latest-by-new semantics, Opening unrelated author pages, Counting or classifying comment vote outcomes
+  - Evidence workflows: task31_t33
+- `reddit/core/get_latest_post_in_forum_feed` — retrieve the first visible post from a forum's sorted feed page as a typed post summary
+  - Owns: Navigating to a forum feed URL with a demonstrated sort path, Selecting the first post card in the feed, Parsing typed fields from that first post card: title, author username, author profile path, displayed post time
+  - Does not own: Choosing which forum to inspect beyond the provided forum name/path, Interpreting whether the first visible post is globally latest outside the demonstrated sorted page, Any cross-page reasoning or downstream counting over the author's comments
+  - Evidence workflows: task30_t33
+- `reddit/core/get_subreddit_posts_page` — retrieve the visible post records from a subreddit listing page for a specific site-supported sort order.
+  - Owns: Navigate to a subreddit listing URL using the site's demonstrated sort path, Read the visible post cards from the loaded listing page, Parse each visible post card into typed summary fields exposed on the page, Extract the author profile path from each visible post card
+  - Does not own: Choosing which subreddit to inspect for a broader task, Deciding which returned post is relevant beyond page order, Following the author link to inspect the user profile, Counting comments or interpreting vote polarity across pages
+  - Evidence workflows: task27_t33
+- `reddit/core/get_user_comments_page` — retrieve the visible comment records from a user's comments listing page.
+  - Owns: Navigate to a user's comments listing page from a supplied user profile path, Read the visible comment entries from the loaded comments page, Parse each visible comment card into normalized visible text, Parse objectively displayed signed integer tokens from each visible comment card text
+  - Does not own: Selecting which user to inspect based on broader task logic, Counting only comments that satisfy caller-defined criteria, Proving that no additional comments exist beyond the visible listing page, Inferring vote semantics beyond the displayed signed numbers
+  - Evidence workflows: task27_t33
+- `reddit/core/list_forum_posts` — list posts from a subreddit/forum feed page in a specified site-native sort order
+  - Owns: Navigating to a forum feed URL such as /f/{forum}/{sort}, Parsing the feed page's main link structure to identify post links and author profile links for displayed posts, Returning typed post records for the acquired feed slice, including post title text, post URL, author handle/display text, and author profile URL, Respecting the site-native sort encoded by the path segment (demonstrated: new)
+  - Does not own: Choosing which forum to inspect for a broader task, Interpreting 'latest' beyond taking the first returned record in the acquired sorted feed slice, Cross-page pagination or exhaustive traversal of all posts, Any aggregation over posts or downstream author analysis
+  - Evidence workflows: task29_t33
+- `reddit/core/list_forum_thread_links_from_forum_page` — List visible thread permalinks from a Reddit forum page.
+  - Owns: Navigate to a provided forum page within the current Reddit deployment, Extract visible anchor records from the forum page, Filter anchors to thread permalink shape for that forum, Return typed thread-link records with path and displayed text
+  - Does not own: Choosing which thread is best, trending, or relevant, Proving completeness beyond the current loaded page, Subscribing or otherwise mutating site state, Returning unrelated links such as edit links or navigation links, Returning raw DOM or HTML
+  - Evidence workflows: task599_t4
+- `reddit/core/list_user_comments` — retrieve comment entries shown on a user's comments page, including detection of an empty state
+  - Owns: Navigating to a user's /comments page from a site-relative user profile path, Detecting the demonstrated empty-state message for no visible comments, Enumerating visible comment article entries on that page, Returning page-scoped typed comment entry text records
+  - Does not own: Filtering comments by vote relationship such as downvotes greater than upvotes, Inferring hidden vote counts not displayed on the page, Aggregating across multiple pages or proving site-wide absence of comments
+  - Evidence workflows: task30_t33
+- `reddit/core/list_user_comments_page_status` — Inspect a Reddit user comments page for whether it contains any comment entries on the current acquired page.
+  - Owns: Navigate to a Reddit user's comments page, Read the main content area for the site's explicit empty-state message, Return whether the page shows no comment entries
+  - Does not own: Counting comments with negative scores, Parsing raw comment records from unstructured text, Following pagination across multiple comment pages, Ranking, filtering, or aggregating comments by task-specific criteria
+  - Evidence workflows: task31_t33
+- `reddit/core/list_user_comments_with_scores` — list comment entries from a user's comments page and parse each displayed comment score
+  - Owns: Navigating to a user's comments page at /user/{user}/comments, Parsing the displayed comment articles on that page, Extracting a typed integer score from each comment article's rendered text, including normalization of the displayed minus sign variant, Returning the acquired page-slice of comments with parsed score values
+  - Does not own: Selecting which user to inspect based on another page, Counting only comments matching caller-defined predicates such as score < 0, Proving completeness across all of a user's comments history, Inferring hidden vote totals beyond the displayed score
+  - Evidence workflows: task29_t33
+- `reddit/core/list_user_submissions_in_subreddit_from_profile_overview` — List submission records shown on a Reddit user's profile overview page, filtered to a specific subreddit, with parsed submission identity and links.
+  - Owns: Navigate to a Reddit user profile overview page using authenticated browser state if available, Inspect rendered submission cards under `main article`, Parse each card's displayed submission metadata from `p.submission__info`, Filter cards to those whose displayed metadata indicates the requested author and subreddit, Extract subreddit-local submission link from `nav a` href beginning with `/f/<subreddit>/`, Parse numeric submission ID from the canonical subreddit submission path, Extract displayed submission title from the card heading
+  - Does not own: Choosing which user/subreddit pair to query beyond supplied inputs, Repeating across multiple users or subreddits, Ranking, aggregation, or dedup across multiple calls, Mutating vote state on submissions, Proving absence outside the currently rendered profile overview page
+  - Evidence workflows: task720_t25
+- `reddit/core/list_user_submissions_page` — List typed submission records visible on a Reddit user's submissions page, including subreddit and current upvote-state indicators and submission detail links when present.
+  - Owns: Open an authenticated Reddit user submissions page for a provided username, Locate visible submission vote forms on the page, Parse each surrounding submission/article block into typed records, Extract the page-local vote action path for each visible submission, Extract visible submission title text when present, Extract visible author attribution and subreddit from rendered article text when parseable, Extract current vote control state from the upvote button title, Extract submission detail/comments link and visible link label when present
+  - Does not own: Choosing which username to inspect beyond the caller-provided username, Filtering records to a specific subreddit, author, or title after acquisition, Iterating across multiple submissions pages, Clicking vote controls or performing mutations, Ranking, deduplicating across pages, or summarizing results
+  - Evidence workflows: task724_t25, task722_t25
+- `reddit/core/open_hot_top_thread_in_forum` — Open the thread page for the first visible Hot-ranked post in a specified Reddit forum.
+  - Owns: Navigate to a forum page on the Reddit deployment, Select the Hot sort tab, Locate the first visible submission's comments/thread link within that forum listing, Open the corresponding thread page, Read stable thread metadata exposed on the destination page such as title and final URL
+  - Does not own: Choosing which forum should be inspected beyond the caller-supplied forum name, Interpreting 'trending' beyond the site's displayed Hot ordering, Cross-page ranking or aggregation outside the single forum Hot listing, Subscribing/unsubscribing to the forum, Formatting a natural-language answer
+  - Evidence workflows: task597_t4
+- `reddit/core/post_comment_on_post` — submit a top-level comment on a Reddit post page and verify it appears
+  - Owns: Navigate to an authenticated Reddit post page, Locate the comment composer textarea on the post page, Fill the comment text, Submit via the page's Post button, Verify the submitted comment text becomes visible on the page
+  - Does not own: Choosing which post URL to target, Generating or filtering comment text, Ranking or selecting among multiple visible matching comments beyond existence verification, Managing credentials or exposing storage state as semantic input
+  - Evidence workflows: task650_t23
+- `reddit/core/post_top_level_comment` — Submit a top-level comment on a Reddit post page while already authenticated
+  - Owns: Navigate to a Reddit post page URL, Locate the main comment textbox on the post page, Fill the comment text, Submit via the page Post button, Verify success by observing the submitted comment text rendered on the live page
+  - Does not own: Producing or choosing the comment text, Selecting which post to comment on beyond receiving its URL, Authentication secret handling or login flow; it only consumes existing authenticated browser state, Replying to an existing comment thread specifically; evidence only shows top-level post commenting, Editing or deleting comments
+  - Evidence workflows: task651_t23
+- `reddit/core/reply_to_comment` — Post a reply to an existing comment on a Reddit post page.
+  - Owns: Locate and activate a comment-level Reply control on a Reddit post page, Fill the nested reply textarea for that comment, Submit the reply form, Verify that the posted reply text appears on the live page after submission
+  - Does not own: Determining which comment should receive the reply from task-specific text semantics, Generating the reply message content, Providing authentication credentials directly as task inputs, Navigating arbitrary external fallback providers or non-Reddit mechanisms
+  - Evidence workflows: task409_t23
+- `reddit/core/set_forum_subscription_from_thread_page` — Set the current forum subscription state to subscribed from a Reddit thread page.
+  - Owns: Navigate to a provided Reddit thread URL, Inspect the visible forum subscription control on the thread page, Click Subscribe when needed to achieve subscribed state, Verify subscribed state via the visible Unsubscribe control
+  - Does not own: Choosing which forum or thread to operate on, Ranking or selecting a trending post, Authenticating or supplying credentials, Unsubscribing from a forum, Returning raw page text or DOM
+  - Evidence workflows: task599_t4
+- `reddit/core/set_subreddit_post_vote_by_top_ranking` — set the vote state on a ranked subreddit post selected from Reddit's Top listing for a given time range
+  - Owns: Navigate to a subreddit listing page on Reddit, Select the Top sort and a supported time range via Reddit's listing URL/state, Identify the post at a specific rank within the rendered listing page, Open that post's detail/comments page, Click the Upvote/Downvote control on the post detail page to set vote state, Verify the requested vote control is active from page state such as aria-pressed
+  - Does not own: Choosing which subreddit or rank is relevant to a user goal, Cross-subreddit search or discovery, Ranking logic outside Reddit's own displayed sort order, Returning raw DOM/page text as the product, Authentication credential material; it only consumes authenticated browser state
+  - Evidence workflows: task714_t24
+- `reddit/core/subscribe_to_current_thread` — subscribe to the currently open Reddit thread by clicking the visible thread-level Subscribe button and returning a typed receipt for the attempted mutation.
+  - Owns: Find the thread-level Subscribe button on the currently open Reddit thread page, Click the Subscribe button, Wait for the page to settle after the mutation attempt, Return a typed receipt for where and how the mutation was attempted
+  - Does not own: Finding or choosing which thread to subscribe to, Opening the thread page, Providing credentials, Proving success through a stronger subscribed-state verification than the workflow demonstrated, Unsubscribing
+  - Evidence workflows: task595_t4
+- `reddit/core/subscribe_to_forum_from_thread_page` — subscribe to a Reddit forum/community while viewing a thread page
+  - Owns: Uses authenticated Reddit browser session context to perform the site-local subscribe mutation, Finds and clicks the visible Subscribe control on a thread page, Verifies resulting subscribed state by observing the button label change to Unsubscribe
+  - Does not own: Finding which post is trending or hot, Choosing the forum name or thread URL from broader search/navigation logic, Returning credentials or storage state, General-purpose page navigation outside the provided thread page context
+  - Evidence workflows: task598_t4
+- `reddit/core/subscribe_to_post_thread` — subscribe to a Reddit post/thread from its thread page
+  - Owns: Navigating an authenticated Reddit browser session to a specific post thread page, Locating the thread-level Subscribe control on the post page, Triggering the subscription action, Verifying success by observing the button state change to Unsubscribe
+  - Does not own: Discovering which post is trending, Choosing the target subreddit/forum, Searching or ranking posts, Selecting a post by task-specific business logic beyond caller-supplied thread identity or URL, Providing or managing credentials outside authenticated browser context
+  - Evidence workflows: task596_t4
+- `reddit/core/update_account_biography` — Update the signed-in Reddit user's account biography text from the account settings page. Also supports optional public-profile verification of the persisted biography text after saving.
+  - Owns: Navigate to the Reddit signed-in account page for the current user, Open the site's biography editor via the "Edit biography" control, Set the biography textarea value, Submit the change with the site's Save control, Verify success from the site-rendered confirmation and saved textarea readback, Optionally verify persistence by checking the public profile page for the updated biography text
+  - Does not own: Choosing the biography text content, Supplying credentials or storage state, Selecting which user account is signed in, Cross-site profile editing, Returning secrets or browser state, Formatting a final answer
+  - Evidence workflows: task400_t6, task402_t6
+- `reddit/core/update_own_profile_biography` — Update the authenticated Reddit account's biography text through the account settings UI.
+  - Owns: Navigate from the current Reddit deployment to the authenticated user's account settings UI, Open the Edit biography page for the currently authenticated user, Set the Biography textbox value to the caller-provided string, Submit the Save action, Verify persistence by reloading the same edit page and reading back the Biography field value
+  - Does not own: Authenticating or supplying credentials, Selecting which account is authenticated, Editing profile fields other than the biography field, Returning raw DOM, screenshots, or HTML, Formatting a final answer for a task
+  - Evidence workflows: task399_t6
+- `reddit/core/update_profile_biography` — Update the signed-in Reddit user's profile biography text through the profile edit page.
+  - Owns: Navigate to the Reddit biography edit page for the authenticated user, Locate the Biography textbox on the edit form, Replace the biography text with caller-provided text, Submit the form with Save, Verify the updated biography text appears on the edit/profile pages after submission
+  - Does not own: Authenticating the user or supplying credentials, Choosing which account is signed in, Returning secret material or storage state, Generic page screenshotting or filesystem logging, Updating unrelated profile fields, Selecting an arbitrary target user other than the authenticated profile context
+  - Evidence workflows: task403_t6
+- `reddit/core/upvote_reddit_submission_on_listing_article` — upvote a Reddit submission from its rendered article card on the current listing page by visible title, returning whether it was already upvoted or was newly upvoted.
+  - Owns: Locate a rendered submission article on the current Reddit page by the visible linked title, Detect whether the submission is already upvoted by checking for the article-local 'Retract upvote' button, Click the article-local 'Upvote' button when the submission is not already upvoted, Confirm post-mutation state by waiting for the article-local 'Retract upvote' button to appear
+  - Does not own: Navigating to a particular user submissions page or subreddit page, Choosing which submission titles should be upvoted, Looping over multiple target submissions, Filtering submissions by subreddit or author as task logic, Formatting a final natural-language answer
+  - Evidence workflows: task719_t25
+- `reddit/core/upvote_submission_by_vote_action` — Upvote a Reddit submission represented by a visible vote form, idempotently preserving already-upvoted state.
+  - Owns: Locate a specific visible vote form by its action path on the current Reddit page, Read the current upvote control state from the button title, Click the Reddit upvote control when the current state is not already selected, Wait for the page to reflect successful upvote state by exposing a Retract upvote button, Treat an already-upvoted item as success without changing state
+  - Does not own: Discovering which submissions should be upvoted, Filtering by author, subreddit, title, or any other task condition, Navigating across pages to find more targets, Performing bulk orchestration over multiple independent submissions, Exposing authentication secrets
+  - Evidence workflows: task724_t25
+
+## Approval
+
+Review only. Editing generated package.py invalidates its hash.

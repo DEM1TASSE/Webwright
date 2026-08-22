@@ -1,0 +1,216 @@
+# shopping candidate primitive package
+
+Status: candidate; not promoted.
+
+## Feature classes
+
+### `core`
+
+- `shopping/core/add_configured_product_to_cart` — Open a product detail page on the shopping site, apply caller-specified product option selectors and quantity, and add the configured product to the cart.
+  - Owns: Navigate to a product detail URL on the shopping site, Apply demonstrated site-rendered product option selections through page controls, Set desired quantity through the Qty input, Submit the site-native 'Add to Cart' action, Leave browser state at the resulting post-add page
+  - Does not own: Finding which product should be ordered for a higher-level task, Inferring option values not supplied by the caller, Verifying business suitability of the selected configuration, Clearing unrelated cart items, Checkout or payment completion
+  - Evidence workflows: task439_t156
+- `shopping/core/add_current_product_to_cart` — Add the currently displayed shopping product detail page item to the cart and confirm success from site UI.
+  - Owns: Using the shopping product detail page's Add to Cart button, Waiting for add-to-cart completion signals on the site UI, Verifying success using the site's displayed confirmation text, Following the site's shopping cart link after a successful add, Returning a typed receipt describing observed success and navigation outcome
+  - Does not own: Selecting which product should be added, Comparing prices across tabs or products, Parsing detailed cart contents into typed line items, Managing authentication secrets beyond consuming an authenticated browser state, Ranking, aggregation, or final answer formatting
+  - Evidence workflows: task432_t145
+- `shopping/core/add_current_product_to_wishlist` — add the currently open product detail item to the authenticated user's wishlist on the shopping site
+  - Owns: Consume authenticated browser state to act as the signed-in user, On a product detail page, satisfy any required unselected variant dropdowns by choosing an available option when necessary before wishlist action, Click the site's Add to Wish List control for the current product, Verify postcondition via success message or by checking My Wish List contains the current product title
+  - Does not own: Authenticating the user or exposing credentials, Finding the desired product via search or recommendation logic, Choosing among user-task-specific variant preferences beyond selecting any required available option to make the site action executable, Formatting a user-facing success narrative
+  - Evidence workflows: task467_t186
+- `shopping/core/add_product_detail_item_to_wishlist` — Add the currently viewed product-detail item to the authenticated user's wishlist, optionally with a specified quantity, and verify wishlist presence on the resulting wishlist page.
+  - Owns: Site-local wishlist-add action from a product detail page, Setting the product quantity field on the product detail page before invoking wishlist add, Following the site's post-action navigation/transition to wishlist state, Parsing resulting wishlist page for success feedback and target item presence, Reading wishlist item quantity from the resulting wishlist entry when exposed
+  - Does not own: Searching for or selecting which product to open, Deciding the target product based on task-specific name matching, Authentication credential acquisition or storage-state creation, Cross-page catalog traversal beyond the current product detail page, Wishlist post-processing such as ranking, filtering, or formatting an answer
+  - Evidence workflows: task466_t186
+- `shopping/core/add_product_to_cart_from_product_page` — add the current product from its shopping product page to the cart and verify site confirmation
+  - Owns: Click the product page's Add to Cart button, Wait for post-click page activity to settle, Read the site's confirmation alert text, Optionally follow the confirmation shopping-cart link to land on a cart-related page, Verify whether supplied identifying product text is visible after navigation
+  - Does not own: Selecting which product should be added, Extracting prices from multiple pages, Comparing offers, General cart scraping beyond verifying the specified added product, Returning secret material or authentication state
+  - Evidence workflows: task435_t145
+- `shopping/core/add_product_to_wishlist` — Add the currently viewed product to the authenticated user's wishlist from a shopping product detail page and return confirmation state.
+  - Owns: Navigating to a shopping product detail page URL, Using the site's product-page 'Add to Wish List' control, Submitting the wishlist-add action in authenticated browser state, Waiting for the resulting page/navigation and success message, Returning typed confirmation about the resulting page and observed success messaging
+  - Does not own: Choosing which product URL to use, Providing or managing credentials directly, Verifying wishlist contents beyond the observed resulting page state, Cross-page wishlist search, filtering, or deduplication, Fallback logic based on arbitrary page text outside the demonstrated success indicators
+  - Evidence workflows: task516_t196, task513_t189
+- `shopping/core/add_product_to_wishlist_by_search_result_title` — add a product to the shopping site's wishlist by searching for an exact displayed product title and invoking the product page wishlist control
+  - Owns: submit a store search using the site's search box, locate a search-result product item by exact displayed product title, open the matching product detail page from search results, invoke the site's 'Add to Wish List' control on the product detail page, verify success via wishlist confirmation state and/or wishlist page presence for the same title
+  - Does not own: choosing which product title to search for, ranking or filtering among multiple semantically similar products beyond exact displayed title match, cross-site product lookup, returning raw page text or screenshots, managing credentials beyond consuming existing authenticated browser state
+  - Evidence workflows: task469_t186
+- `shopping/core/add_product_to_wishlist_from_listing` — Add a product shown in a category/listing page to the authenticated user's wishlist using the site's wishlist control, and verify the product appears in the wishlist
+  - Owns: Navigate to a shopping category/listing page, Detect the first visible product card on the listing page, Extract the displayed product name from that product card, Activate the on-site Add to Wish List control from the product card, Wait for site success messaging after the wishlist mutation, Navigate to or confirm the site wishlist page, Verify the same product name appears in the visible wishlist item list
+  - Does not own: Choosing which search/category page to inspect for a broader task, Selecting among multiple products by semantic criteria beyond the demonstrated page order, Cross-page search, ranking, or filtering of products, Managing credentials or exposing session secrets, Formatting a user-facing answer
+  - Evidence workflows: task512_t189
+- `shopping/core/add_product_to_wishlist_from_product_page` — Add the currently displayed shopping product to the signed-in user's wish list from its product detail page and verify success via site UI.
+  - Owns: Navigating to a shopping site product detail page URL, Using the product-page 'Add to Wish List' control, Waiting for and validating the site's success confirmation message, Validating arrival on the site's 'My Wish List' page after the action, Validating the added product appears in the wishlist page
+  - Does not own: Finding or searching for the product to add, Choosing which product URL to visit, Authenticating the user or producing credentials, Managing browser/storage state outside consuming existing authenticated context, Reading arbitrary raw page text/DOM for caller use, Removing wishlist items or other wishlist mutations
+  - Evidence workflows: task515_t189, task514_t189
+- `shopping/core/add_search_result_to_wishlist_by_exact_name` — From Shopping search results, locate a product by exact displayed name and invoke the site's wishlist action for that result using authenticated browser state.
+  - Owns: Submitting a search query on the shopping site, Locating a search-result product card by exact displayed product name, Triggering the card-local wishlist control, Waiting for the site's post-add success state and wishlist landing page, Returning a typed mutation receipt
+  - Does not own: Authenticating the user, Choosing the product name or query, Approximate/fuzzy product matching beyond exact displayed-name targeting, Other wishlist add paths not demonstrated
+  - Evidence workflows: task468_t186
+- `shopping/core/clear_shopping_cart` — Remove all items from the shopping site's current cart until the cart is empty or no further demonstrated removal progress is possible.
+  - Owns: Navigate to the shopping cart page, Detect cart item removal controls on the cart page, Iteratively trigger site-native item removal including confirmation dialog handling when present, Re-check cart state after each mutation and return the remaining removable item count
+  - Does not own: Choosing whether cart should be cleared for a broader task, Selecting which specific items to preserve or remove, Adding products to cart, Checkout or order placement, Interpreting cart contents semantically beyond presence of removable items
+  - Evidence workflows: task439_t156
+- `shopping/core/extract_product_offer_from_product_page` — Extract a typed product offer summary from a shopping product detail page
+  - Owns: Navigate to a shopping product detail URL, Read stable rendered product-page facts, Parse displayed title, Parse displayed total price from rendered page text, Parse displayed pack/set quantity semantics when present, Return derived per-unit price
+  - Does not own: Choosing among multiple caller-provided pages or URLs, Cross-page comparison, ranking, or selecting the cheapest item, Adding a product to cart, Opening or validating the cart
+  - Evidence workflows: task431_t145
+- `shopping/core/get_category_product_list` — Retrieve typed product records from a shopping category results page, with optional site-native sort applied
+  - Owns: Navigate to a shopping category page URL on the site, Wait for product tiles to fully render, Apply the site's sort control via the #sorter select element, Read product tiles from the currently displayed results list, Parse each displayed tile into typed product records with name and displayed price text
+  - Does not own: Discovering which category URL to use for a business task, Choosing among caller-defined categories beyond the provided page URL/context, Cross-page pagination or exhaustive category crawling, Filtering, ranking, or deduplicating across multiple calls, Verifying market competitiveness or interpreting product suitability, Formatting the final answer string
+  - Evidence workflows: task353_t137
+- `shopping/core/get_latest_order_summary` — retrieve the authenticated user's latest order from the orders history page and extract its detail-page status and arrival information
+  - Owns: Navigate to the shopping site's order history page for the authenticated account, Interpret the first row of the orders history table as the latest order entry as displayed by the site, Open the latest order's detail page using the row's "View Order" link, Parse order status from the detail page's displayed text, Parse displayed arrival or delivery-related text from the detail page when present, Return a typed summary for that latest order
+  - Does not own: Authenticating the user or providing credentials, Choosing a different order than the latest displayed one, Cross-order filtering, ranking, or aggregation beyond taking the first displayed row, Explaining business meaning beyond the displayed status and arrival text, Formatting the final natural-language answer
+  - Evidence workflows: task96_t193
+- `shopping/core/get_order_detail` — Open an order detail page on the shopping site and extract typed order-detail facts visible on that page. Also extracts the displayed order number and structured ordered-item text snippets from the detail page when present.
+  - Owns: Navigate to a specific order detail URL within the shopping site, Read the visible order detail page content, Extract the displayed order date from the page, Extract the displayed order number when present, Extract visible ordered-item text snippets from the detail page
+  - Does not own: Discovering which order URL to inspect, Searching across many orders for a target product, Interpreting whether a product mention satisfies a user's request, Ranking or choosing the most recent matching order
+  - Evidence workflows: task337_t169, task335_t169
+- `shopping/core/get_order_details` — Retrieve typed details for a specific Shopping order detail page.
+  - Owns: Navigate within an authenticated Shopping session to a specific order detail page by order_id, Parse objective order-detail facts from the loaded page, Return typed item-level details evidenced across workflows, including product name and, when shown, displayed order date, displayed status, product code/identifier, option label/value pairs, and displayed price
+  - Does not own: Discovering which order_id to inspect, Searching or filtering order history pages, Inferring which item is the caller's intended match among multiple returned items, Any mutation such as canceling, reordering, or editing an order
+  - Evidence workflows: task336_t169, task299_t180, task150_t155
+- `shopping/core/get_order_details_with_items` — open an order detail page on the shopping site and extract the order date plus listed item rows as typed records
+  - Owns: Navigate to an order detail page using its site link, Read the displayed order date from the page, Parse visible order item rows from the order detail table into typed item records
+  - Does not own: Supplying authentication secrets, Discovering which orders to inspect, Keyword matching against item names or page body text, Selecting the latest relevant order among multiple orders, Answer formatting
+  - Evidence workflows: task334_t169
+- `shopping/core/get_product_category_breadcrumbs` — Open a product page and parse the displayed category or breadcrumb classification for that product.
+  - Owns: Navigate to a specific product detail page URL on the shopping site, Wait for the product page to load, Parse displayed category or breadcrumb labels from the page
+  - Does not own: Searching for products by query, Deciding whether a category counts as food/cooking for a task, Linking products to orders unless provided by workflow logic
+  - Evidence workflows: task145_t162
+- `shopping/core/get_product_detail` — Open a product detail page and extract typed product facts including title, displayed price, and capacity evidence when shown.
+  - Owns: Navigating to a product detail URL on the shopping site, Parsing product title from the detail page, Parsing displayed price from the detail page, Extracting capacity evidence text from the detail page when present
+  - Does not own: Discovering candidate product URLs, Ranking products by price, Interpreting whether the capacity satisfies a caller threshold, Formatting the final recommendation
+  - Evidence workflows: task285_t207
+- `shopping/core/get_product_details` — Open a shopping site product detail page and parse key product facts from live page content.
+  - Owns: Navigating to a product detail page by product URL, Reading detail-page title and displayed price, Extracting site-rendered factual product detail text such as a capacity statement from page body text when evidenced, Parsing displayed dollar price text into canonical numeric price while preserving the shown string, Parsing package quantity from the product title when expressed as phrases like 'pack of N' or 'N cans', Computing normalized per-unit price from displayed price and parsed package quantity
+  - Does not own: Selecting which product to inspect based on user intent, Choosing among multiple products by lowest per-unit price, Interpreting adequacy for a specific need such as required storage count, Mutating cart or wishlist state, Ranking, comparison, or final answer formatting
+  - Evidence workflows: task158_t171, task432_t145
+- `shopping/core/get_product_offer_from_product_page` — extract a typed product offer record from a shopping product detail page
+  - Owns: Navigate to a shopping product detail URL, Read stable page-visible product facts from the product detail page, Parse the product title from the page title, Parse the displayed price as a numeric dollar amount from page text, Parse packaged quantity from demonstrated page/title text patterns such as 'N pairs' or 'N pack', Return a typed record suitable for downstream comparison logic
+  - Does not own: Choosing among multiple products based on lowest per-unit price, Opening multiple tabs and comparing results across pages, Computing rankings or selecting the winner, Adding the product to cart, Selecting product variants
+  - Evidence workflows: task434_t145
+- `shopping/core/get_product_page_details` — extract typed product details from a shopping product detail page
+  - Owns: Navigate an authenticated browser page to a shopping product detail URL, Read stable product-detail page fields shown on the page, Parse displayed product title, Parse displayed price from rendered page text, Infer package quantity from rendered title/body text when expressed in demonstrated patterns, Return canonical product URL and HTTP status when available, Compute per-unit price from displayed total price and parsed package quantity
+  - Does not own: Choosing among multiple product pages or tabs, Cross-page comparison, ranking, or lowest-price selection, Adding a product to cart, Opening the cart or verifying cart contents, Returning raw DOM or full page text as the capability output
+  - Evidence workflows: task433_t145
+- `shopping/core/get_product_page_offer` — extract typed offer details from a shopping product detail page
+  - Owns: Navigate an authenticated or anonymous browser page to a shopping product URL, Read the product title from the page, Extract the displayed product price from stable price selectors with body-text fallback, Infer package unit count when explicitly rendered in page text for demonstrated pack notation, Return a typed offer record including displayed and normalized price fields
+  - Does not own: Choosing among multiple product pages, Cross-page comparison or ranking by per-unit price, Opening multiple tabs or iterating over caller-provided URLs, Adding the product to cart, Cart verification or answer formatting
+  - Evidence workflows: task435_t145, task159_t171
+- `shopping/core/get_product_page_reviews` — retrieve typed customer reviews shown on a shopping product page
+  - Owns: Navigate to a shopping product detail page URL, Open the page's reviews section/tab using the site control when present, Wait for the reviews container and review items to become visible, Extract each displayed review as a typed record from visible review elements, Parse reviewer name from the review author subelement when present
+  - Does not own: Keyword matching for task-specific topics such as unfair price or underwater photos, Selecting which reviews are relevant to a user task, Deduplicating reviewer names across matched reviews, Summarizing or formatting the final answer, Guaranteeing all site reviews beyond the currently displayed page section if hidden pagination or lazy loading exists
+  - Evidence workflows: task24_t222, task22_t222
+- `shopping/core/get_product_review_state_from_product_page` — Read the customer review state displayed on a shopping product detail page for a specific product and return a typed review-status record.
+  - Owns: Navigate from a product detail page and inspect the page's visible review-status text, Parse the site-displayed no-reviews state into a typed status record, Return the product title and product page URL together with the parsed review state
+  - Does not own: Searching across arbitrary caller-provided queries to choose a product, Ranking or selecting which product is relevant to the user's task, Summarizing opinions from review text, Cross-product aggregation or comparison, Returning raw HTML or page text as the capability output
+  - Evidence workflows: task225_t135
+- `shopping/core/get_product_review_status_from_product_page` — Read the customer review state shown on a shopping product detail page's Reviews tab for a specific product and return a typed review-status record.
+  - Owns: Navigating from site search to a product detail page using a product query and exact product link text, Opening the product page Reviews tab, Reading the site-displayed review status message from the Reviews tab, Returning a typed status indicating whether reviews are present or absent on that product page
+  - Does not own: Summarizing review content across multiple reviews, Subjective interpretation of reviews, Choosing among multiple candidate products beyond the exact demonstrated product selection rule, Cross-product comparison or ranking, Returning raw page HTML or DOM as the capability output
+  - Evidence workflows: task376_t182
+- `shopping/core/get_product_reviews` — retrieve typed customer review records from a shopping product's reviews section, with pagination when the site exposes additional review pages
+  - Owns: Navigate from a product detail page into the site's reviews section/tab, Wait for site review items to load, Parse each rendered review item into typed fields, Follow the site's review pagination link to acquire additional review pages when present, Return combined review records from the acquired review pages
+  - Does not own: Searching for products by arbitrary query, Selecting which product is relevant to a user task, Classifying whether a review is a complaint or about quality, Filtering reviews by author names supplied by workflow logic, Summarizing or formatting the final answer
+  - Evidence workflows: task384_t666
+- `shopping/core/get_product_reviews_page` — Retrieve typed customer reviews visible on the current product review page of an already-open shopping product detail page.
+  - Owns: Navigate to the product reviews section on an already-open product detail page using the site's reviews anchor, Select review items from the shopping site's review container, Parse each visible review item into typed records with reviewer name and full review text, Return only the reviews visible on the current review page without applying task-specific sentiment filtering
+  - Does not own: Searching for products by query, Choosing the correct product among search results, Determining whether a review implies 'good looking' or any other subjective attribute, Aggregating reviewer names across multiple review pages, Pagination traversal beyond the current visible review page
+  - Evidence workflows: task385_t666
+- `shopping/core/get_product_storage_capacity` — extract a typed card-storage capacity fact from a shopping-site product page when the page explicitly states it
+  - Owns: Opening a shopping-site product detail page, Locating visible product-page text that states storage capacity, Parsing an integer storage capacity from demonstrated product-page phrasing, Returning the original displayed capacity snippet alongside the parsed canonical value
+  - Does not own: Deciding whether the capacity is sufficient for a user's needs, Comparing capacities across products, Inferring capacity when the page does not explicitly state it, Normalizing unsupported product-specific phrasings not evidenced by the source
+  - Evidence workflows: task159_t171
+- `shopping/core/get_wishlist_items` — Read the current signed-in user's wishlist page and return typed wishlist item records.
+  - Owns: Consuming the authenticated wishlist page reached in browser context, Waiting for wishlist item cards to render, Parsing wishlist product items into typed records, Reading the displayed wishlist item count text when present
+  - Does not own: Authenticating the user, Adding or removing wishlist items, Determining which item should be present based on task logic, Proving site-wide product absence outside the current wishlist page
+  - Evidence workflows: task513_t189
+- `shopping/core/get_wishlist_page_items` — Read typed wishlist item records from the authenticated user's current wishlist page.
+  - Owns: Navigating to the My Wish List page from the storefront when needed, Acquiring wishlist page content using authenticated state, Parsing visible wishlist page product links into typed item records
+  - Does not own: Adding or removing wishlist items, Proving absence across all wishlist pages unless only one page exists and is evidenced, Deduplicating across repeated acquisitions, Subjective matching of loosely related product names
+  - Evidence workflows: task511_t189, task515_t189
+- `shopping/core/go_to_next_review_page` — Advance from the current product review page to the next review page when the site's Next control is present.
+  - Owns: Detect the presence of the shopping site's review pagination Next link on a product reviews view, Activate the Next link and wait for the next review page to load
+  - Does not own: Enumerating all review pages, Merging or deduplicating reviews across pages, Parsing review contents after navigation, Proving there are no further review pages beyond the current state except by absence of the control in this view
+  - Evidence workflows: task385_t666
+- `shopping/core/list_category_products` — list product records visible on a shopping category page, including site-native sorting controls
+  - Owns: Navigate to a shopping category page by category URL, Read product tiles from the category results grid, Extract typed product records with displayed name, displayed price text, parsed numeric price, and product URL, Apply the site's sort field using the category sorter control, Apply descending or ascending direction using the site's sorter direction control, Return the visible ordered product list after sort is applied
+  - Does not own: Discovering which category to choose from task intent, Ranking or selecting a subset beyond caller-provided max_items, Cross-page pagination traversal, Verifying global completeness of all products in the category, Answer formatting such as describing the listing in prose
+  - Evidence workflows: task355_t137
+- `shopping/core/list_my_orders` — retrieve the signed-in user's orders from the Shopping site's My Orders page as typed order summary records
+  - Owns: Navigate to the Shopping site's account area using authenticated browser state, Open the My Orders page, Read the orders table rendered on that page, Parse each table row into typed order summary fields exposed by the page: order_number, order_date_display, order_total_display, status_display, Capture the row's View Order link target when present, Preserve page-local ordering of the visible orders list
+  - Does not own: Choosing which order is most relevant to a task, Filtering to only pending orders or a specific month, Comparing rows to answer a task-specific question, Opening a specific order detail page, Cross-page aggregation beyond the single rendered My Orders list
+  - Evidence workflows: task300_t180, task149_t155
+- `shopping/core/list_order_history` — List order-history records from the shopping site's signed-in My Orders history across paginated results.
+  - Owns: Navigating to the shopping site's order history page, Using authenticated browser state already present in the browser/context, Reading the order-history table rows rendered by the site, Following the site's Next pagination control until no further page is available, Parsing each table row into typed order-history records with displayed order number, order date, displayed total amount, and displayed order status
+  - Does not own: Choosing a date range such as 'past month', Filtering records by caller-defined temporal criteria, Interpreting which statuses count as fulfilled for a business task, Summing totals or counting records, Any cross-page deduplication beyond the site's own pagination sequence, Formatting the final natural-language answer
+  - Evidence workflows: task47_t197
+- `shopping/core/list_order_history_entries` — list authenticated shopping order history entries across paginated order-history pages
+  - Owns: Navigate to the shopping site's order history page while using existing authenticated browser state, Read the order-history table rows on each visited page, Extract typed order-history records from displayed table content, including the order detail link, Follow the site's native pagination control labeled Next to continue listing additional history pages until no further page is available
+  - Does not own: Filtering for a specific order number or product keyword, Choosing which order among returned records is relevant to a caller task, Opening an order detail page and parsing its contents, Cross-page deduplication beyond the site's own paginated traversal, Any answer formatting such as 'when did I last order...'
+  - Evidence workflows: task338_t169
+- `shopping/core/list_order_history_page` — List typed order-summary records shown on a specific Shopping My Orders history page.
+  - Owns: Navigate within an authenticated Shopping session to a specific My Orders history page using the site's page-numbered history URL, Parse each visible order-history table row into typed order summary records, Return page-scoped order facts evidenced across workflows, including order number, displayed date, canonical parsed date when available, total amount display, status, detail URL, derived order_id, and visible row actions
+  - Does not own: Choosing which page numbers to inspect for a task, Cross-page iteration, ranking, deduplication, or filtering by task intent, Determining which order is the latest matching order for a product or status query, Opening the order detail page and parsing item-level facts
+  - Evidence workflows: task336_t169, task299_t180, task150_t155
+- `shopping/core/list_order_history_page_orders` — List the orders shown on a specific order-history results page as typed order summary records.
+  - Owns: Navigate to the shopping site's order history page, Optionally request a specific history page number using the site's `?p=` pagination parameter, Extract typed order summary rows from the order history table, Return displayed order number, order date, displayed total, and displayed status for each row on that page
+  - Does not own: Choosing which months or years to filter for, Iterating over multiple page numbers to build a larger collection, Determining whether a status should count toward spend, Summing totals across orders, Opening individual order detail pages
+  - Evidence workflows: task331_t147
+- `shopping/core/list_order_history_rows` — list order history records from the shopping site's order history pages with pagination
+  - Owns: Navigate to the shopping site's order history page using authenticated browser state, Read the order history table rows rendered by the site, Parse each table row into a typed order-history record preserving displayed column values, Follow the site's Next pagination control to continue collecting additional history pages
+  - Does not own: Selecting only orders with a particular status such as processing, Ranking or deciding which order is most recent beyond the site's presented ordering, Cross-page business interpretation of whether a record is the answer to a task, Formatting a final natural-language answer
+  - Evidence workflows: task301_t180
+- `shopping/core/list_orders_history` — retrieve the signed-in user's orders from the shopping site's orders history table as typed order summary records
+  - Owns: navigate from the shopping site account area to the My Orders page, read the orders history table rendered by the site, parse each visible table row into typed order summary fields, preserve the site-displayed row order returned on the page
+  - Does not own: choosing which order is relevant for a task, filtering to only completed orders, inferring that the first completed row is the most recent desired answer beyond preserving page order, opening an order details page, formatting a natural-language answer
+  - Evidence workflows: task298_t180
+- `shopping/core/list_product_reviews` — list typed review records from a shopping product page's reviews section
+  - Owns: Navigate to a product detail page on the shopping site, Open the product page's reviews section via the displayed reviews link, Locate rendered review cards on the page, Parse each review card into typed review records including raw and normalized author information, full review text, title, content, and displayed date text when present
+  - Does not own: Classifying reviews by task-specific topics such as fingerprint resistance or customer service complaints, Keyword matching over review text, Selecting only matching reviewers, Cross-product aggregation or ranking, Proving that no reviews exist outside the displayed product page context
+  - Evidence workflows: task23_t222, task26_t222
+- `shopping/core/list_wishlist_items` — Open the authenticated user's Shopping wishlist page and parse the visible wishlist items into typed records.
+  - Owns: Navigating to the authenticated wishlist page, Parsing visible wishlist product-item rows/cards into typed records, Returning page-scoped wishlist item facts such as rendered display text, product name, and product URL when visible
+  - Does not own: Authenticating the user, Deleting wishlist items, Cross-page wishlist traversal not evidenced, Claiming site-wide absence outside the loaded wishlist view
+  - Evidence workflows: task468_t186
+- `shopping/core/open_cart_page` — navigate from the current shopping page to the authenticated user's cart page
+  - Owns: Use the site's 'My Cart' link to open the cart page, Wait for cart-page navigation to complete, Detect presence of demonstrated cart item container selectors after navigation
+  - Does not own: Verifying that a specific product is present in the cart, Adding or removing cart items, Summarizing or formatting cart contents, Selecting among multiple navigation paths
+  - Evidence workflows: task433_t145
+- `shopping/core/remove_wishlist_item_by_exact_name` — On the Shopping wishlist page, locate a visible wishlist item by exact product-name match within the rendered row and remove it using the row-local remove control.
+  - Owns: Opening the wishlist page, Scanning visible wishlist rows for a target product name, Invoking the demonstrated row-local remove controls, Waiting for the page to settle after the removal mutation, Returning a typed mutation receipt indicating whether a visible matching item was removed
+  - Does not own: Authenticating the user, Finding the item outside the currently loaded wishlist page, Bulk deletion or cross-page wishlist management, Claiming site-wide absence when no visible row matches
+  - Evidence workflows: task468_t186
+- `shopping/core/reorder_order_to_cart` — Reorder a previously placed site order into the current shopping cart via the order detail page's native Reorder control, then read back the resulting cart line items as typed records.
+  - Owns: Navigate to a specific order detail page on the shopping site, Invoke the site's native Reorder action for that order, Wait for the resulting cart page/state to load, Parse cart line items from the shopping cart table into typed records including name, quantity, displayed options, and cart item identifier
+  - Does not own: Discover which historical order should be reordered from a natural-language description, Clear unrelated preexisting cart contents before reorder, Filter reordered items to a caller's target product, Normalize quantities or remove unwanted cart items after reorder, Proceed through checkout or place the order
+  - Evidence workflows: task436_t156
+- `shopping/core/search_products` — Search the shopping site catalog and parse product search result records from the current results page, including typed product summary fields evidenced on result cards.
+  - Owns: Submitting a free-text query through the site's search UI, Reading the site-rendered search results list on the current results page, Parsing typed product summary records from rendered result cards, Extracting displayed product title text when present, Extracting product detail URLs from result-card links when present, Parsing displayed dollar price text into canonical numeric price while preserving the shown price string
+  - Does not own: Choosing which query to search for, Choosing which product is best for a user need, Filtering results by task-specific semantics beyond the caller-provided query, Sorting or changing result order, Cross-page pagination or complete catalog enumeration, Ranking, deduplication, aggregation, or final answer formatting
+  - Evidence workflows: task126_t159, task158_t171, task324_t208
+- `shopping/core/search_products_by_query` — Search the Shopping site catalog by a free-text query and return typed product search-result records from the loaded results page.
+  - Owns: Navigating to the shopping site's home/search entry point, Submitting a free-text search query through the site's search UI, Parsing the loaded search-results page into typed product records, Exposing stable fields evidenced on result cards such as product name and product URL
+  - Does not own: Choosing which query or product is task-relevant, Cross-page pagination or exhaustive catalog traversal, Wishlist mutation actions, Approximate semantic matching beyond the rendered result names
+  - Evidence workflows: task468_t186
+- `shopping/core/select_required_color_variant_on_product_page` — select a required color variant on a shopping product page via the site's radio-option controls
+  - Owns: Interact with the product page's variant selector controls, Activate a color option by clicking its associated label, Verify the corresponding radio input becomes checked
+  - Does not own: Inferring which color should be chosen from user preference, Enumerating all possible colors site-wide, Adding the item to cart, Selecting unrelated option types without evidence
+  - Evidence workflows: task434_t145
+- `shopping/core/set_search_results_sort` — set and verify the shopping site's search-results ordering using the site's sort controls
+  - Owns: Reading the current search-results sort selection from the sort dropdown, Selecting a supported sort mode exposed by the site control, Reading and toggling the sort direction control when needed, Waiting for refreshed results after sort changes, Returning the confirmed sort mode and direction from site controls
+  - Does not own: Issuing the initial product search query, Interpreting relevance semantics beyond the site's own labels/control values, Extracting the full result set contents, Combining sorting with cross-page traversal, Using unrelated external providers or fallback ranking sources
+  - Evidence workflows: task326_t208
+- `shopping/core/sort_visible_products_by_price` — Sort products on the current shopping listing page by ascending price using the site's Sort By control and return typed visible product records in displayed order.
+  - Owns: Interact with the shopping site's listing-page sort control, Wait for the product grid/list to refresh after sort, Parse visible product cards on the current listing page into typed records with name and displayed price, Preserve the displayed order of visible products after sorting
+  - Does not own: Choosing which category or search-results page to open, Cross-page pagination or exhaustively collecting all products, Filtering task-specific subsets beyond the current visible page, Ranking or validating business intent beyond returning displayed order, Returning raw HTML, DOM objects, or untyped page text
+  - Evidence workflows: task285_t207, task351_t137
+- `shopping/core/submit_checkout_from_cart` — Advance from the shopping cart through checkout steps visible to the authenticated user and attempt to place the order.
+  - Owns: Trigger checkout from the cart using the site's 'Proceed to Checkout' control, Wait for checkout pages to load, Advance the shipping step via a visible 'Next' button when present, Attempt final order submission via a visible 'Place Order' button when present, Report whether the site exposed and accepted these checkout controls during the session
+  - Does not own: Preparing cart contents before checkout, Choosing shipping/payment options beyond what the site already has available in session, Guaranteeing order success when required controls are absent, Extracting order confirmation details as a typed order record
+  - Evidence workflows: task439_t156
+
+## Approval
+
+Review only. Editing generated package.py invalidates its hash.

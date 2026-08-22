@@ -1,0 +1,2999 @@
+{
+  "schema_version": 1,
+  "status": "candidate",
+  "approved": false,
+  "site": "reddit",
+  "verification_profile": "minimal",
+  "root_class": "RedditSite",
+  "primitives": [
+    {
+      "primitive_id": "reddit/core/create_text_submission",
+      "method": "create_text_submission",
+      "capability": "Create a text post in a specified Reddit forum/subreddit and verify the created submission page displays the posted title and body.",
+      "method_code": "async def create_text_submission(self, forum_name: str, title: str, body: str) -> dict:\n    from urllib.parse import urlsplit, urljoin\n\n    if not isinstance(forum_name, str) or not forum_name.strip():\n        raise ValueError(\"forum_name must be a non-empty string\")\n    if not isinstance(title, str) or not title.strip():\n        raise ValueError(\"title must be a non-empty string\")\n    if not isinstance(body, str):\n        raise ValueError(\"body must be a string\")\n\n    origin_parts = urlsplit(self.page.url)\n    origin = f\"{origin_parts.scheme}://{origin_parts.netloc}\"\n    submit_url = urljoin(origin + \"/\", \"submit/\" + forum_name.strip().lstrip(\"/\"))\n\n    response = await self.page.goto(submit_url, wait_until=\"domcontentloaded\")\n    await self.page.wait_for_load_state(\"networkidle\")\n\n    title_field = self.page.locator('textarea[name=\"submission[title]\"]').first\n    body_field = self.page.locator('textarea[name=\"submission[body]\"]').first\n    await title_field.wait_for()\n    await body_field.wait_for()\n    await title_field.fill(title)\n    await body_field.fill(body)\n\n    forum_select = self.page.locator('select[name=\"submission[forum]\"]').first\n    if await forum_select.count():\n        try:\n            await forum_select.select_option(label=forum_name)\n        except Exception:\n            await forum_select.select_option(value=forum_name)\n\n    await self.page.get_by_role('button', name='Create submission').click()\n    await self.page.wait_for_load_state('domcontentloaded')\n    await self.page.wait_for_load_state('networkidle')\n    await self.page.locator(\"h1\").filter(has_text=title).first.wait_for()\n    body_found = await self.page.wait_for_function(\n        \"([expected]) => !!document.body && document.body.innerText.includes(expected)\",\n        [body],\n    )\n    if not body_found:\n        raise RuntimeError(\"Submitted post body was not visible on the resulting page\")\n\n    return {\n        \"submission_url\": self.page.url,\n        \"forum_name\": forum_name,\n        \"title\": title,\n        \"body\": body,\n        \"document_status\": response.status if response else None,\n    }",
+      "owns": [
+        "Navigate to the Reddit submit page",
+        "Populate the submission title field",
+        "Populate the submission body field",
+        "Select the target forum/subreddit from the site form when present",
+        "Submit the form",
+        "Verify creation succeeded by checking the resulting submission page for the expected title and body text"
+      ],
+      "does_not_own": [
+        "Choosing what content to post",
+        "Generating review text",
+        "Cross-posting or media/link submission variants",
+        "Editing or deleting a submission",
+        "Searching for candidate forums",
+        "Returning credentials or storage state"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "forum_name": {
+            "type": "string",
+            "description": "Target forum/subreddit name as displayed/represented by the site, e.g. 'books'."
+          },
+          "title": {
+            "type": "string",
+            "description": "Submission title text."
+          },
+          "body": {
+            "type": "string",
+            "description": "Submission body text for a text/self post."
+          }
+        },
+        "required": [
+          "forum_name",
+          "title",
+          "body"
+        ],
+        "additionalProperties": false
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "submission_url": {
+            "type": "string",
+            "description": "URL of the created submission page."
+          },
+          "forum_name": {
+            "type": "string",
+            "description": "Forum/subreddit used for the created submission."
+          },
+          "title": {
+            "type": "string",
+            "description": "Posted submission title."
+          },
+          "body": {
+            "type": "string",
+            "description": "Posted submission body text as verified on the created page."
+          },
+          "document_status": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "HTTP status from loading the submit page, if available."
+          }
+        },
+        "required": [
+          "submission_url",
+          "forum_name",
+          "title",
+          "body"
+        ],
+        "additionalProperties": false
+      },
+      "requires": [
+        "authenticated_reddit_session",
+        "reddit_origin_loaded"
+      ],
+      "provides": [
+        "reddit_text_submission_created"
+      ],
+      "supported_patterns": [
+        "ui_form_submission",
+        "single_text_submission_creation"
+      ],
+      "guarantees": {
+        "collection_scope": "not_applicable",
+        "completeness": "not_applicable",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "none",
+          "input_field": null,
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "After submission, the browser is on a submission page URL for the created post.",
+        "A visible h1 containing the requested title is present on the resulting page.",
+        "The resulting page's rendered text includes the requested body text.",
+        "Returned submission_url equals the browser's final URL after successful creation."
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task612_t9",
+          "template_id": "9",
+          "code_quote": "await page.goto(SUBMIT_URL, wait_until=\"domcontentloaded\")\n...\nawait page.locator('textarea[name=\"submission[title]\"]').fill(TITLE_TEXT)\nawait page.locator('textarea[name=\"submission[body]\"]').fill(BODY_TEXT)\nforum_select = page.locator('select[name=\"submission[forum]\"]')\nif await forum_select.count():\n    try:\n        await forum_select.select_option(label='books ❤️')\n    except Exception:\n        await forum_select.select_option(value='books')\n...\nawait page.get_by_role('button', name='Create submission').click()\n...\nawait page.wait_for_selector(f\"h1:has-text('{TITLE_TEXT}')\")\nawait page.wait_for_function(f\"() => document.body && document.body.innerText.includes({body_text_json})\")",
+          "explanation": "Generalized the concrete forum, title, and body into inputs while preserving the evidenced UI selectors and success checks for Reddit text/self-post creation."
+        }
+      ],
+      "feature": "core"
+    },
+    {
+      "primitive_id": "reddit/core/ensure_forum_subscription_from_thread_sidebar",
+      "method": "ensure_forum_subscription_from_thread_sidebar",
+      "capability": "Ensure the currently opened Reddit thread's forum/community is in subscribed state using the thread page sidebar.",
+      "method_code": "async def ensure_forum_subscription_from_thread_sidebar(self) -> dict:\n    import asyncio\n\n    aside = self.page.locator(\"aside\").first\n    await aside.wait_for()\n    sidebar_text = await aside.inner_text()\n\n    if \"Unsubscribe\" in sidebar_text:\n        state_indicator = \"unsubscribe_visible\"\n        subscribed = True\n        action_taken = False\n    else:\n        subscribe_button = self.page.get_by_role(\"button\", name=\"Subscribe No subscribers\")\n        await subscribe_button.click()\n        await self.page.wait_for_load_state(\"networkidle\")\n        await asyncio.sleep(1)\n        sidebar_text = await aside.inner_text()\n        action_taken = True\n        if \"Unsubscribe\" in sidebar_text:\n            state_indicator = \"subscribe_button_clicked_then_unsubscribe_visible\"\n            subscribed = True\n        else:\n            state_indicator = \"subscribe_button_clicked_but_unsubscribe_not_visible\"\n            subscribed = False\n\n    return {\n        \"subscribed\": subscribed,\n        \"state_indicator\": state_indicator,\n        \"sidebar_excerpt\": sidebar_text[:400],\n        \"thread_url\": self.page.url,\n        \"action_taken\": action_taken,\n    }\n",
+      "owns": [
+        "Inspect the thread page sidebar for current subscription state",
+        "Detect subscribed state via visible 'Unsubscribe' text",
+        "If not already subscribed, click the sidebar subscribe control",
+        "Re-check sidebar state after the attempted action"
+      ],
+      "does_not_own": [
+        "Opening or selecting the thread page itself",
+        "Providing credentials or authentication material",
+        "Subscribing by any mechanism other than the thread page sidebar",
+        "Guaranteeing mutation success on unauthenticated or unauthorized sessions",
+        "Choosing which community to subscribe to independently of the currently opened thread"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "subscribed": {
+            "type": "boolean",
+            "description": "Whether the sidebar shows subscribed state after inspection/action."
+          },
+          "state_indicator": {
+            "type": "string",
+            "enum": [
+              "unsubscribe_visible",
+              "subscribe_button_clicked_then_unsubscribe_visible",
+              "subscribe_button_clicked_but_unsubscribe_not_visible"
+            ]
+          },
+          "sidebar_excerpt": {
+            "type": "string",
+            "description": "Leading excerpt of sidebar text used for state verification."
+          },
+          "thread_url": {
+            "type": "string"
+          },
+          "action_taken": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "subscribed",
+          "state_indicator",
+          "sidebar_excerpt",
+          "thread_url",
+          "action_taken"
+        ],
+        "additionalProperties": false
+      },
+      "requires": [
+        "opened_reddit_thread_page",
+        "authenticated_reddit_session"
+      ],
+      "provides": [
+        "forum_subscription_checked_or_attempted"
+      ],
+      "supported_patterns": [
+        "subscribe to current thread's forum from thread sidebar",
+        "verify subscribed state via visible Unsubscribe text"
+      ],
+      "guarantees": {
+        "collection_scope": "not_applicable",
+        "completeness": "conditional",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "none",
+          "input_field": null,
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "If sidebar text initially contains 'Unsubscribe', output subscribed=true without mutation.",
+        "Otherwise, a subscribe button in the sidebar is clicked and the page is allowed to settle before re-inspection.",
+        "After completion, sidebar_excerpt is non-empty and state_indicator reflects whether 'Unsubscribe' became visible.",
+        "A successful subscribed result requires visible 'Unsubscribe' in the sidebar after inspection/action."
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task597_t4",
+          "template_id": "4",
+          "code_quote": "sidebar_text = await page.locator('aside').inner_text()\nif 'Unsubscribe' in sidebar_text:\n    log('Thread page already shows subscribed state in sidebar: Unsubscribe is visible.')\nelse:\n    await page.get_by_role('button', name='Subscribe No subscribers').click()\n    await page.wait_for_load_state('networkidle')\n    await asyncio.sleep(1)\n    sidebar_text = await page.locator('aside').inner_text()",
+          "explanation": "Generalized the demonstrated sidebar inspection and conditional subscribe flow into a page-local mutation that consumes the current thread page context through self.page rather than a page input parameter."
+        }
+      ],
+      "feature": "core"
+    },
+    {
+      "primitive_id": "reddit/core/ensure_submission_upvoted",
+      "method": "ensure_submission_upvoted",
+      "capability": "Ensure the current authenticated user has upvoted a specific Reddit submission by opening its page and toggling the top-level submission vote control if needed.",
+      "method_code": "async def ensure_submission_upvoted(self, subreddit: str, submission_id: int) -> dict:\n    from urllib.parse import urlsplit, urljoin\n\n    if not isinstance(subreddit, str) or not subreddit.strip():\n        raise ValueError(\"subreddit must be a non-empty string\")\n    if not isinstance(submission_id, int):\n        raise ValueError(\"submission_id must be an integer\")\n\n    origin_parts = urlsplit(self.page.url)\n    origin = f\"{origin_parts.scheme}://{origin_parts.netloc}\"\n    submission_url = urljoin(origin + \"/\", f\"f/{subreddit.strip()}/{submission_id}\")\n\n    await self.page.goto(submission_url, wait_until='domcontentloaded')\n    await self.page.wait_for_load_state('networkidle')\n\n    vote_form = self.page.locator('article').first.locator('form.vote').first\n    await vote_form.wait_for()\n    button = vote_form.locator('button[title=\"Upvote\"], button[title=\"Retract upvote\"]').first\n    await button.wait_for()\n\n    form_class = await vote_form.get_attribute('class') or ''\n    button_title = await button.get_attribute('title')\n    already_upvoted = 'vote--user-upvoted' in form_class or button_title == 'Retract upvote'\n\n    if not already_upvoted:\n        await button.click()\n        await self.page.wait_for_load_state('networkidle')\n        await self.page.wait_for_timeout(1500)\n\n    final_form_class = await vote_form.get_attribute('class') or ''\n    final_button_title = await button.get_attribute('title')\n    upvoted = 'vote--user-upvoted' in final_form_class or final_button_title == 'Retract upvote'\n    if not upvoted:\n        raise RuntimeError(f'Submission {submission_id} did not reach upvoted state')\n\n    return {\n        'submission_url': self.page.url,\n        'submission_id': submission_id,\n        'subreddit': subreddit,\n        'upvoted': True,\n    }",
+      "owns": [
+        "Navigate to a subreddit submission page by submission ID and subreddit path",
+        "Locate the top-level submission vote form on the submission page",
+        "Detect whether the current authenticated user has already upvoted from vote form class or button title",
+        "Click the upvote control only when the submission is not already upvoted",
+        "Verify post-mutation that the submission reached upvoted state"
+      ],
+      "does_not_own": [
+        "Discovering which submissions should be upvoted",
+        "Bulk iteration over caller-selected submission IDs",
+        "Supplying or sharing credentials",
+        "Mutating comments or other non-top-level vote targets"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "subreddit": {
+            "type": "string"
+          },
+          "submission_id": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "subreddit",
+          "submission_id"
+        ],
+        "additionalProperties": false
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "submission_url": {
+            "type": "string"
+          },
+          "submission_id": {
+            "type": "integer"
+          },
+          "subreddit": {
+            "type": "string"
+          },
+          "upvoted": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "submission_url",
+          "submission_id",
+          "subreddit",
+          "upvoted"
+        ],
+        "additionalProperties": false
+      },
+      "requires": [
+        "authenticated_reddit_session",
+        "reddit_origin_loaded"
+      ],
+      "provides": [
+        "reddit_submission_upvoted"
+      ],
+      "supported_patterns": [
+        "single_submission_vote_mutation",
+        "idempotent_upvote_ensure"
+      ],
+      "guarantees": {
+        "collection_scope": "not_applicable",
+        "completeness": "not_applicable",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "none",
+          "input_field": null,
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "After the method returns successfully, the top-level `article form.vote` on `/f/<subreddit>/<submission_id>` has class containing `vote--user-upvoted` or its first matching vote button has title `Retract upvote`",
+        "If the submission was already upvoted before invocation, the method does not require an additional click and still returns `upvoted: true`",
+        "If the vote form still lacks both upvoted indicators after any attempted click, the method fails rather than reporting success"
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task720_t25",
+          "template_id": "25",
+          "code_quote": "url = f\"http://gcrsandbox410.redmond.corp.microsoft.com:10099/f/EarthPorn/{sid}\"\nawait page.goto(url, wait_until='domcontentloaded')\n...\nvote_form = page.locator('article').first.locator('form.vote').first\n...\nform_class = await vote_form.get_attribute('class') or ''\nbutton = vote_form.locator('button[title=\"Upvote\"], button[title=\"Retract upvote\"]').first\nbtn_title = await button.get_attribute('title')\nif 'vote--user-upvoted' not in form_class and btn_title != 'Retract upvote':\n    await button.click()\n...\nif 'vote--user-upvoted' not in form_class and btn_title != 'Retract upvote':\n    raise RuntimeError(f'Submission {sid} did not reach upvoted state')",
+          "explanation": "Generalized the concrete subreddit and submission IDs into typed inputs while preserving the evidenced top-level vote form selectors, upvoted-state indicators, conditional click, and verification logic."
+        }
+      ],
+      "feature": "core"
+    },
+    {
+      "primitive_id": "reddit/core/get_latest_forum_post_author",
+      "method": "get_latest_forum_post_author",
+      "capability": "Get the author of the latest post from a Reddit forum new-sorted listing page.",
+      "method_code": "async def get_latest_forum_post_author(self, forum_name: str) -> dict:\n    from urllib.parse import urlsplit, urljoin\n\n    if not isinstance(forum_name, str) or not forum_name.strip():\n        raise ValueError(\"forum_name must be a non-empty string\")\n\n    forum_name = forum_name.strip()\n    current = urlsplit(self.page.url)\n    origin = f\"{current.scheme}://{current.netloc}\"\n    listing_url = urljoin(origin + \"/\", f\"f/{forum_name}/new\")\n\n    response = await self.page.goto(listing_url, wait_until=\"domcontentloaded\")\n    await self.page.wait_for_load_state(\"networkidle\")\n\n    first_article = self.page.locator(\"main article\").first\n    await first_article.wait_for()\n\n    post_title = (await first_article.get_by_role(\"heading\").inner_text()).strip()\n    author_username = (await first_article.locator('a[href^=\"/user/\"] strong, a[href^=\"/user/\"]').first.inner_text()).strip()\n\n    post_url = None\n    comments_link = first_article.get_by_role(\"link\", name=\"No comments\").first\n    if await comments_link.count() > 0:\n        href = await comments_link.get_attribute(\"href\")\n        if href:\n            post_url = urljoin(origin + \"/\", href.lstrip(\"/\"))\n\n    return {\n        \"forum_name\": forum_name,\n        \"sort\": \"new\",\n        \"post_title\": post_title,\n        \"author_username\": author_username,\n        \"post_url\": post_url,\n        \"listing_http_status\": response.status if response else None,\n    }\n",
+      "owns": [
+        "Navigate to a subreddit/forum new-sorted page on Reddit",
+        "Locate the first post in the post listing",
+        "Extract the post author's displayed username from that first post card"
+      ],
+      "does_not_own": [
+        "Choosing which forum/subreddit to inspect beyond a caller-provided forum name",
+        "Interpreting that first listed post as the answer to a broader task beyond latest-by-new semantics",
+        "Opening unrelated author pages",
+        "Counting or classifying comment vote outcomes"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "forum_name": {
+            "type": "string",
+            "description": "Reddit forum/subreddit name, e.g. photoshopbattles"
+          }
+        },
+        "required": [
+          "forum_name"
+        ],
+        "additionalProperties": false
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "forum_name": {
+            "type": "string"
+          },
+          "sort": {
+            "type": "string",
+            "enum": [
+              "new"
+            ]
+          },
+          "post_title": {
+            "type": "string",
+            "description": "Displayed title of the first post on the new-sorted listing"
+          },
+          "author_username": {
+            "type": "string",
+            "description": "Displayed username of the first post's author"
+          },
+          "post_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "URL of the first post if available from the listing card or comments link"
+          },
+          "listing_http_status": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "forum_name",
+          "sort",
+          "post_title",
+          "author_username"
+        ],
+        "additionalProperties": false
+      },
+      "requires": [
+        "authenticated_reddit_page_origin"
+      ],
+      "provides": [
+        "latest_forum_post_author_record"
+      ],
+      "supported_patterns": [
+        "read first post author from /new forum listing",
+        "capture first post title and optional post URL"
+      ],
+      "guarantees": {
+        "collection_scope": "page",
+        "completeness": "partial",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "none",
+          "input_field": null,
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "Returned record includes sort='new' and a non-empty author_username extracted from the first visible post card on the forum listing page.",
+        "Returned post_title is non-empty and corresponds to the same first visible post card as the extracted author_username.",
+        "If a post URL is returned, navigating to it resolves to a Reddit post page for that same listing item."
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task31_t33",
+          "template_id": "33",
+          "code_quote": "resp = await page.goto(f'{BASE}/f/photoshopbattles/new', wait_until='domcontentloaded')\nawait page.wait_for_load_state('networkidle')\nawait page.locator('main article').first.wait_for()\nfirst_article = page.locator('main article').first\ntitle = (await first_article.get_by_role('heading').inner_text()).strip()\nauthor = (await first_article.locator('a[href^=\"/user/\"] strong, a[href^=\"/user/\"]').first.inner_text()).strip()",
+          "explanation": "Generalized the hard-coded forum name to forum_name while preserving the evidenced /new listing navigation and first-article title/author extraction."
+        }
+      ],
+      "feature": "core"
+    },
+    {
+      "primitive_id": "reddit/core/get_latest_post_in_forum_feed",
+      "method": "get_latest_post_in_forum_feed",
+      "capability": "retrieve the first visible post from a forum's sorted feed page as a typed post summary",
+      "method_code": "async def get_latest_post_in_forum_feed(self, forum_name: str) -> dict:\n    from urllib.parse import urlsplit, urljoin\n\n    if not isinstance(forum_name, str) or not forum_name.strip():\n        raise ValueError(\"forum_name must be a non-empty string\")\n\n    origin_parts = urlsplit(self.page.url)\n    origin = f\"{origin_parts.scheme}://{origin_parts.netloc}\"\n    feed_url = urljoin(origin + \"/\", f\"f/{forum_name.strip()}/new\")\n\n    await self.page.goto(feed_url, wait_until='domcontentloaded')\n    await self.page.wait_for_load_state('networkidle')\n    first_article = self.page.locator('main article').first\n    await first_article.wait_for()\n\n    title = (await first_article.get_by_role('heading').inner_text()).strip()\n    author_username = (await first_article.locator('a[href^=\"/user/\"] strong').first.inner_text()).strip()\n    author_profile_path = await first_article.locator('a[href^=\"/user/\"]').first.get_attribute('href')\n    display_time_text = (await first_article.locator('time').first.inner_text()).strip()\n\n    if not author_profile_path:\n        raise RuntimeError('Author profile path was not found on the first post card')\n\n    return {\n        'forum_name': forum_name,\n        'sort': 'new',\n        'post': {\n            'title': title,\n            'author_username': author_username,\n            'author_profile_path': author_profile_path,\n            'display_time_text': display_time_text,\n        },\n    }",
+      "owns": [
+        "Navigating to a forum feed URL with a demonstrated sort path",
+        "Selecting the first post card in the feed",
+        "Parsing typed fields from that first post card: title, author username, author profile path, displayed post time"
+      ],
+      "does_not_own": [
+        "Choosing which forum to inspect beyond the provided forum name/path",
+        "Interpreting whether the first visible post is globally latest outside the demonstrated sorted page",
+        "Any cross-page reasoning or downstream counting over the author's comments"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "forum_name": {
+            "type": "string",
+            "description": "Forum/community name used in the demonstrated /f/{forum_name}/new path."
+          }
+        },
+        "required": [
+          "forum_name"
+        ],
+        "additionalProperties": false
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "forum_name": {
+            "type": "string"
+          },
+          "sort": {
+            "type": "string",
+            "enum": [
+              "new"
+            ]
+          },
+          "post": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string"
+              },
+              "author_username": {
+                "type": "string"
+              },
+              "author_profile_path": {
+                "type": "string",
+                "description": "Site-relative href to the author's profile."
+              },
+              "display_time_text": {
+                "type": "string",
+                "description": "Rendered time text shown on the post card."
+              }
+            },
+            "required": [
+              "title",
+              "author_username",
+              "author_profile_path",
+              "display_time_text"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "forum_name",
+          "sort",
+          "post"
+        ],
+        "additionalProperties": false
+      },
+      "requires": [
+        "reddit_origin_loaded"
+      ],
+      "provides": [
+        "reddit_first_post_summary_from_new_feed"
+      ],
+      "supported_patterns": [
+        "forum_new_feed_first_card",
+        "typed_post_summary_extraction"
+      ],
+      "guarantees": {
+        "collection_scope": "page",
+        "completeness": "partial",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "internal",
+          "input_field": null,
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "Returned post.author_profile_path starts with /user/",
+        "Returned post.title and post.author_username are non-empty strings parsed from the first main article on the /f/{forum_name}/new page",
+        "Returned sort equals \"new\""
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task30_t33",
+          "template_id": "33",
+          "code_quote": "await page.goto(f'{START_URL}/f/space/new', wait_until='domcontentloaded')\nawait page.locator('main article').first.wait_for()\nfirst_article = page.locator('main article').first\nlatest_title = (await first_article.get_by_role('heading').inner_text()).strip()\nlatest_user = (await first_article.locator('a[href^=\"/user/\"] strong').first.inner_text()).strip()\nlatest_user_href = await first_article.locator('a[href^=\"/user/\"]').first.get_attribute('href')\nlatest_time = (await first_article.locator('time').first.inner_text()).strip()",
+          "explanation": "Generalized the concrete forum path to a forum_name input while preserving the evidenced /new feed path and first-card parsing for title, author, author path, and displayed time."
+        }
+      ],
+      "feature": "core"
+    },
+    {
+      "primitive_id": "reddit/core/get_subreddit_posts_page",
+      "method": "get_subreddit_posts_page",
+      "capability": "retrieve the visible post records from a subreddit listing page for a specific site-supported sort order.",
+      "method_code": "async def get_subreddit_posts_page(self, subreddit_name: str, sort_order: str) -> dict:\n    \"\"\"Load a subreddit listing page and parse visible post summaries.\"\"\"\n    from urllib.parse import urlsplit, urljoin\n\n    if sort_order not in {\"new\"}:\n        raise ValueError(\"sort_order must be one of: ['new']\")\n\n    current = urlsplit(self.page.url)\n    origin = f\"{current.scheme}://{current.netloc}\"\n    target_url = urljoin(origin + \"/\", f\"f/{subreddit_name}/{sort_order}\")\n    await self.page.goto(target_url, wait_until=\"domcontentloaded\")\n    await self.page.wait_for_load_state(\"networkidle\")\n\n    articles = self.page.locator(\"main article\")\n    count = await articles.count()\n    posts = []\n    for i in range(count):\n        article = articles.nth(i)\n        summary_text = \" \".join((await article.inner_text()).split())\n        author_link = article.locator('a[href^=\"/user/\"]').first\n        author_name = (await author_link.inner_text()).strip()\n        author_profile_path = await author_link.get_attribute(\"href\")\n        posts.append({\n            \"position\": i + 1,\n            \"summary_text\": summary_text,\n            \"author_name\": author_name,\n            \"author_profile_path\": author_profile_path\n        })\n\n    return {\"posts\": posts}\n",
+      "owns": [
+        "Navigate to a subreddit listing URL using the site's demonstrated sort path",
+        "Read the visible post cards from the loaded listing page",
+        "Parse each visible post card into typed summary fields exposed on the page",
+        "Extract the author profile path from each visible post card"
+      ],
+      "does_not_own": [
+        "Choosing which subreddit to inspect for a broader task",
+        "Deciding which returned post is relevant beyond page order",
+        "Following the author link to inspect the user profile",
+        "Counting comments or interpreting vote polarity across pages"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "subreddit_name": {
+            "type": "string",
+            "description": "Subreddit/forum name as used in the site's path, without leading /f/."
+          },
+          "sort_order": {
+            "type": "string",
+            "enum": [
+              "new"
+            ],
+            "description": "Site-supported listing sort demonstrated by the workflow."
+          }
+        },
+        "required": [
+          "subreddit_name",
+          "sort_order"
+        ],
+        "additionalProperties": false
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "posts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "position": {
+                  "type": "integer",
+                  "description": "1-based position among visible post cards on the loaded page."
+                },
+                "summary_text": {
+                  "type": "string",
+                  "description": "Whitespace-normalized visible text content of the post card."
+                },
+                "author_name": {
+                  "type": "string",
+                  "description": "Visible author handle from the post card."
+                },
+                "author_profile_path": {
+                  "type": "string",
+                  "description": "Relative href to the author's profile page."
+                }
+              },
+              "required": [
+                "position",
+                "summary_text",
+                "author_name",
+                "author_profile_path"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "posts"
+        ],
+        "additionalProperties": false
+      },
+      "requires": [
+        "Current page is already on the target Reddit deployment origin or another page on the same site so runtime origin can be derived"
+      ],
+      "provides": [
+        "Page-scoped typed post summaries from the requested subreddit listing"
+      ],
+      "supported_patterns": [
+        "Load /f/<subreddit>/<sort> using the deployment's runtime origin",
+        "Read visible listing cards and extract author identity/link for each displayed post"
+      ],
+      "guarantees": {
+        "collection_scope": "page",
+        "completeness": "partial",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "semantic_enum",
+          "input_field": "sort_order",
+          "supported_values": [
+            "new"
+          ],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "Returns a posts array whose length equals the count of visible 'main article' elements after page load.",
+        "For each returned record, author_profile_path is extracted from an a[href^='/user/'] link within that same post card.",
+        "When at least one post card is visible, the first returned record has non-empty summary_text and non-empty author_name.",
+        "An empty posts array is allowed if no visible post cards are rendered on the loaded page."
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task27_t33",
+          "template_id": "33",
+          "code_quote": "resp = await page.goto(f'{START_URL}/f/Showerthoughts/new', wait_until='domcontentloaded')\nawait page.wait_for_load_state('networkidle')\nfirst_article = page.locator('main article').first\nawait first_article.wait_for()\nfirst_text = ' '.join((await first_article.inner_text()).split())\nauthor_link = first_article.locator('a[href^=\"/user/\"]').first\nauthor_name = (await author_link.inner_text()).strip()\nauthor_href = await author_link.get_attribute('href')",
+          "explanation": "Generalized the hard-coded Showerthoughts/new navigation into a subreddit_name plus demonstrated semantic sort enum. Preserved the evidenced page structure 'main article' and author-link extraction while widening from first card to all visible cards on the loaded page."
+        }
+      ],
+      "feature": "core"
+    },
+    {
+      "primitive_id": "reddit/core/get_user_comments_page",
+      "method": "get_user_comments_page",
+      "capability": "retrieve the visible comment records from a user's comments listing page.",
+      "method_code": "async def get_user_comments_page(self, user_profile_path: str) -> dict:\n    \"\"\"Load a user's comments page and parse visible comment cards.\"\"\"\n    from urllib.parse import urlsplit, urljoin\n\n    current = urlsplit(self.page.url)\n    origin = f\"{current.scheme}://{current.netloc}\"\n    normalized_path = user_profile_path.rstrip(\"/\") + \"/comments\"\n    target_url = urljoin(origin + \"/\", normalized_path.lstrip(\"/\"))\n    await self.page.goto(target_url, wait_until=\"domcontentloaded\")\n    await self.page.wait_for_load_state(\"networkidle\")\n\n    comments_locator = self.page.locator(\"main article\")\n    count = await comments_locator.count()\n    comments = []\n    for i in range(count):\n        article = comments_locator.nth(i)\n        comment_text = \" \".join((await article.inner_text()).split())\n        displayed_signed_numbers = []\n        for token in comment_text.replace(\"−\", \"-\").split():\n            if token.lstrip(\"-\").isdigit():\n                displayed_signed_numbers.append(int(token))\n        comments.append({\n            \"position\": i + 1,\n            \"comment_text\": comment_text,\n            \"displayed_signed_numbers\": displayed_signed_numbers\n        })\n\n    return {\"comments\": comments}\n",
+      "owns": [
+        "Navigate to a user's comments listing page from a supplied user profile path",
+        "Read the visible comment entries from the loaded comments page",
+        "Parse each visible comment card into normalized visible text",
+        "Parse objectively displayed signed integer tokens from each visible comment card text"
+      ],
+      "does_not_own": [
+        "Selecting which user to inspect based on broader task logic",
+        "Counting only comments that satisfy caller-defined criteria",
+        "Proving that no additional comments exist beyond the visible listing page",
+        "Inferring vote semantics beyond the displayed signed numbers"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "user_profile_path": {
+            "type": "string",
+            "description": "Relative path to the user's profile, e.g. '/user/<handle>'."
+          }
+        },
+        "required": [
+          "user_profile_path"
+        ],
+        "additionalProperties": false
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "comments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "position": {
+                  "type": "integer",
+                  "description": "1-based position among visible comment cards on the loaded page."
+                },
+                "comment_text": {
+                  "type": "string",
+                  "description": "Whitespace-normalized visible text content of the comment card."
+                },
+                "displayed_signed_numbers": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer"
+                  },
+                  "description": "All signed integers parseable from the visible comment card text after normalizing the Unicode minus sign to '-'."
+                }
+              },
+              "required": [
+                "position",
+                "comment_text",
+                "displayed_signed_numbers"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "comments"
+        ],
+        "additionalProperties": false
+      },
+      "requires": [
+        "Current page is already on the target Reddit deployment origin or another page on the same site so runtime origin can be derived"
+      ],
+      "provides": [
+        "Page-scoped typed comment records from the user's comments listing"
+      ],
+      "supported_patterns": [
+        "Open a user's /comments page directly from a supplied profile path",
+        "Extract visible comment-card text plus displayed signed integer tokens for downstream workflow logic"
+      ],
+      "guarantees": {
+        "collection_scope": "page",
+        "completeness": "partial",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "none",
+          "input_field": null,
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "Returns one record per visible 'main article' element on the loaded comments page.",
+        "Each returned comment_text is whitespace-normalized text from the corresponding comment card.",
+        "Each returned displayed_signed_numbers array equals the signed integer tokens parseable from that card's visible text after replacing '−' with '-'.",
+        "If no 'main article' elements are visible, the method returns comments: [] rather than failing."
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task27_t33",
+          "template_id": "33",
+          "code_quote": "comments_tab = page.locator('main nav.user-nav a[href$=\"/comments\"]').first\n...\nawait comments_tab.click()\nawait page.wait_for_load_state('networkidle')\ncomments = page.locator('main article')\ncomment_count = await comments.count()\nfor i in range(comment_count):\n    text = ' '.join((await comments.nth(i).inner_text()).split())\n    nums = []\n    for token in text.replace('−','-').split():\n        if token.lstrip('-').isdigit():\n            nums.append(int(token))",
+          "explanation": "Generalized the workflow's comments-tab inspection into a direct, deployment-portable navigation from user_profile_path to that user's comments page. Preserved the evidenced page-scoped extraction of normalized comment text and displayed signed integer tokens while excluding the task-specific negative-count aggregation."
+        }
+      ],
+      "feature": "core"
+    },
+    {
+      "primitive_id": "reddit/core/list_forum_posts",
+      "method": "list_forum_posts",
+      "capability": "list posts from a subreddit/forum feed page in a specified site-native sort order",
+      "method_code": "async def list_forum_posts(self, forum_name: str, sort_order: str) -> dict:\n    \"\"\"List the displayed posts from a forum feed page slice.\"\"\"\n    from urllib.parse import urlsplit, urljoin\n\n    if not isinstance(forum_name, str) or not forum_name:\n        raise ValueError(\"forum_name must be a non-empty string\")\n    if sort_order not in {\"new\"}:\n        raise ValueError(\"sort_order must be one of: ['new']\")\n\n    origin_parts = urlsplit(self.page.url)\n    origin = f\"{origin_parts.scheme}://{origin_parts.netloc}\"\n    if not origin_parts.scheme or not origin_parts.netloc:\n        raise RuntimeError(\"Cannot derive runtime origin from current page URL\")\n\n    feed_url = urljoin(origin + \"/\", f\"f/{forum_name}/{sort_order}\")\n    await self.page.goto(feed_url, wait_until=\"domcontentloaded\")\n    await self.page.wait_for_load_state(\"networkidle\")\n\n    main_links = await self.page.locator(\"main a\").evaluate_all(\n        \"els => els.map((e,i) => ({i, text:(e.textContent||'').trim(), href:e.getAttribute('href')})).filter(x => x.text)\"\n    )\n\n    posts = []\n    seen_post_paths = set()\n    pending_author = None\n    forum_prefix = f\"/f/{forum_name}/\"\n\n    for item in main_links:\n        href = item.get(\"href\")\n        text = (item.get(\"text\") or \"\").strip()\n        if not href or not text:\n            continue\n        if href.startswith(\"/user/\"):\n            pending_author = {\"author_name\": text, \"author_profile_path\": href}\n            continue\n        if href.startswith(forum_prefix) and href not in seen_post_paths:\n            record = {\n                \"title\": text,\n                \"post_path\": href,\n                \"author_name\": pending_author[\"author_name\"] if pending_author else \"\",\n                \"author_profile_path\": pending_author[\"author_profile_path\"] if pending_author else \"\",\n            }\n            posts.append(record)\n            seen_post_paths.add(href)\n            pending_author = None\n\n    return {\"posts\": posts}\n",
+      "owns": [
+        "Navigating to a forum feed URL such as /f/{forum}/{sort}",
+        "Parsing the feed page's main link structure to identify post links and author profile links for displayed posts",
+        "Returning typed post records for the acquired feed slice, including post title text, post URL, author handle/display text, and author profile URL",
+        "Respecting the site-native sort encoded by the path segment (demonstrated: new)"
+      ],
+      "does_not_own": [
+        "Choosing which forum to inspect for a broader task",
+        "Interpreting 'latest' beyond taking the first returned record in the acquired sorted feed slice",
+        "Cross-page pagination or exhaustive traversal of all posts",
+        "Any aggregation over posts or downstream author analysis"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "forum_name": {
+            "type": "string",
+            "description": "Forum/subreddit name in site path form, e.g. DIY"
+          },
+          "sort_order": {
+            "type": "string",
+            "enum": [
+              "new"
+            ],
+            "description": "Site-native feed sort demonstrated by the workflow"
+          }
+        },
+        "required": [
+          "forum_name",
+          "sort_order"
+        ],
+        "additionalProperties": false
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "posts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "title": {
+                  "type": "string"
+                },
+                "post_path": {
+                  "type": "string",
+                  "description": "Relative post URL path on the site"
+                },
+                "author_name": {
+                  "type": "string"
+                },
+                "author_profile_path": {
+                  "type": "string",
+                  "description": "Relative author profile URL path on the site"
+                }
+              },
+              "required": [
+                "title",
+                "post_path",
+                "author_name",
+                "author_profile_path"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "posts"
+        ],
+        "additionalProperties": false
+      },
+      "requires": [
+        "current_page_has_runtime_origin"
+      ],
+      "provides": [
+        "forum_feed_page_slice"
+      ],
+      "supported_patterns": [
+        "Acquire the visible feed slice for a forum in demonstrated 'new' sort order",
+        "Return typed post records from the displayed page without task-specific filtering"
+      ],
+      "guarantees": {
+        "collection_scope": "page",
+        "completeness": "partial",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "semantic_enum",
+          "input_field": "sort_order",
+          "supported_values": [
+            "new"
+          ],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "Returns a posts array parsed from the forum feed page for the requested forum and demonstrated sort order.",
+        "Each returned record includes non-empty title, post_path beginning with /f/{forum_name}/, author_name, and author_profile_path beginning with /user/.",
+        "The first record in the returned array corresponds to the top displayed post on the acquired feed page slice, not an inferred or synthesized ordering."
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task29_t33",
+          "template_id": "33",
+          "code_quote": "resp = await page.goto(BASE + '/f/DIY/new', wait_until='domcontentloaded'); main_links = await page.locator('main a').evaluate_all(\"els => els.map((e,i) => ({i, text:(e.textContent||'').trim(), href:e.getAttribute('href')})).filter(x => x.text)\"); user_links = [x for x in main_links if x.get('href') and x['href'].startswith('/user/')]; author = user_links[0]; latest_title = next(x for x in main_links if x['href'] and x['href'].startswith('/f/DIY/'))",
+          "explanation": "Generalized the hard-coded forum path into forum_name and preserved the demonstrated site-native sort as an explicit semantic enum with supported value 'new'. The primitive returns typed feed records instead of task-specific 'latest post' logic."
+        }
+      ],
+      "feature": "core"
+    },
+    {
+      "primitive_id": "reddit/core/list_forum_thread_links_from_forum_page",
+      "method": "list_forum_thread_links_from_forum_page",
+      "capability": "List visible thread permalinks from a Reddit forum page.",
+      "method_code": "async def list_forum_thread_links_from_forum_page(self, forum_path: str) -> dict:\n    import re\n    from urllib.parse import urljoin, urlsplit\n\n    if not isinstance(forum_path, str) or not forum_path:\n        raise ValueError(\"forum_path must be a non-empty string\")\n    if urlsplit(forum_path).scheme:\n        raise ValueError(\"forum_path must be site-relative, for example '/f/MachineLearning'\")\n\n    current_parts = urlsplit(self.page.url)\n    origin = f\"{current_parts.scheme}://{current_parts.netloc}\"\n    forum_url = urljoin(origin + \"/\", forum_path.lstrip(\"/\"))\n\n    response = await self.page.goto(forum_url, wait_until=\"domcontentloaded\")\n    if response is None:\n        raise RuntimeError(\"failed to load forum page\")\n    await self.page.wait_for_load_state(\"networkidle\")\n\n    normalized_forum_path = \"/\" + forum_path.lstrip(\"/\")\n    forum_name = normalized_forum_path.rstrip(\"/\").split(\"/\")[-1]\n    pattern = re.compile(rf\"^/f/{re.escape(forum_name)}/\\d+/\")\n\n    link_records = await self.page.locator(f'a[href^=\"/f/{forum_name}/\"]').evaluate_all(\n        \"\"\"\n        els => els.map(e => ({\n            thread_path: e.getAttribute('href'),\n            link_text: (e.innerText || '').trim()\n        }))\n        \"\"\"\n    )\n\n    threads = []\n    seen = set()\n    for item in link_records:\n        thread_path = item.get(\"thread_path\")\n        link_text = item.get(\"link_text\", \"\")\n        if not isinstance(thread_path, str):\n            continue\n        if \"/edit\" in thread_path:\n            continue\n        if not pattern.match(thread_path):\n            continue\n        key = (thread_path, link_text)\n        if key in seen:\n            continue\n        seen.add(key)\n        threads.append({\n            \"thread_path\": thread_path,\n            \"link_text\": link_text,\n        })\n\n    return {\n        \"forum_path\": normalized_forum_path,\n        \"threads\": threads,\n    }\n",
+      "owns": [
+        "Navigate to a provided forum page within the current Reddit deployment",
+        "Extract visible anchor records from the forum page",
+        "Filter anchors to thread permalink shape for that forum",
+        "Return typed thread-link records with path and displayed text"
+      ],
+      "does_not_own": [
+        "Choosing which thread is best, trending, or relevant",
+        "Proving completeness beyond the current loaded page",
+        "Subscribing or otherwise mutating site state",
+        "Returning unrelated links such as edit links or navigation links",
+        "Returning raw DOM or HTML"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "forum_path": {
+            "type": "string",
+            "description": "Site-relative forum path, for example '/f/MachineLearning'."
+          }
+        },
+        "required": [
+          "forum_path"
+        ],
+        "additionalProperties": false
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "forum_path": {
+            "type": "string",
+            "description": "Normalized requested site-relative forum path."
+          },
+          "threads": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "thread_path": {
+                  "type": "string",
+                  "description": "Site-relative thread permalink matching the demonstrated /f/<forum>/<numeric-id>/... pattern."
+                },
+                "link_text": {
+                  "type": "string",
+                  "description": "Visible text of the link on the forum page."
+                }
+              },
+              "required": [
+                "thread_path",
+                "link_text"
+              ],
+              "additionalProperties": false
+            },
+            "description": "Visible thread permalink records extracted from the current forum page."
+          }
+        },
+        "required": [
+          "forum_path",
+          "threads"
+        ],
+        "additionalProperties": false
+      },
+      "requires": [
+        "Current page is on the target Reddit deployment so runtime origin can be derived",
+        "Forum page is reachable in the current session"
+      ],
+      "provides": [
+        "Typed visible thread permalink records from the requested forum page"
+      ],
+      "supported_patterns": [
+        "Extract thread permalinks from a forum listing page",
+        "Return an empty list when the page loads but no matching visible thread anchors are found"
+      ],
+      "guarantees": {
+        "collection_scope": "page",
+        "completeness": "partial",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "none",
+          "input_field": null,
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "Every returned thread_path matches the demonstrated /f/<forum>/<numeric-id>/... permalink shape for the requested forum.",
+        "No returned thread_path contains '/edit'.",
+        "Returned forum_path is the normalized site-relative path for the page that was inspected."
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task599_t4",
+          "template_id": "4",
+          "code_quote": "links = await page.locator('a[href^=\"/f/MachineLearning/\"]').evaluate_all(\"els => els.map(e => ({text:(e.innerText||'').trim(), href:e.getAttribute('href')})).filter(x => x.href && /^\\\\/f\\\\/MachineLearning\\\\/\\\\d+\\\\//.test(x.href))\"); if href and '/edit' not in href and text != 'Edit': thread_href = href",
+          "explanation": "Generalized the MachineLearning-specific selector and regex into a caller-provided forum_path while preserving the evidenced extraction pattern: inspect forum-page anchors, keep only thread permalinks with numeric IDs, and exclude edit links."
+        }
+      ],
+      "feature": "core"
+    },
+    {
+      "primitive_id": "reddit/core/list_user_comments",
+      "method": "list_user_comments",
+      "capability": "retrieve comment entries shown on a user's comments page, including detection of an empty state",
+      "method_code": "async def list_user_comments(self, user_profile_path: str) -> dict:\n    from urllib.parse import urlsplit, urljoin\n\n    if not isinstance(user_profile_path, str) or not user_profile_path.startswith('/user/'):\n        raise ValueError(\"user_profile_path must be a site-relative path starting with /user/\")\n    if user_profile_path.endswith('/comments'):\n        raise ValueError(\"user_profile_path must not already include /comments\")\n\n    origin_parts = urlsplit(self.page.url)\n    origin = f\"{origin_parts.scheme}://{origin_parts.netloc}\"\n    comments_page_path = user_profile_path.rstrip('/') + '/comments'\n    comments_url = urljoin(origin + '/', comments_page_path.lstrip('/'))\n\n    await self.page.goto(comments_url, wait_until='domcontentloaded')\n    await self.page.wait_for_load_state('networkidle')\n\n    no_entries = await self.page.get_by_text('There are no entries to display.').count() > 0\n    article_locator = self.page.locator('main article')\n    comment_articles = await article_locator.count()\n\n    comments = []\n    if not (no_entries and comment_articles == 0):\n        for i in range(comment_articles):\n            article = article_locator.nth(i)\n            rendered_text = (await article.inner_text()).strip()\n            if rendered_text:\n                comments.append({'page_index': i, 'rendered_text': rendered_text})\n\n    return {\n        'user_profile_path': user_profile_path,\n        'comments_page_path': comments_page_path,\n        'is_empty': no_entries and comment_articles == 0,\n        'comments': comments,\n    }",
+      "owns": [
+        "Navigating to a user's /comments page from a site-relative user profile path",
+        "Detecting the demonstrated empty-state message for no visible comments",
+        "Enumerating visible comment article entries on that page",
+        "Returning page-scoped typed comment entry text records"
+      ],
+      "does_not_own": [
+        "Filtering comments by vote relationship such as downvotes greater than upvotes",
+        "Inferring hidden vote counts not displayed on the page",
+        "Aggregating across multiple pages or proving site-wide absence of comments"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "user_profile_path": {
+            "type": "string",
+            "description": "Site-relative user profile path such as /user/{username}. Must not include the /comments suffix."
+          }
+        },
+        "required": [
+          "user_profile_path"
+        ],
+        "additionalProperties": false
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "user_profile_path": {
+            "type": "string"
+          },
+          "comments_page_path": {
+            "type": "string"
+          },
+          "is_empty": {
+            "type": "boolean",
+            "description": "True when the page shows the demonstrated no-entries message and no comment articles are present."
+          },
+          "comments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "page_index": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "rendered_text": {
+                  "type": "string",
+                  "description": "Full rendered text of the visible comment article."
+                }
+              },
+              "required": [
+                "page_index",
+                "rendered_text"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "user_profile_path",
+          "comments_page_path",
+          "is_empty",
+          "comments"
+        ],
+        "additionalProperties": false
+      },
+      "requires": [
+        "reddit_origin_loaded"
+      ],
+      "provides": [
+        "reddit_user_comments_page_records"
+      ],
+      "supported_patterns": [
+        "user_comments_page_scan",
+        "empty_state_detection"
+      ],
+      "guarantees": {
+        "collection_scope": "page",
+        "completeness": "conditional",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "none",
+          "input_field": null,
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "Returned comments_page_path equals the input user_profile_path with /comments appended",
+        "If is_empty is true, comments is an empty array and the page showed 'There are no entries to display.' with zero main article elements",
+        "If is_empty is false, comments.length equals the number of main article elements on the loaded comments page and each comments[i].rendered_text is non-empty"
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task30_t33",
+          "template_id": "33",
+          "code_quote": "await page.goto(f'{START_URL}{latest_user_href}/comments', wait_until='domcontentloaded')\nawait page.wait_for_load_state('networkidle')\ncomments_text = (await page.locator('main').inner_text()).strip()\nno_entries = await page.get_by_text('There are no entries to display.').count() > 0\ncomment_articles = await page.locator('main article').count()\nif no_entries and comment_articles == 0:\n    count = 0\nelse:\n    for i in range(comment_articles):\n        article = page.locator('main article').nth(i)\n        text = (await article.inner_text()).strip()",
+          "explanation": "Generalized the concrete author profile path into a typed input while preserving the demonstrated /comments navigation, empty-state detection, and page-scoped enumeration of visible comment articles."
+        }
+      ],
+      "feature": "core"
+    },
+    {
+      "primitive_id": "reddit/core/list_user_comments_page_status",
+      "method": "list_user_comments_page_status",
+      "capability": "Inspect a Reddit user comments page for whether it contains any comment entries on the current acquired page.",
+      "method_code": "async def list_user_comments_page_status(self, username: str) -> dict:\n    from urllib.parse import urlsplit, urljoin\n\n    if not isinstance(username, str) or not username.strip():\n        raise ValueError(\"username must be a non-empty string\")\n\n    username = username.strip()\n    current = urlsplit(self.page.url)\n    origin = f\"{current.scheme}://{current.netloc}\"\n    comments_url = urljoin(origin + \"/\", f\"user/{username}/comments\")\n\n    response = await self.page.goto(comments_url, wait_until=\"domcontentloaded\")\n    await self.page.wait_for_load_state(\"networkidle\")\n    main = self.page.locator(\"main\").first\n    await main.wait_for()\n    body_text = await main.inner_text()\n\n    empty_state_message = \"There are no entries to display.\" if \"There are no entries to display.\" in body_text else None\n    empty_state_displayed = empty_state_message is not None\n    has_entries = not empty_state_displayed\n\n    return {\n        \"username\": username,\n        \"comments_page_url\": self.page.url,\n        \"has_entries\": has_entries,\n        \"empty_state_displayed\": empty_state_displayed,\n        \"empty_state_message\": empty_state_message,\n        \"http_status\": response.status if response else None,\n    }\n",
+      "owns": [
+        "Navigate to a Reddit user's comments page",
+        "Read the main content area for the site's explicit empty-state message",
+        "Return whether the page shows no comment entries"
+      ],
+      "does_not_own": [
+        "Counting comments with negative scores",
+        "Parsing raw comment records from unstructured text",
+        "Following pagination across multiple comment pages",
+        "Ranking, filtering, or aggregating comments by task-specific criteria"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string",
+            "description": "Reddit username without /user/ prefix"
+          }
+        },
+        "required": [
+          "username"
+        ],
+        "additionalProperties": false
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string"
+          },
+          "comments_page_url": {
+            "type": "string"
+          },
+          "has_entries": {
+            "type": "boolean",
+            "description": "Whether the acquired comments page shows at least one entry"
+          },
+          "empty_state_displayed": {
+            "type": "boolean",
+            "description": "Whether the explicit site empty-state message is present"
+          },
+          "empty_state_message": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Displayed empty-state text when present"
+          },
+          "http_status": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "username",
+          "comments_page_url",
+          "has_entries",
+          "empty_state_displayed"
+        ],
+        "additionalProperties": false
+      },
+      "requires": [
+        "authenticated_reddit_page_origin"
+      ],
+      "provides": [
+        "user_comments_page_status"
+      ],
+      "supported_patterns": [
+        "detect explicit empty state on user comments page",
+        "differentiate page with entries vs site empty-state message"
+      ],
+      "guarantees": {
+        "collection_scope": "page",
+        "completeness": "conditional",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "none",
+          "input_field": null,
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "When empty_state_displayed is true, empty_state_message contains the displayed Reddit text indicating no entries to display and has_entries is false.",
+        "When has_entries is true, the main content area was acquired successfully and does not match the explicit empty-state condition used by the site on that page.",
+        "Returned comments_page_url ends with /user/{username}/comments or equivalent resolved user-comments route."
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task31_t33",
+          "template_id": "33",
+          "code_quote": "await page.goto(f'{BASE}/user/{author}/comments', wait_until='domcontentloaded')\nawait page.wait_for_load_state('networkidle')\nawait page.locator('main').wait_for()\nbody_text = await page.locator('main').inner_text()\nif 'There are no entries to display.' in body_text:\n    negative_count = 0",
+          "explanation": "Preserved the evidenced page-level capability to detect the explicit empty-state message on a user's comments page without overclaiming typed comment extraction or score parsing."
+        }
+      ],
+      "feature": "core"
+    },
+    {
+      "primitive_id": "reddit/core/list_user_comments_with_scores",
+      "method": "list_user_comments_with_scores",
+      "capability": "list comment entries from a user's comments page and parse each displayed comment score",
+      "method_code": "async def list_user_comments_with_scores(self, user_profile_path: str) -> dict:\n    \"\"\"List displayed comments from a user's comments page with parsed scores.\"\"\"\n    from urllib.parse import urlsplit, urljoin\n    import re\n\n    if not isinstance(user_profile_path, str) or not user_profile_path.startswith(\"/user/\"):\n        raise ValueError(\"user_profile_path must be a relative path like /user/someone\")\n\n    origin_parts = urlsplit(self.page.url)\n    origin = f\"{origin_parts.scheme}://{origin_parts.netloc}\"\n    if not origin_parts.scheme or not origin_parts.netloc:\n        raise RuntimeError(\"Cannot derive runtime origin from current page URL\")\n\n    comments_url = urljoin(origin + \"/\", user_profile_path.lstrip(\"/\") + \"/comments\")\n    await self.page.goto(comments_url, wait_until=\"domcontentloaded\")\n    await self.page.wait_for_load_state(\"networkidle\")\n\n    articles = self.page.locator(\"main article\")\n    count = await articles.count()\n    comments = []\n\n    for i in range(count):\n        art = articles.nth(i)\n        text = (await art.inner_text()).replace(\"−\", \"-\")\n        matches = re.findall(r\"(?:^|\\n)(-?\\d+)(?:\\n|$)\", text)\n        if not matches:\n            raise RuntimeError(f\"Could not parse score from comment article {i}\")\n        comments.append({\"score\": int(matches[-1])})\n\n    return {\"comments\": comments}\n",
+      "owns": [
+        "Navigating to a user's comments page at /user/{user}/comments",
+        "Parsing the displayed comment articles on that page",
+        "Extracting a typed integer score from each comment article's rendered text, including normalization of the displayed minus sign variant",
+        "Returning the acquired page-slice of comments with parsed score values"
+      ],
+      "does_not_own": [
+        "Selecting which user to inspect based on another page",
+        "Counting only comments matching caller-defined predicates such as score < 0",
+        "Proving completeness across all of a user's comments history",
+        "Inferring hidden vote totals beyond the displayed score"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "user_profile_path": {
+            "type": "string",
+            "description": "Relative user profile path, e.g. /user/someone",
+            "pattern": "^/user/[^/]+$"
+          }
+        },
+        "required": [
+          "user_profile_path"
+        ],
+        "additionalProperties": false
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "comments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "score": {
+                  "type": "integer",
+                  "description": "Displayed comment score parsed from the comment article"
+                }
+              },
+              "required": [
+                "score"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "comments"
+        ],
+        "additionalProperties": false
+      },
+      "requires": [
+        "current_page_has_runtime_origin"
+      ],
+      "provides": [
+        "user_comments_page_slice_with_scores"
+      ],
+      "supported_patterns": [
+        "Acquire the displayed comments page for a user profile",
+        "Parse visible integer scores including Unicode minus-sign normalization"
+      ],
+      "guarantees": {
+        "collection_scope": "page",
+        "completeness": "partial",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "none",
+          "input_field": null,
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "Navigates to {user_profile_path}/comments and returns one output record per parsed main article on the acquired page.",
+        "Each returned comment record contains an integer score parsed from displayed text, with Unicode minus sign normalized if present.",
+        "An empty comments array is allowed only when the page loads successfully and no comment articles are present; failure to parse scores from present articles is not treated as successful empty output."
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task29_t33",
+          "template_id": "33",
+          "code_quote": "comments_url = BASE + author['href'] + '/comments'; await page.wait_for_selector('main article'); articles = page.locator('main article'); text = (await art.inner_text()).replace('−', '-'); matches = re.findall(r'(?:^|\\n)(-?\\d+)(?:\\n|$)', text); score = int(matches[-1])",
+          "explanation": "Generalized the author-specific path into user_profile_path and preserved the demonstrated comments-page acquisition and score parsing logic. Task-specific aggregation like counting negatives remains outside the primitive boundary."
+        }
+      ],
+      "feature": "core"
+    },
+    {
+      "primitive_id": "reddit/core/list_user_submissions_in_subreddit_from_profile_overview",
+      "method": "list_user_submissions_in_subreddit_from_profile_overview",
+      "capability": "List submission records shown on a Reddit user's profile overview page, filtered to a specific subreddit, with parsed submission identity and links.",
+      "method_code": "async def list_user_submissions_in_subreddit_from_profile_overview(self, username: str, subreddit: str) -> dict:\n    from urllib.parse import urlsplit, urljoin\n    import re\n\n    if not isinstance(username, str) or not username.strip():\n        raise ValueError(\"username must be a non-empty string\")\n    if not isinstance(subreddit, str) or not subreddit.strip():\n        raise ValueError(\"subreddit must be a non-empty string\")\n\n    origin_parts = urlsplit(self.page.url)\n    origin = f\"{origin_parts.scheme}://{origin_parts.netloc}\"\n    profile_url = urljoin(origin + \"/\", f\"user/{username.strip()}\")\n\n    await self.page.goto(profile_url, wait_until='domcontentloaded')\n    await self.page.wait_for_load_state('networkidle')\n\n    cards = self.page.locator('main article')\n    count = await cards.count()\n    submissions = []\n    for i in range(count):\n        art = cards.nth(i)\n        info = (await art.locator('p.submission__info').inner_text()).strip()\n        if username not in info or subreddit not in info:\n            continue\n        nav_links = art.locator('nav a')\n        nav_count = await nav_links.count()\n        href = None\n        for j in range(nav_count):\n            candidate_href = await nav_links.nth(j).get_attribute('href')\n            if candidate_href and candidate_href.startswith(f'/f/{subreddit}/'):\n                href = candidate_href\n                break\n        if not href:\n            continue\n        match = re.search(rf'/f/{re.escape(subreddit)}/(\\d+)', href)\n        if not match:\n            continue\n        submission_id = int(match.group(1))\n        title = (await art.locator('h1,h2,h3').first.inner_text()).strip()\n        submissions.append({\n            'submission_id': submission_id,\n            'submission_path': href,\n            'submission_url': urljoin(origin + '/', href.lstrip('/')),\n            'title': title,\n            'subreddit': subreddit,\n            'author_username': username,\n        })\n\n    return {'submissions': submissions}",
+      "owns": [
+        "Navigate to a Reddit user profile overview page using authenticated browser state if available",
+        "Inspect rendered submission cards under `main article`",
+        "Parse each card's displayed submission metadata from `p.submission__info`",
+        "Filter cards to those whose displayed metadata indicates the requested author and subreddit",
+        "Extract subreddit-local submission link from `nav a` href beginning with `/f/<subreddit>/`",
+        "Parse numeric submission ID from the canonical subreddit submission path",
+        "Extract displayed submission title from the card heading"
+      ],
+      "does_not_own": [
+        "Choosing which user/subreddit pair to query beyond supplied inputs",
+        "Repeating across multiple users or subreddits",
+        "Ranking, aggregation, or dedup across multiple calls",
+        "Mutating vote state on submissions",
+        "Proving absence outside the currently rendered profile overview page"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string"
+          },
+          "subreddit": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "subreddit"
+        ],
+        "additionalProperties": false
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "submissions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "submission_id": {
+                  "type": "integer"
+                },
+                "submission_path": {
+                  "type": "string"
+                },
+                "submission_url": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "subreddit": {
+                  "type": "string"
+                },
+                "author_username": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "submission_id",
+                "submission_path",
+                "title",
+                "subreddit",
+                "author_username"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "submissions"
+        ],
+        "additionalProperties": false
+      },
+      "requires": [
+        "reddit_origin_loaded"
+      ],
+      "provides": [
+        "reddit_profile_overview_submission_records"
+      ],
+      "supported_patterns": [
+        "user_profile_overview_scan",
+        "page_scoped_submission_listing"
+      ],
+      "guarantees": {
+        "collection_scope": "page",
+        "completeness": "partial",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "none",
+          "input_field": null,
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "Returns one record for each rendered `main article` card whose `p.submission__info` contains the requested username and subreddit and that exposes a `nav a` href under `/f/<subreddit>/<id>`",
+        "Each returned record has `submission_id` equal to the integer parsed from its extracted subreddit submission path",
+        "Each returned record's `title` equals the visible text of the first `h1,h2,h3` within the matched card",
+        "If no rendered cards satisfy the filter on the loaded profile overview page, returns `submissions: []` rather than failing solely because the collection is empty"
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task720_t25",
+          "template_id": "25",
+          "code_quote": "resp = await page.goto(f'http://gcrsandbox410.redmond.corp.microsoft.com:10099/user/{TARGET_USER}', wait_until='domcontentloaded')\n...\ncards = page.locator('main article')\n...\ninfo = await art.locator('p.submission__info').inner_text()\nif TARGET_USER not in info or TARGET_FORUM not in info:\n    continue\nnav_links = art.locator('nav a')\n...\nif h and h.startswith('/f/EarthPorn/'):\n    href = h\n...\nm = re.search(r'/f/EarthPorn/(\\d+)', href)\n...\ntitle = (await art.locator('h1,h2,h3').first.inner_text()).strip()",
+          "explanation": "Generalized the concrete username and subreddit into inputs while preserving the evidenced profile-overview card parsing, subreddit-path extraction, and numeric submission ID parsing."
+        }
+      ],
+      "feature": "core"
+    },
+    {
+      "primitive_id": "reddit/core/list_user_submissions_page",
+      "method": "list_user_submissions_page",
+      "capability": "List typed submission records visible on a Reddit user's submissions page, including subreddit and current upvote-state indicators and submission detail links when present.",
+      "method_code": "async def list_user_submissions_page(self, username: str) -> dict:\n    from urllib.parse import urlsplit, urljoin\n    import re\n\n    if not isinstance(username, str) or not username.strip():\n        raise ValueError(\"username must be a non-empty string\")\n\n    current_url = self.page.url or \"\"\n    split = urlsplit(current_url)\n    if not split.scheme or not split.netloc:\n        raise RuntimeError(\"A live Reddit page origin is required in self.page.url before navigation\")\n    origin = f\"{split.scheme}://{split.netloc}\"\n    target_url = urljoin(origin + \"/\", f\"user/{username.strip()}/submissions\")\n\n    response = await self.page.goto(target_url, wait_until=\"domcontentloaded\")\n    document_status = response.status if response else None\n    try:\n        await self.page.wait_for_load_state(\"networkidle\", timeout=5000)\n    except Exception:\n        pass\n    await self.page.locator(\"main\").wait_for()\n\n    forms = self.page.locator('form[action^=\"/sv/\"]')\n    count = await forms.count()\n    submissions = []\n\n    for i in range(count):\n        form = forms.nth(i)\n        meta = await form.evaluate(\n            \"\"\"(el) => {\n                const article = el.closest('article') || el.parentElement?.parentElement || el.parentElement;\n                const text = (article?.innerText || '').trim();\n                const titleEl = article?.querySelector('h1 a, h2 a, h3 a, .submission__title a, a[rel=bookmark], a');\n                const commentsEl = article?.querySelector('a[href*=\"/f/\"]');\n                return {\n                    text,\n                    title: (titleEl?.innerText || '').trim(),\n                    detail_href: commentsEl?.getAttribute('href') || '',\n                    comments_link_label: (commentsEl?.innerText || '').trim()\n                };\n            }\"\"\"\n        )\n        action = await form.get_attribute(\"action\") or \"\"\n        up_btn = form.locator('button[title=\"Upvote\"], button[title=\"Retract upvote\"]').first\n        btn_title = await up_btn.get_attribute(\"title\")\n        if btn_title == \"Retract upvote\":\n            upvote_state = \"upvoted\"\n        elif btn_title == \"Upvote\":\n            upvote_state = \"upvote_available\"\n        else:\n            continue\n\n        block_text = meta.get(\"text\", \"\") or \"\"\n        title = meta.get(\"title\", \"\") or \"\"\n        detail_href = meta.get(\"detail_href\", \"\") or \"\"\n        comments_link_label = meta.get(\"comments_link_label\", \"\") or \"\"\n\n        author_display = None\n        m_author = re.search(r\"Submitted by\\s+([^\\n]+?)(?:\\s+in\\s+[^\\n]+)?(?:\\n|$)\", block_text)\n        if m_author:\n            author_display = m_author.group(1).strip()\n\n        subreddit_name = None\n        m_subreddit = re.search(r\"\\sin\\s+([^\\n]+?)(?:\\n|$)\", block_text)\n        if m_subreddit:\n            subreddit_name = m_subreddit.group(1).strip()\n\n        record = {\n            \"vote_action_path\": action,\n            \"title\": title,\n            \"upvote_state\": upvote_state,\n            \"block_text\": block_text\n        }\n        if author_display:\n            record[\"author_display\"] = author_display\n        if subreddit_name:\n            record[\"subreddit_name\"] = subreddit_name\n        if detail_href:\n            record[\"detail_url\"] = urljoin(origin + \"/\", detail_href.lstrip(\"/\"))\n        if comments_link_label:\n            record[\"comments_link_label\"] = comments_link_label\n\n        submissions.append(record)\n\n    return {\n        \"username\": username.strip(),\n        \"page_url\": self.page.url,\n        \"document_status\": document_status,\n        \"submissions\": submissions\n    }",
+      "owns": [
+        "Open an authenticated Reddit user submissions page for a provided username",
+        "Locate visible submission vote forms on the page",
+        "Parse each surrounding submission/article block into typed records",
+        "Extract the page-local vote action path for each visible submission",
+        "Extract visible submission title text when present",
+        "Extract visible author attribution and subreddit from rendered article text when parseable",
+        "Extract current vote control state from the upvote button title",
+        "Extract submission detail/comments link and visible link label when present"
+      ],
+      "does_not_own": [
+        "Choosing which username to inspect beyond the caller-provided username",
+        "Filtering records to a specific subreddit, author, or title after acquisition",
+        "Iterating across multiple submissions pages",
+        "Clicking vote controls or performing mutations",
+        "Ranking, deduplicating across pages, or summarizing results"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string",
+            "description": "Reddit username whose /user/{username}/submissions page should be opened"
+          }
+        },
+        "required": [
+          "username"
+        ],
+        "additionalProperties": false
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string"
+          },
+          "page_url": {
+            "type": "string"
+          },
+          "document_status": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "submissions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "vote_action_path": {
+                  "type": "string",
+                  "description": "Form action path for the submission vote control, e.g. /sv/...",
+                  "semantic_role": "page_local_submission_vote_action"
+                },
+                "title": {
+                  "type": "string",
+                  "description": "Visible submission title text"
+                },
+                "author_display": {
+                  "type": "string",
+                  "description": "Visible author attribution text parsed from the submission block"
+                },
+                "subreddit_name": {
+                  "type": "string",
+                  "description": "Visible subreddit/community name parsed from the submission block"
+                },
+                "upvote_state": {
+                  "type": "string",
+                  "enum": [
+                    "upvote_available",
+                    "upvoted"
+                  ],
+                  "description": "Current state of the submission's upvote control as displayed on page"
+                },
+                "block_text": {
+                  "type": "string",
+                  "description": "Rendered submission block text used for page parsing"
+                },
+                "detail_url": {
+                  "type": "string",
+                  "description": "Absolute URL for the submission detail/comments page when a corresponding link is present"
+                },
+                "comments_link_label": {
+                  "type": "string",
+                  "description": "Displayed label of the submission detail/comments link when present"
+                }
+              },
+              "required": [
+                "vote_action_path",
+                "title",
+                "upvote_state",
+                "block_text"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "username",
+          "page_url",
+          "document_status",
+          "submissions"
+        ],
+        "additionalProperties": false
+      },
+      "requires": [
+        "authenticated_reddit_session",
+        "live_page_origin"
+      ],
+      "provides": [
+        "reddit_user_submissions_page_loaded",
+        "reddit_submission_records_page"
+      ],
+      "supported_patterns": [
+        "Navigate directly to /user/{username}/submissions using the current deployment origin",
+        "Read page-scoped visible submission records from vote forms on the submissions page",
+        "Return typed submission records including vote state and link fields when rendered"
+      ],
+      "guarantees": {
+        "collection_scope": "page",
+        "completeness": "partial",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "none",
+          "input_field": null,
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "Returned page_url matches the Reddit user submissions page for the requested username",
+        "Every returned record originates from a visible form whose action starts with /sv/",
+        "Every returned record includes a non-empty vote_action_path and parsed upvote_state",
+        "When a detail/comments link is rendered in a submission block, detail_url is absolute and comments_link_label preserves the visible label",
+        "If submissions is empty, the page was still loaded successfully and extraction completed without selector failure"
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task724_t25",
+          "template_id": "25",
+          "code_quote": "forms = page.locator('form[action^=\"/sv/\"]') ... meta = await form.evaluate(... return {text, title: (titleEl?.innerText || '').trim()}; ) ... action = await form.get_attribute('action') ... up_btn = form.locator('button[title=\"Upvote\"], button[title=\"Retract upvote\"]').first",
+          "explanation": "Generalized the demonstrated page-scoped parsing of visible submissions from a user submissions page into a reusable typed listing primitive."
+        },
+        {
+          "workflow_id": "task722_t25",
+          "template_id": "25",
+          "code_quote": "submissions_url = f\"{START_URL}/user/{TARGET_USER}/submissions\" ... target_card = page.locator('main article').filter(has=page.get_by_role('link', name=TARGET_TITLE)).first ... target_comments_link = target_card.get_by_role('link', name='No comments')",
+          "explanation": "Added evidenced stable fields for a submission detail/comments link and its visible label from the same user submissions page acquisition boundary."
+        }
+      ],
+      "feature": "core"
+    },
+    {
+      "primitive_id": "reddit/core/open_hot_top_thread_in_forum",
+      "method": "open_hot_top_thread_in_forum",
+      "capability": "Open the thread page for the first visible Hot-ranked post in a specified Reddit forum.",
+      "method_code": "async def open_hot_top_thread_in_forum(self, forum_name: str) -> dict:\n    from urllib.parse import urlsplit, urljoin\n\n    if not isinstance(forum_name, str) or not forum_name.strip():\n        raise ValueError(\"forum_name must be a non-empty string\")\n\n    forum_name = forum_name.strip()\n    current = urlsplit(self.page.url)\n    origin = f\"{current.scheme}://{current.netloc}\"\n    forum_url = urljoin(origin + \"/\", f\"f/{forum_name}\")\n\n    response = await self.page.goto(forum_url, wait_until=\"domcontentloaded\")\n    await self.page.wait_for_load_state(\"networkidle\")\n\n    hot_link = self.page.get_by_role(\"link\", name=\"Hot\")\n    await hot_link.click()\n    await self.page.wait_for_load_state(\"networkidle\")\n\n    comments_link = self.page.locator(f'main a[href*=\"/f/{forum_name}/\"]').filter(has_text=\"comments\").first\n    await comments_link.wait_for()\n    source_comments_href = await comments_link.get_attribute(\"href\")\n    if not source_comments_href:\n        raise RuntimeError(\"First visible Hot-ranked post comments link did not expose an href\")\n\n    thread_target = urljoin(origin + \"/\", source_comments_href.lstrip(\"/\"))\n    thread_response = await self.page.goto(thread_target, wait_until=\"domcontentloaded\")\n    await self.page.wait_for_load_state(\"networkidle\")\n\n    title_locator = self.page.locator(\"main h1\").first\n    await title_locator.wait_for()\n    thread_title = (await title_locator.inner_text()).strip()\n    if not thread_title:\n        raise RuntimeError(\"Opened thread page did not expose a non-empty title\")\n\n    return {\n        \"forum_name\": forum_name,\n        \"sort\": \"hot\",\n        \"thread_url\": self.page.url,\n        \"thread_title\": thread_title,\n        \"source_comments_href\": source_comments_href,\n        \"forum_http_status\": response.status if response else None,\n        \"thread_http_status\": thread_response.status if thread_response else None,\n    }\n",
+      "owns": [
+        "Navigate to a forum page on the Reddit deployment",
+        "Select the Hot sort tab",
+        "Locate the first visible submission's comments/thread link within that forum listing",
+        "Open the corresponding thread page",
+        "Read stable thread metadata exposed on the destination page such as title and final URL"
+      ],
+      "does_not_own": [
+        "Choosing which forum should be inspected beyond the caller-supplied forum name",
+        "Interpreting 'trending' beyond the site's displayed Hot ordering",
+        "Cross-page ranking or aggregation outside the single forum Hot listing",
+        "Subscribing/unsubscribing to the forum",
+        "Formatting a natural-language answer"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "forum_name": {
+            "type": "string",
+            "description": "Forum/community name as used in the /f/{forum_name} path, e.g. 'consoles'."
+          }
+        },
+        "required": [
+          "forum_name"
+        ],
+        "additionalProperties": false
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "forum_name": {
+            "type": "string"
+          },
+          "sort": {
+            "type": "string",
+            "enum": [
+              "hot"
+            ]
+          },
+          "thread_url": {
+            "type": "string",
+            "description": "Opened thread URL after navigating from the first visible comments link."
+          },
+          "thread_title": {
+            "type": "string",
+            "description": "Title read from the opened thread page."
+          },
+          "source_comments_href": {
+            "type": "string",
+            "description": "Comments/thread href extracted from the forum listing before navigation."
+          },
+          "forum_http_status": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "thread_http_status": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "forum_name",
+          "sort",
+          "thread_url",
+          "thread_title",
+          "source_comments_href"
+        ],
+        "additionalProperties": false
+      },
+      "requires": [
+        "authenticated_reddit_page_origin"
+      ],
+      "provides": [
+        "opened_reddit_thread_page"
+      ],
+      "supported_patterns": [
+        "open first visible Hot-ranked thread from a forum listing",
+        "use forum-specific comments link rather than guessed thread URL"
+      ],
+      "guarantees": {
+        "collection_scope": "page",
+        "completeness": "partial",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "none",
+          "input_field": null,
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "On /f/{forum_name}, the Hot control is activated before extraction.",
+        "A comments/thread link matching the forum path is found in the listing and yields a non-empty href.",
+        "After navigation, the resulting page exposes a non-empty main h1 title.",
+        "Returned thread_url matches the opened page URL and source_comments_href matches the link extracted from the listing."
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task597_t4",
+          "template_id": "4",
+          "code_quote": "await page.goto(BASE + \"/f/consoles\", wait_until=\"domcontentloaded\")\nawait page.wait_for_load_state(\"networkidle\")\nawait page.get_by_role(\"link\", name=\"Hot\").click()\nawait page.wait_for_load_state(\"networkidle\")\ncomments_link = page.locator('main a[href*=\"/f/consoles/\"]').filter(has_text='comments').first\ncomments_href = await comments_link.get_attribute('href')\n...\nawait page.goto(BASE + comments_href, wait_until=\"domcontentloaded\")\n...\npost_title = (await page.locator('main h1').first.inner_text()).strip()",
+          "explanation": "Generalized the hard-coded forum path into forum_name while preserving the evidenced Hot-tab click, first visible comments-link acquisition, and thread-title extraction."
+        }
+      ],
+      "feature": "core"
+    },
+    {
+      "primitive_id": "reddit/core/post_comment_on_post",
+      "method": "post_comment_on_post",
+      "capability": "submit a top-level comment on a Reddit post page and verify it appears",
+      "method_code": "async def post_comment_on_post(self, post_url: str, comment_text: str) -> dict:\n    from urllib.parse import urlsplit, urljoin\n\n    if not isinstance(post_url, str) or not post_url:\n        raise ValueError(\"post_url must be a non-empty string\")\n    if not isinstance(comment_text, str):\n        raise ValueError(\"comment_text must be a string\")\n\n    current = self.page.url\n    if not current:\n        raise RuntimeError(\"page.url is empty; a Reddit page is required to derive runtime origin\")\n    parts = urlsplit(current)\n    origin = f\"{parts.scheme}://{parts.netloc}\"\n    resolved_post_url = post_url if \"://\" in post_url else urljoin(origin + \"/\", post_url.lstrip(\"/\"))\n\n    response = await self.page.goto(resolved_post_url, wait_until=\"domcontentloaded\")\n    if response is None:\n        raise RuntimeError(\"failed to navigate to Reddit post page\")\n    await self.page.wait_for_load_state(\"networkidle\")\n\n    textarea = self.page.locator('textarea[aria-label=\"Comment\"]').first\n    await textarea.wait_for(state=\"visible\")\n    await textarea.fill(comment_text)\n\n    post_button = self.page.get_by_role(\"button\", name=\"Post\")\n    await post_button.wait_for(state=\"visible\")\n    await post_button.click()\n\n    try:\n        await self.page.wait_for_load_state(\"networkidle\", timeout=10000)\n    except Exception:\n        pass\n    await self.page.wait_for_timeout(1500)\n\n    comment_locator = self.page.get_by_text(comment_text, exact=True).last\n    visible_confirmation = True\n    try:\n        await comment_locator.wait_for(timeout=15000)\n    except Exception:\n        visible_confirmation = False\n\n    return {\n        \"final_url\": self.page.url,\n        \"submitted_comment\": {\"text\": comment_text},\n        \"visible_confirmation\": visible_confirmation,\n    }\n",
+      "owns": [
+        "Navigate to an authenticated Reddit post page",
+        "Locate the comment composer textarea on the post page",
+        "Fill the comment text",
+        "Submit via the page's Post button",
+        "Verify the submitted comment text becomes visible on the page"
+      ],
+      "does_not_own": [
+        "Choosing which post URL to target",
+        "Generating or filtering comment text",
+        "Ranking or selecting among multiple visible matching comments beyond existence verification",
+        "Managing credentials or exposing storage state as semantic input"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "post_url": {
+            "type": "string",
+            "description": "Absolute or site-relative URL of the Reddit post page where the comment should be submitted."
+          },
+          "comment_text": {
+            "type": "string",
+            "description": "Exact text to submit as the top-level comment."
+          }
+        },
+        "required": [
+          "post_url",
+          "comment_text"
+        ],
+        "additionalProperties": false
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "final_url": {
+            "type": "string",
+            "description": "Page URL after submission."
+          },
+          "submitted_comment": {
+            "type": "object",
+            "properties": {
+              "text": {
+                "type": "string",
+                "description": "Exact comment text that was submitted."
+              }
+            },
+            "required": [
+              "text"
+            ],
+            "additionalProperties": false
+          },
+          "visible_confirmation": {
+            "type": "boolean",
+            "description": "Whether the exact submitted comment text was observed on the live page after submission."
+          }
+        },
+        "required": [
+          "final_url",
+          "submitted_comment",
+          "visible_confirmation"
+        ],
+        "additionalProperties": false
+      },
+      "requires": [
+        "authenticated_reddit_session"
+      ],
+      "provides": [
+        "reddit_top_level_comment_submitted"
+      ],
+      "supported_patterns": [
+        "authenticated post-page comment submission",
+        "exact-text visibility verification after submission"
+      ],
+      "guarantees": {
+        "collection_scope": "not_applicable",
+        "completeness": "not_applicable",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "none",
+          "input_field": null,
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "After submission, the page exposes text exactly equal to the provided `comment_text` when `visible_confirmation` is true.",
+        "The returned `submitted_comment.text` exactly equals the input `comment_text`.",
+        "`visible_confirmation` is true only if exact visible text confirmation succeeded on the post page."
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task650_t23",
+          "template_id": "23",
+          "code_quote": "textarea = page.locator('textarea[aria-label=\"Comment\"]') -> fill(COMMENT_TEXT) -> get_by_role('button', name='Post').click() -> get_by_text(COMMENT_TEXT, exact=True).last.wait_for()",
+          "explanation": "Generalized the hard-coded post URL and comment body into `post_url` and `comment_text` inputs while preserving the evidenced Reddit UI composer, Post action, and exact-text verification."
+        }
+      ],
+      "feature": "core"
+    },
+    {
+      "primitive_id": "reddit/core/post_top_level_comment",
+      "method": "post_top_level_comment",
+      "capability": "Submit a top-level comment on a Reddit post page while already authenticated",
+      "method_code": "async def post_top_level_comment(self, post_url: str, comment_text: str) -> dict:\n    \"\"\"Post a top-level comment on a Reddit thread page.\"\"\"\n    if not isinstance(post_url, str) or not post_url:\n        raise ValueError(\"post_url must be a non-empty string\")\n    if not isinstance(comment_text, str):\n        raise ValueError(\"comment_text must be a string\")\n\n    response = await self.page.goto(post_url, wait_until=\"domcontentloaded\")\n    await self.page.wait_for_load_state(\"networkidle\")\n\n    comment_box = self.page.get_by_role(\"textbox\", name=\"Comment\")\n    await comment_box.wait_for(state=\"visible\")\n    await comment_box.fill(comment_text)\n\n    typed_value = await comment_box.input_value()\n    if typed_value != comment_text:\n        raise RuntimeError(\"Comment textbox did not contain the requested text before submit\")\n\n    post_button = self.page.get_by_role(\"button\", name=\"Post\").last\n    await post_button.wait_for(state=\"visible\")\n    await post_button.click()\n    await self.page.wait_for_load_state(\"networkidle\")\n\n    comment_locator = self.page.locator(f\"text={comment_text}\").first\n    await comment_locator.wait_for(timeout=10000)\n    submission_visible = await comment_locator.is_visible()\n\n    return {\n        \"final_url\": self.page.url,\n        \"posted_comment_text\": comment_text,\n        \"submission_visible\": submission_visible,\n    }\n",
+      "owns": [
+        "Navigate to a Reddit post page URL",
+        "Locate the main comment textbox on the post page",
+        "Fill the comment text",
+        "Submit via the page Post button",
+        "Verify success by observing the submitted comment text rendered on the live page"
+      ],
+      "does_not_own": [
+        "Producing or choosing the comment text",
+        "Selecting which post to comment on beyond receiving its URL",
+        "Authentication secret handling or login flow; it only consumes existing authenticated browser state",
+        "Replying to an existing comment thread specifically; evidence only shows top-level post commenting",
+        "Editing or deleting comments"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "post_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "URL of the Reddit post page where the top-level comment should be submitted"
+          },
+          "comment_text": {
+            "type": "string",
+            "description": "Exact top-level comment text to post"
+          }
+        },
+        "required": [
+          "post_url",
+          "comment_text"
+        ],
+        "additionalProperties": false
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "final_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Page URL after submission"
+          },
+          "posted_comment_text": {
+            "type": "string",
+            "description": "The comment text verified on the rendered page"
+          },
+          "submission_visible": {
+            "type": "boolean",
+            "description": "Whether the submitted comment text became visible on the live page"
+          }
+        },
+        "required": [
+          "final_url",
+          "posted_comment_text",
+          "submission_visible"
+        ],
+        "additionalProperties": false
+      },
+      "requires": [
+        "authenticated_reddit_session"
+      ],
+      "provides": [
+        "top_level_comment_posted_receipt"
+      ],
+      "supported_patterns": [
+        "Submit a top-level comment on a thread page provided by URL",
+        "Verify comment submission by visible rendered text match"
+      ],
+      "guarantees": {
+        "collection_scope": "not_applicable",
+        "completeness": "not_applicable",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "none",
+          "input_field": null,
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "After submission, a textbox with accessible name Comment was present before fill.",
+        "Returned posted_comment_text exactly equals the input comment_text.",
+        "After clicking the Post button, the exact submitted comment text becomes visible on the live page within the timeout.",
+        "submission_visible is true only if the rendered page shows the submitted text."
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task651_t23",
+          "template_id": "23",
+          "code_quote": "await page.goto(START_URL, wait_until='domcontentloaded'); await page.get_by_role('textbox', name='Comment').wait_for(); await comment_box.fill(COMMENT_TEXT); post_button = page.get_by_role('button', name='Post').last; await post_button.click(); comment_locator = page.locator(f'text={COMMENT_TEXT}').first; await comment_locator.wait_for(timeout=10000)",
+          "explanation": "Generalized the hard-coded post URL and comment body into inputs while preserving the demonstrated Comment textbox, Post button submission path, and rendered-text verification."
+        }
+      ],
+      "feature": "core"
+    },
+    {
+      "primitive_id": "reddit/core/reply_to_comment",
+      "method": "reply_to_comment",
+      "capability": "Post a reply to an existing comment on a Reddit post page.",
+      "method_code": "async def reply_to_comment(self, comment_text: str, reply_text: str) -> dict:\n    import asyncio\n\n    if not isinstance(comment_text, str) or not comment_text.strip():\n        raise ValueError(\"comment_text must be a non-empty string\")\n    if not isinstance(reply_text, str) or not reply_text.strip():\n        raise ValueError(\"reply_text must be a non-empty string\")\n\n    comment_text = comment_text.strip()\n    reply_text = reply_text.strip()\n\n    comment_match = self.page.get_by_text(comment_text, exact=False).first\n    await comment_match.wait_for()\n    await comment_match.scroll_into_view_if_needed()\n    await asyncio.sleep(1)\n\n    reply_link = self.page.get_by_role(\"link\", name=\"Reply\").nth(0)\n    await reply_link.click()\n    await asyncio.sleep(1)\n\n    reply_box = self.page.locator('textarea[id^=\"reply_to_comment_\"]').last\n    await reply_box.wait_for()\n    await reply_box.fill(reply_text)\n\n    form = self.page.locator(\"form.comment-form\").filter(has=reply_box)\n    await form.get_by_role(\"button\", name=\"Post\").click()\n    await self.page.wait_for_load_state(\"networkidle\")\n    await asyncio.sleep(2)\n\n    posted = self.page.get_by_text(reply_text, exact=True).last\n    await posted.wait_for(timeout=15000)\n    await posted.scroll_into_view_if_needed()\n\n    return {\n        \"posted\": True,\n        \"reply_text\": reply_text,\n        \"post_url\": self.page.url,\n    }\n",
+      "owns": [
+        "Locate and activate a comment-level Reply control on a Reddit post page",
+        "Fill the nested reply textarea for that comment",
+        "Submit the reply form",
+        "Verify that the posted reply text appears on the live page after submission"
+      ],
+      "does_not_own": [
+        "Determining which comment should receive the reply from task-specific text semantics",
+        "Generating the reply message content",
+        "Providing authentication credentials directly as task inputs",
+        "Navigating arbitrary external fallback providers or non-Reddit mechanisms"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "comment_text": {
+            "type": "string",
+            "description": "Visible text contained in the target parent comment used to identify which comment to reply to"
+          },
+          "reply_text": {
+            "type": "string",
+            "description": "Exact text to post as the reply"
+          }
+        },
+        "required": [
+          "comment_text",
+          "reply_text"
+        ],
+        "additionalProperties": false
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "posted": {
+            "type": "boolean",
+            "description": "Whether the reply was successfully submitted and subsequently observed on the page"
+          },
+          "reply_text": {
+            "type": "string",
+            "description": "Exact reply text that was submitted and verified"
+          },
+          "post_url": {
+            "type": "string",
+            "description": "URL of the Reddit post page after submission"
+          }
+        },
+        "required": [
+          "posted",
+          "reply_text",
+          "post_url"
+        ],
+        "additionalProperties": false
+      },
+      "requires": [
+        "opened_reddit_post_page",
+        "authenticated_reddit_session"
+      ],
+      "provides": [
+        "posted_comment_reply"
+      ],
+      "supported_patterns": [
+        "reply to comment from post page nested form",
+        "verify posted reply text becomes visible"
+      ],
+      "guarantees": {
+        "collection_scope": "not_applicable",
+        "completeness": "not_applicable",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "none",
+          "input_field": null,
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "After submission, the nested reply form has been posted and the page reaches network idle.",
+        "An element with the exact reply_text becomes visible on the live page within timeout.",
+        "Returned post_url matches the current Reddit post page URL after posting."
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task409_t23",
+          "template_id": "23",
+          "code_quote": "manager_text = page.get_by_text('I agree, Bookshop.org is wonderful!', exact=False)\n...\nreply_link = page.get_by_role('link', name='Reply').nth(0)\nawait reply_link.click()\n...\nreply_box = page.locator('textarea[id^=\"reply_to_comment_\"]').last\nawait reply_box.fill(ANSWER)\n...\nform = page.locator('form.comment-form').filter(has=reply_box)\nawait form.get_by_role('button', name='Post').click()\n...\nposted = page.get_by_text(ANSWER, exact=True).last\nawait posted.wait_for(timeout=15000)",
+          "explanation": "Generalized the hard-coded parent comment text and reply body into inputs while preserving the evidenced nested reply UI selectors and exact-text verification after posting."
+        }
+      ],
+      "feature": "core"
+    },
+    {
+      "primitive_id": "reddit/core/set_forum_subscription_from_thread_page",
+      "method": "set_forum_subscription_from_thread_page",
+      "capability": "Set the current forum subscription state to subscribed from a Reddit thread page.",
+      "method_code": "async def set_forum_subscription_from_thread_page(self, thread_url: str, target_subscription_state: str) -> dict:\n    from urllib.parse import urljoin, urlsplit\n\n    if not isinstance(thread_url, str) or not thread_url:\n        raise ValueError(\"thread_url must be a non-empty string\")\n    if target_subscription_state != \"subscribed\":\n        raise ValueError(\"target_subscription_state must be 'subscribed'\")\n\n    current_parts = urlsplit(self.page.url)\n    origin = f\"{current_parts.scheme}://{current_parts.netloc}\"\n    navigable_url = thread_url if urlsplit(thread_url).scheme else urljoin(origin + \"/\", thread_url.lstrip(\"/\"))\n\n    response = await self.page.goto(navigable_url, wait_until=\"domcontentloaded\")\n    if response is None:\n        raise RuntimeError(\"failed to load thread page\")\n    await self.page.wait_for_load_state(\"networkidle\")\n\n    unsubscribe_button = self.page.get_by_role(\"button\", name=\"Unsubscribe\")\n    subscribe_button = self.page.get_by_role(\"button\", name=\"Subscribe\")\n\n    if await unsubscribe_button.count() > 0:\n        action_taken = \"already_subscribed\"\n    elif await subscribe_button.count() > 0:\n        await subscribe_button.first.click()\n        await self.page.wait_for_load_state(\"networkidle\")\n        await unsubscribe_button.first.wait_for(state=\"visible\")\n        action_taken = \"clicked_subscribe\"\n    else:\n        raise RuntimeError(\"neither Subscribe nor Unsubscribe button was found on the thread page\")\n\n    if await unsubscribe_button.count() == 0:\n        raise RuntimeError(\"subscription verification failed: Unsubscribe button not visible after action\")\n\n    return {\n        \"thread_url\": self.page.url,\n        \"forum_subscription_state\": \"subscribed\",\n        \"action_taken\": action_taken,\n    }\n",
+      "owns": [
+        "Navigate to a provided Reddit thread URL",
+        "Inspect the visible forum subscription control on the thread page",
+        "Click Subscribe when needed to achieve subscribed state",
+        "Verify subscribed state via the visible Unsubscribe control"
+      ],
+      "does_not_own": [
+        "Choosing which forum or thread to operate on",
+        "Ranking or selecting a trending post",
+        "Authenticating or supplying credentials",
+        "Unsubscribing from a forum",
+        "Returning raw page text or DOM"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "thread_url": {
+            "type": "string",
+            "description": "Absolute or site-relative URL of a thread page whose sidebar exposes forum subscription controls."
+          },
+          "target_subscription_state": {
+            "type": "string",
+            "enum": [
+              "subscribed"
+            ],
+            "description": "Desired resulting subscription state supported by this primitive."
+          }
+        },
+        "required": [
+          "thread_url",
+          "target_subscription_state"
+        ],
+        "additionalProperties": false
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "thread_url": {
+            "type": "string",
+            "description": "Final thread URL after the action."
+          },
+          "forum_subscription_state": {
+            "type": "string",
+            "enum": [
+              "subscribed"
+            ],
+            "description": "Observed resulting forum subscription state."
+          },
+          "action_taken": {
+            "type": "string",
+            "enum": [
+              "already_subscribed",
+              "clicked_subscribe"
+            ],
+            "description": "Whether the forum was already subscribed or required a click."
+          }
+        },
+        "required": [
+          "thread_url",
+          "forum_subscription_state",
+          "action_taken"
+        ],
+        "additionalProperties": false
+      },
+      "requires": [
+        "Authenticated Reddit session is already active in the current browser context",
+        "Current page is on the target Reddit deployment so runtime origin can be derived for relative thread URLs"
+      ],
+      "provides": [
+        "Forum corresponding to the thread page is in subscribed state",
+        "Typed receipt distinguishing no-op already_subscribed from clicked_subscribe"
+      ],
+      "supported_patterns": [
+        "Subscribe to a forum from its thread page",
+        "Idempotent ensure-subscribed behavior when already subscribed"
+      ],
+      "guarantees": {
+        "collection_scope": "not_applicable",
+        "completeness": "not_applicable",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "semantic_enum",
+          "input_field": "target_subscription_state",
+          "supported_values": [
+            "subscribed"
+          ],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "Returned forum_subscription_state is 'subscribed'.",
+        "Returned action_taken is 'already_subscribed' if Unsubscribe was initially visible.",
+        "Returned action_taken is 'clicked_subscribe' only when Subscribe was visible, clicked, and Unsubscribe became visible afterward."
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task599_t4",
+          "template_id": "4",
+          "code_quote": "subscribe = page.get_by_role('button', name='Subscribe'); unsubscribe = page.get_by_role('button', name='Unsubscribe'); if await unsubscribe.count() > 0: ... elif await subscribe.count() > 0: await subscribe.click(); ... state = 'subscribed' if await page.get_by_role('button', name='Unsubscribe').count() > 0 else 'unsubscribed'",
+          "explanation": "Generalized the task-specific chosen thread into a thread_url input while preserving the evidenced subscribe control detection, click-if-needed behavior, and subscribed-state verification via the Unsubscribe button."
+        }
+      ],
+      "feature": "core"
+    },
+    {
+      "primitive_id": "reddit/core/set_subreddit_post_vote_by_top_ranking",
+      "method": "set_subreddit_post_vote_by_top_ranking",
+      "capability": "set the vote state on a ranked subreddit post selected from Reddit's Top listing for a given time range",
+      "method_code": "async def set_subreddit_post_vote_by_top_ranking(self, subreddit_name: str, time_range: str, rank: int, vote_direction: str) -> dict:\n    from urllib.parse import urlsplit, urljoin\n\n    if not isinstance(subreddit_name, str) or not subreddit_name.strip():\n        raise ValueError(\"subreddit_name must be a non-empty string\")\n    if time_range != 'all':\n        raise ValueError(\"time_range must be 'all'\")\n    if not isinstance(rank, int) or rank < 1:\n        raise ValueError(\"rank must be an integer >= 1\")\n    if vote_direction != 'downvote':\n        raise ValueError(\"vote_direction must be 'downvote'\")\n\n    origin_parts = urlsplit(self.page.url)\n    origin = f\"{origin_parts.scheme}://{origin_parts.netloc}\"\n    top_url = urljoin(origin + \"/\", f\"f/{subreddit_name.strip()}/top?t=all\")\n\n    await self.page.goto(top_url, wait_until='domcontentloaded')\n    await self.page.wait_for_load_state('networkidle')\n\n    article = self.page.locator('main article').nth(rank - 1)\n    await article.wait_for()\n    post_title = (await article.locator('h1, h2, h3').first.inner_text()).strip()\n    comments_link = article.get_by_role('link', name='comments')\n    if await comments_link.count() == 0:\n        comments_link = article.get_by_role('link', name=lambda text: text is not None and 'comments' in text.lower())\n    await comments_link.first.click()\n    await self.page.wait_for_load_state('networkidle')\n\n    downvote = self.page.get_by_role('button', name='Downvote').first\n    await downvote.wait_for()\n    await downvote.click()\n    await self.page.wait_for_load_state('networkidle')\n    await self.page.wait_for_timeout(1000)\n\n    vote_button_pressed = await downvote.get_attribute('aria-pressed')\n    vote_applied = vote_button_pressed == 'true'\n    score_candidates = await self.page.locator('main article').first.locator('xpath=.//*[normalize-space(text()) and string-length(normalize-space(text())) < 8]').evaluate_all(\n        \"els => els.map(e => (e.textContent || '').trim()).filter(t => /^-?\\\\d+$/.test(t))\"\n    )\n    score_text = score_candidates[0] if score_candidates else ''\n\n    return {\n        'subreddit_name': subreddit_name,\n        'time_range': time_range,\n        'rank': rank,\n        'post_title': post_title,\n        'post_url': self.page.url,\n        'vote_direction': vote_direction,\n        'vote_applied': vote_applied,\n        'vote_button_pressed': vote_button_pressed,\n        'score_text': score_text,\n    }",
+      "owns": [
+        "Navigate to a subreddit listing page on Reddit",
+        "Select the Top sort and a supported time range via Reddit's listing URL/state",
+        "Identify the post at a specific rank within the rendered listing page",
+        "Open that post's detail/comments page",
+        "Click the Upvote/Downvote control on the post detail page to set vote state",
+        "Verify the requested vote control is active from page state such as aria-pressed"
+      ],
+      "does_not_own": [
+        "Choosing which subreddit or rank is relevant to a user goal",
+        "Cross-subreddit search or discovery",
+        "Ranking logic outside Reddit's own displayed sort order",
+        "Returning raw DOM/page text as the product",
+        "Authentication credential material; it only consumes authenticated browser state"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "subreddit_name": {
+            "type": "string",
+            "description": "Reddit community name as used in the /f/{subreddit_name} path"
+          },
+          "time_range": {
+            "type": "string",
+            "enum": [
+              "all"
+            ],
+            "description": "Top listing time range demonstrated by the workflow"
+          },
+          "rank": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "1-based rank within the currently rendered Top listing page"
+          },
+          "vote_direction": {
+            "type": "string",
+            "enum": [
+              "downvote"
+            ],
+            "description": "Requested vote state demonstrated by the workflow"
+          }
+        },
+        "required": [
+          "subreddit_name",
+          "time_range",
+          "rank",
+          "vote_direction"
+        ],
+        "additionalProperties": false
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "subreddit_name": {
+            "type": "string"
+          },
+          "time_range": {
+            "type": "string",
+            "enum": [
+              "all"
+            ]
+          },
+          "rank": {
+            "type": "integer"
+          },
+          "post_title": {
+            "type": "string",
+            "description": "Rendered title of the targeted ranked post"
+          },
+          "post_url": {
+            "type": "string",
+            "description": "Final post detail/comments page URL after opening the ranked post"
+          },
+          "vote_direction": {
+            "type": "string",
+            "enum": [
+              "downvote"
+            ]
+          },
+          "vote_applied": {
+            "type": "boolean",
+            "description": "Whether the requested vote control is active after interaction"
+          },
+          "vote_button_pressed": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Observed aria-pressed value on the vote button after interaction"
+          },
+          "score_text": {
+            "type": "string",
+            "description": "Displayed numeric score text if present on the post detail page"
+          }
+        },
+        "required": [
+          "subreddit_name",
+          "time_range",
+          "rank",
+          "post_title",
+          "post_url",
+          "vote_direction",
+          "vote_applied"
+        ],
+        "additionalProperties": false
+      },
+      "requires": [
+        "authenticated_reddit_session",
+        "reddit_origin_loaded"
+      ],
+      "provides": [
+        "reddit_ranked_post_vote_set"
+      ],
+      "supported_patterns": [
+        "top_listing_rank_selection",
+        "single_ranked_post_vote_mutation"
+      ],
+      "guarantees": {
+        "collection_scope": "page",
+        "completeness": "partial",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "semantic_enum",
+          "input_field": "time_range",
+          "supported_values": [
+            "all"
+          ],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "After navigation, the subreddit Top listing for the requested time range is loaded.",
+        "The ranked post at the requested 1-based position is found in the rendered listing and its title is captured.",
+        "After opening the post detail page and clicking Downvote, the Downvote button for that post reports an active state via aria-pressed or equivalent rendered pressed styling.",
+        "The returned post_url matches the opened detail/comments page rather than the listing page."
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task714_t24",
+          "template_id": "24",
+          "code_quote": "await page.goto(f\"{BASE}/f/gadgets/top?t=all\", wait_until='domcontentloaded')\n...\nfirst_article = page.locator('main article').first\ntop_title = (await first_article.locator('h1, h2, h3').first.inner_text()).strip()\n...\ncomments_link = first_article.get_by_role('link', name=re.compile(r'comments', re.I))\nawait comments_link.click()\n...\ndownvote = page.get_by_role('button', name='Downvote').first\nawait downvote.click()\n...\npressed = await downvote.get_attribute('aria-pressed')",
+          "explanation": "Generalized the concrete /f/gadgets Top All page into inputs for subreddit, evidenced time_range 'all', rank, and vote_direction 'downvote', preserving the demonstrated listing-to-detail navigation and pressed-state verification."
+        }
+      ],
+      "feature": "core"
+    },
+    {
+      "primitive_id": "reddit/core/subscribe_to_current_thread",
+      "method": "subscribe_to_current_thread",
+      "capability": "subscribe to the currently open Reddit thread by clicking the visible thread-level Subscribe button and returning a typed receipt for the attempted mutation.",
+      "method_code": "async def subscribe_to_current_thread(self) -> dict:\n    \"\"\"Click the Subscribe button on the currently open Reddit thread page.\"\"\"\n    import re\n\n    subscribe_button = self.page.get_by_role(\"button\", name=re.compile(r\"^Subscribe\", re.I)).first\n    await subscribe_button.scroll_into_view_if_needed()\n    label = (await subscribe_button.inner_text()).strip()\n    await subscribe_button.click()\n    await self.page.wait_for_timeout(1500)\n    await self.page.wait_for_load_state(\"networkidle\")\n    return {\n        \"thread_url\": self.page.url,\n        \"subscribe_button_label_used\": label\n    }\n",
+      "owns": [
+        "Find the thread-level Subscribe button on the currently open Reddit thread page",
+        "Click the Subscribe button",
+        "Wait for the page to settle after the mutation attempt",
+        "Return a typed receipt for where and how the mutation was attempted"
+      ],
+      "does_not_own": [
+        "Finding or choosing which thread to subscribe to",
+        "Opening the thread page",
+        "Providing credentials",
+        "Proving success through a stronger subscribed-state verification than the workflow demonstrated",
+        "Unsubscribing"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "thread_url": {
+            "type": "string"
+          },
+          "subscribe_button_label_used": {
+            "type": "string",
+            "description": "Observed visible label text of the button clicked for the subscribe action."
+          }
+        },
+        "required": [
+          "thread_url",
+          "subscribe_button_label_used"
+        ],
+        "additionalProperties": false
+      },
+      "requires": [
+        "Authenticated Reddit session",
+        "Current page is already positioned on a Reddit thread page exposing a visible Subscribe button"
+      ],
+      "provides": [
+        "Typed receipt for a subscribe mutation attempt on the current thread page"
+      ],
+      "supported_patterns": [
+        "Subscribe from an already open thread page using the visible Subscribe button",
+        "Thread-local mutation without exposing internal request tokens or backend details"
+      ],
+      "guarantees": {
+        "collection_scope": "not_applicable",
+        "completeness": "not_applicable",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "none",
+          "input_field": null,
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "A visible button whose accessible name matches /^Subscribe/i is found on the current page before clicking.",
+        "The method clicks that button and then waits for networkidle after a short post-click settle interval.",
+        "Returned thread_url equals the current page URL where the mutation was attempted.",
+        "Returned subscribe_button_label_used is the visible text read from the clicked button before the click."
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task595_t4",
+          "template_id": "4",
+          "code_quote": "subscribe_btn = page.get_by_role('button', name=re.compile(r'^Subscribe', re.I)).first\nawait subscribe_btn.scroll_into_view_if_needed()\nawait subscribe_btn.click()\nawait page.wait_for_timeout(1500)\nawait page.wait_for_load_state('networkidle')",
+          "explanation": "Preserved the evidenced thread-level Subscribe-button mutation exactly as demonstrated, while keeping thread selection and navigation in workflow logic. The receipt exposes only observable facts, not internal auth artifacts."
+        }
+      ],
+      "feature": "core"
+    },
+    {
+      "primitive_id": "reddit/core/subscribe_to_forum_from_thread_page",
+      "method": "subscribe_to_forum_from_thread_page",
+      "capability": "subscribe to a Reddit forum/community while viewing a thread page",
+      "method_code": "async def subscribe_to_forum_from_thread_page(self, thread_url: str, forum_name: str | None = None) -> dict:\n    \"\"\"Subscribe to a forum from a Reddit thread page and verify subscribed state.\"\"\"\n    import re\n\n    if not isinstance(thread_url, str) or not thread_url:\n        raise ValueError(\"thread_url must be a non-empty string\")\n    if forum_name is not None and not isinstance(forum_name, str):\n        raise ValueError(\"forum_name must be a string when provided\")\n\n    await self.page.goto(thread_url, wait_until=\"domcontentloaded\")\n    await self.page.wait_for_load_state(\"networkidle\")\n    await self.page.wait_for_selector(\"h1\")\n\n    if forum_name:\n        await self.page.wait_for_selector(f'a[href=\"/f/{forum_name}\"]')\n\n    sub_btn = self.page.get_by_role(\"button\", name=re.compile(r\"Subscribe\", re.I)).first\n    await sub_btn.wait_for(state=\"visible\")\n    await sub_btn.click()\n    await self.page.wait_for_load_state(\"networkidle\")\n\n    unsub_btn = self.page.get_by_role(\"button\", name=re.compile(r\"Unsubscribe\", re.I)).first\n    await unsub_btn.wait_for(state=\"visible\")\n    final_button_label = (await unsub_btn.inner_text()).strip()\n\n    return {\n        \"forum_name\": forum_name,\n        \"subscribed\": True,\n        \"final_button_label\": final_button_label,\n        \"thread_url\": self.page.url,\n    }\n",
+      "owns": [
+        "Uses authenticated Reddit browser session context to perform the site-local subscribe mutation",
+        "Finds and clicks the visible Subscribe control on a thread page",
+        "Verifies resulting subscribed state by observing the button label change to Unsubscribe"
+      ],
+      "does_not_own": [
+        "Finding which post is trending or hot",
+        "Choosing the forum name or thread URL from broader search/navigation logic",
+        "Returning credentials or storage state",
+        "General-purpose page navigation outside the provided thread page context"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "thread_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "URL of a Reddit thread page for the target forum"
+          },
+          "forum_name": {
+            "type": "string",
+            "description": "Expected forum/community name for validation, e.g. 'pittsburgh'"
+          }
+        },
+        "required": [
+          "thread_url"
+        ],
+        "additionalProperties": false
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "forum_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "subscribed": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "final_button_label": {
+            "type": "string",
+            "description": "Observed postcondition label after successful mutation, e.g. 'Unsubscribe'"
+          },
+          "thread_url": {
+            "type": "string",
+            "description": "Final thread URL after successful mutation"
+          }
+        },
+        "required": [
+          "subscribed",
+          "final_button_label",
+          "thread_url",
+          "forum_name"
+        ],
+        "additionalProperties": false
+      },
+      "requires": [
+        "authenticated_reddit_session"
+      ],
+      "provides": [
+        "forum_subscription_updated_receipt"
+      ],
+      "supported_patterns": [
+        "Subscribe to a forum while on a thread page",
+        "Optionally validate the expected forum by its sidebar/community link before clicking Subscribe"
+      ],
+      "guarantees": {
+        "collection_scope": "not_applicable",
+        "completeness": "not_applicable",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "none",
+          "input_field": null,
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "After clicking the Subscribe button on the thread page, a button with text 'Unsubscribe' becomes visible.",
+        "The browser remains on a Reddit thread URL after the mutation succeeds."
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task598_t4",
+          "template_id": "4",
+          "code_quote": "await page.goto(f'{BASE}/f/pittsburgh/45899/driving-in-pittsburgh-summed-up-by-one-traffic-sign', wait_until='domcontentloaded'); sub_btn = page.get_by_role('button', name=re.compile(r'Subscribe', re.I)).first; await sub_btn.click(); await page.wait_for_selector('button:has-text(\"Unsubscribe\")')",
+          "explanation": "Generalized the hard-coded thread instance into thread_url input, kept the authenticated thread-page subscribe action, and preserved the demonstrated visible postcondition of button text changing to Unsubscribe. forum_name remains optional validation input rather than page context."
+        }
+      ],
+      "feature": "core"
+    },
+    {
+      "primitive_id": "reddit/core/subscribe_to_post_thread",
+      "method": "subscribe_to_post_thread",
+      "capability": "subscribe to a Reddit post/thread from its thread page",
+      "method_code": "async def subscribe_to_post_thread(self, thread_url: str) -> dict:\n    from urllib.parse import urlsplit, urljoin\n\n    if not isinstance(thread_url, str) or not thread_url:\n        raise ValueError(\"thread_url must be a non-empty string\")\n\n    current = self.page.url\n    if not current:\n        raise RuntimeError(\"page.url is empty; a Reddit page is required to derive runtime origin\")\n    parts = urlsplit(current)\n    origin = f\"{parts.scheme}://{parts.netloc}\"\n    resolved_thread_url = thread_url if \"://\" in thread_url else urljoin(origin + \"/\", thread_url.lstrip(\"/\"))\n\n    response = await self.page.goto(resolved_thread_url, wait_until=\"domcontentloaded\")\n    if response is None:\n        raise RuntimeError(\"failed to navigate to Reddit thread page\")\n    await self.page.wait_for_load_state(\"networkidle\")\n\n    subscribe_button = self.page.get_by_role(\"button\", name=\"Subscribe\").first\n    await subscribe_button.wait_for(state=\"visible\")\n    await subscribe_button.click()\n    await self.page.wait_for_load_state(\"networkidle\")\n\n    unsubscribe_button = self.page.get_by_role(\"button\", name=\"Unsubscribe\").first\n    subscribed = True\n    try:\n        await unsubscribe_button.wait_for(state=\"visible\", timeout=10000)\n    except Exception:\n        subscribed = False\n\n    return {\n        \"thread_url\": self.page.url,\n        \"subscribed\": subscribed,\n    }\n",
+      "owns": [
+        "Navigating an authenticated Reddit browser session to a specific post thread page",
+        "Locating the thread-level Subscribe control on the post page",
+        "Triggering the subscription action",
+        "Verifying success by observing the button state change to Unsubscribe"
+      ],
+      "does_not_own": [
+        "Discovering which post is trending",
+        "Choosing the target subreddit/forum",
+        "Searching or ranking posts",
+        "Selecting a post by task-specific business logic beyond caller-supplied thread identity or URL",
+        "Providing or managing credentials outside authenticated browser context"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "thread_url": {
+            "type": "string",
+            "description": "Absolute or site-relative Reddit thread URL to open before subscribing."
+          }
+        },
+        "required": [
+          "thread_url"
+        ],
+        "additionalProperties": false
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "thread_url": {
+            "type": "string",
+            "description": "Resolved thread URL after navigation and action."
+          },
+          "subscribed": {
+            "type": "boolean",
+            "description": "Whether the thread is confirmed subscribed by presence of the Unsubscribe button state."
+          }
+        },
+        "required": [
+          "thread_url",
+          "subscribed"
+        ],
+        "additionalProperties": false
+      },
+      "requires": [
+        "authenticated_reddit_session"
+      ],
+      "provides": [
+        "reddit_thread_subscription_enabled"
+      ],
+      "supported_patterns": [
+        "authenticated thread-page subscription",
+        "button-state verification via Unsubscribe control"
+      ],
+      "guarantees": {
+        "collection_scope": "not_applicable",
+        "completeness": "not_applicable",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "none",
+          "input_field": null,
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "After invocation, the browser is on the requested Reddit thread page.",
+        "A thread-level control with accessible name \"Unsubscribe\" is visible when `subscribed` is true, confirming the subscription state.",
+        "Returned `subscribed` is true only if the Unsubscribe postcondition is observed."
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task596_t4",
+          "template_id": "4",
+          "code_quote": "open thread page -> get_by_role('button', name='Subscribe').first.click() -> get_by_role('button', name='Unsubscribe').first.wait_for()",
+          "explanation": "Generalized the hard-coded selected thread into a caller-supplied `thread_url` while preserving the evidenced thread-level Subscribe action and Unsubscribe-state confirmation. Removed the invalid public `page` input because runtime uses `self.page`."
+        }
+      ],
+      "feature": "core"
+    },
+    {
+      "primitive_id": "reddit/core/update_account_biography",
+      "method": "update_account_biography",
+      "capability": "Update the signed-in Reddit user's account biography text from the account settings page. Also supports optional public-profile verification of the persisted biography text after saving.",
+      "method_code": "async def update_account_biography(self, biography_text: str) -> dict:\n    from urllib.parse import urlsplit, urljoin\n\n    if not isinstance(biography_text, str):\n        raise ValueError(\"biography_text must be a string\")\n\n    current_url = self.page.url\n    if not current_url:\n        raise RuntimeError(\"page.url is empty; an authenticated Reddit page is required to derive runtime origin\")\n\n    parts = urlsplit(current_url)\n    origin = f\"{parts.scheme}://{parts.netloc}\"\n    account_url = urljoin(origin + \"/\", \"user/me/account\")\n\n    response = await self.page.goto(account_url, wait_until=\"domcontentloaded\")\n    if response is None:\n        raise RuntimeError(\"failed to navigate to Reddit account page\")\n    await self.page.wait_for_load_state(\"networkidle\")\n\n    edit_link = self.page.get_by_role(\"link\", name=\"Edit biography\")\n    await edit_link.wait_for(state=\"visible\")\n    await edit_link.click()\n    await self.page.wait_for_load_state(\"networkidle\")\n\n    textarea = self.page.locator('textarea[name=\"user_biography[biography]\"], #user_biography_biography').first\n    await textarea.wait_for(state=\"visible\")\n    await textarea.fill(biography_text)\n\n    save_button = self.page.get_by_role(\"button\", name=\"Save\")\n    await save_button.wait_for(state=\"visible\")\n    await save_button.click()\n    await self.page.wait_for_load_state(\"networkidle\")\n\n    body_text = await self.page.locator(\"body\").inner_text()\n    confirmation_displayed = \"The biography was updated.\" in body_text\n\n    final_biography_text = await textarea.input_value()\n    account_page_url = self.page.url\n\n    profile_url = None\n    persisted = False\n    try:\n        profile_link = self.page.locator('a[href^=\"/user/\"]').first\n        href = await profile_link.get_attribute(\"href\")\n        if href:\n            profile_url = urljoin(origin + \"/\", href.lstrip(\"/\"))\n            await self.page.goto(profile_url, wait_until=\"domcontentloaded\")\n            await self.page.wait_for_load_state(\"networkidle\")\n            profile_body = await self.page.locator(\"body\").inner_text()\n            persisted = biography_text in profile_body\n    finally:\n        if self.page.url != account_page_url:\n            await self.page.goto(account_page_url, wait_until=\"domcontentloaded\")\n            await self.page.wait_for_load_state(\"networkidle\")\n\n    return {\n        \"final_biography_text\": final_biography_text,\n        \"confirmation_displayed\": confirmation_displayed,\n        \"account_page_url\": account_page_url,\n        \"profile_url\": profile_url,\n        \"saved_biography_text\": biography_text,\n        \"persisted\": persisted,\n    }\n",
+      "owns": [
+        "Navigate to the Reddit signed-in account page for the current user",
+        "Open the site's biography editor via the \"Edit biography\" control",
+        "Set the biography textarea value",
+        "Submit the change with the site's Save control",
+        "Verify success from the site-rendered confirmation and saved textarea readback",
+        "Optionally verify persistence by checking the public profile page for the updated biography text"
+      ],
+      "does_not_own": [
+        "Choosing the biography text content",
+        "Supplying credentials or storage state",
+        "Selecting which user account is signed in",
+        "Cross-site profile editing",
+        "Returning secrets or browser state",
+        "Formatting a final answer"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "biography_text": {
+            "type": "string",
+            "description": "Exact biography text to save for the currently authenticated Reddit account."
+          }
+        },
+        "required": [
+          "biography_text"
+        ],
+        "additionalProperties": false
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "final_biography_text": {
+            "type": "string",
+            "description": "Biography value read back from the Reddit biography textarea after save."
+          },
+          "confirmation_displayed": {
+            "type": "boolean",
+            "description": "Whether the page body included the site confirmation text indicating the biography was updated."
+          },
+          "account_page_url": {
+            "type": "string",
+            "description": "Final Reddit account page URL after the save flow."
+          },
+          "profile_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Public profile URL visited for post-save verification when discoverable from the current account context."
+          },
+          "saved_biography_text": {
+            "type": "string",
+            "description": "Biography text that the component attempted to save."
+          },
+          "persisted": {
+            "type": "boolean",
+            "description": "Whether the updated biography text was observed on the public profile page after saving."
+          }
+        },
+        "required": [
+          "final_biography_text",
+          "confirmation_displayed",
+          "account_page_url",
+          "saved_biography_text",
+          "persisted"
+        ],
+        "additionalProperties": false
+      },
+      "requires": [
+        "authenticated_reddit_session"
+      ],
+      "provides": [
+        "reddit_account_biography_updated"
+      ],
+      "supported_patterns": [
+        "authenticated UI mutation from account settings",
+        "site confirmation verification",
+        "textarea readback verification",
+        "optional public profile persistence verification"
+      ],
+      "guarantees": {
+        "collection_scope": "not_applicable",
+        "completeness": "not_applicable",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "none",
+          "input_field": null,
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "After invoking Save, the page body contains the confirmation text \"The biography was updated.\" or the saved textarea can be read back from the editor page.",
+        "The biography textarea value read from selector `textarea[name=\"user_biography[biography]\"]` or `#user_biography_biography` equals the requested input text.",
+        "The returned `saved_biography_text` exactly matches the input `biography_text` that was submitted through the editor.",
+        "When `persisted` is true, a subsequent navigation to the user's public Reddit profile shows the requested biography text in page content."
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task400_t6",
+          "template_id": "6",
+          "code_quote": "goto account page -> click \"Edit biography\" -> textarea[name=\"user_biography[biography]\"] -> fill target bio -> click \"Save\" -> navigate to /user/{USERNAME} -> check TARGET_BIO in body text",
+          "explanation": "Generalized the hard-coded username and biography into authenticated-current-user context plus a biography_text input, preserving the dedicated biography-editor flow and public-profile verification."
+        },
+        {
+          "workflow_id": "task402_t6",
+          "template_id": "6",
+          "code_quote": "click \"Edit biography\" -> #user_biography_biography -> fill TARGET_BIO -> click \"Save\" -> detect \"The biography was updated.\" in body -> read textarea value back",
+          "explanation": "Unioned a second evidenced selector for the same biography textarea and retained the confirmation-message and textarea-readback postconditions as stable typed outputs."
+        }
+      ],
+      "feature": "core"
+    },
+    {
+      "primitive_id": "reddit/core/update_own_profile_biography",
+      "method": "update_own_profile_biography",
+      "capability": "Update the authenticated Reddit account's biography text through the account settings UI.",
+      "method_code": "async def update_own_profile_biography(self, biography_text: str) -> dict:\n    from urllib.parse import urljoin, urlsplit\n\n    if not isinstance(biography_text, str):\n        raise ValueError(\"biography_text must be a string\")\n\n    current_url = self.page.url\n    if not current_url:\n        raise RuntimeError(\"page has no current URL; navigate to the site before calling this method\")\n    parts = urlsplit(current_url)\n    origin = f\"{parts.scheme}://{parts.netloc}\"\n    home_url = urljoin(origin + \"/\", \"\")\n\n    response = await self.page.goto(home_url, wait_until=\"domcontentloaded\")\n    if response is None:\n        raise RuntimeError(\"failed to load Reddit home page\")\n\n    user_menu = self.page.locator('button[aria-haspopup=\"menu\"]').filter(has_text=\"\")\n    account_link = self.page.get_by_role(\"link\", name=\"My account\")\n    if await account_link.count() == 0:\n        menu_buttons = self.page.locator('button[aria-haspopup=\"menu\"]')\n        if await menu_buttons.count() == 0:\n            raise RuntimeError(\"could not find authenticated account menu\")\n        await menu_buttons.first.click()\n        await account_link.first.wait_for(state=\"visible\")\n\n    await account_link.first.click()\n    await self.page.wait_for_load_state(\"domcontentloaded\")\n\n    edit_bio_link = self.page.get_by_role(\"link\", name=\"Edit biography\")\n    await edit_bio_link.first.wait_for(state=\"visible\")\n    await edit_bio_link.first.click()\n    await self.page.wait_for_load_state(\"domcontentloaded\")\n\n    bio_box = self.page.get_by_role(\"textbox\", name=\"Biography\")\n    await bio_box.wait_for(state=\"visible\")\n    await bio_box.fill(biography_text)\n\n    save_button = self.page.get_by_role(\"button\", name=\"Save\")\n    await save_button.first.click()\n    await self.page.wait_for_load_state(\"domcontentloaded\")\n\n    edit_url = self.page.url\n    await self.page.goto(edit_url, wait_until=\"domcontentloaded\")\n    await self.page.wait_for_load_state(\"domcontentloaded\")\n    await bio_box.wait_for(state=\"visible\")\n    observed_biography = await bio_box.input_value()\n\n    if observed_biography != biography_text:\n        raise RuntimeError(\n            f\"biography save verification failed: expected {biography_text!r}, got {observed_biography!r}\"\n        )\n\n    return {\n        \"biography_text\": observed_biography,\n        \"edit_biography_url\": self.page.url,\n    }\n",
+      "owns": [
+        "Navigate from the current Reddit deployment to the authenticated user's account settings UI",
+        "Open the Edit biography page for the currently authenticated user",
+        "Set the Biography textbox value to the caller-provided string",
+        "Submit the Save action",
+        "Verify persistence by reloading the same edit page and reading back the Biography field value"
+      ],
+      "does_not_own": [
+        "Authenticating or supplying credentials",
+        "Selecting which account is authenticated",
+        "Editing profile fields other than the biography field",
+        "Returning raw DOM, screenshots, or HTML",
+        "Formatting a final answer for a task"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "biography_text": {
+            "type": "string",
+            "description": "Exact biography text to save into the authenticated account's Biography field."
+          }
+        },
+        "required": [
+          "biography_text"
+        ],
+        "additionalProperties": false
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "biography_text": {
+            "type": "string",
+            "description": "Biography text read back from the Biography field after save and reload."
+          },
+          "edit_biography_url": {
+            "type": "string",
+            "description": "URL of the authenticated user's edit biography page used for verification."
+          }
+        },
+        "required": [
+          "biography_text",
+          "edit_biography_url"
+        ],
+        "additionalProperties": false
+      },
+      "requires": [
+        "Authenticated Reddit session is already active in the current browser context",
+        "Current page is on the target Reddit deployment so runtime origin can be derived"
+      ],
+      "provides": [
+        "Authenticated account biography has the requested saved value",
+        "Typed confirmation of the saved biography text and verification page URL"
+      ],
+      "supported_patterns": [
+        "Update own profile biography through account settings UI",
+        "Idempotent biography set when the field already contains the requested text"
+      ],
+      "guarantees": {
+        "collection_scope": "not_applicable",
+        "completeness": "not_applicable",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "none",
+          "input_field": null,
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "Returned biography_text exactly equals the requested biography_text input.",
+        "Returned edit_biography_url is the live edit biography page URL after verification, not a login page.",
+        "After Save and reload, the Biography textbox is visible and its input value matches the requested text."
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task399_t6",
+          "template_id": "6",
+          "code_quote": "await page.get_by_role('link', name='My account').click(); await page.get_by_role('link', name='Edit biography').click(); bio = page.get_by_role('textbox', name='Biography'); await bio.fill(TARGET_BIO); await page.get_by_role('button', name='Save').click(); ... current = await bio.input_value()",
+          "explanation": "Generalized the hard-coded biography string into biography_text input while preserving the evidenced UI path: My account -> Edit biography -> Biography textbox -> Save -> read back field value for verification."
+        }
+      ],
+      "feature": "core"
+    },
+    {
+      "primitive_id": "reddit/core/update_profile_biography",
+      "method": "update_profile_biography",
+      "capability": "Update the signed-in Reddit user's profile biography text through the profile edit page.",
+      "method_code": "async def update_profile_biography(self, biography_text: str) -> dict:\n    from urllib.parse import urlsplit, urljoin\n\n    if not isinstance(biography_text, str):\n        raise ValueError(\"biography_text must be a string\")\n\n    biography_text = biography_text.strip()\n    current = urlsplit(self.page.url)\n    origin = f\"{current.scheme}://{current.netloc}\"\n\n    path = urlsplit(self.page.url).path\n    username = None\n    if path.startswith(\"/user/\"):\n        parts = [p for p in path.split(\"/\") if p]\n        if len(parts) >= 2:\n            username = parts[1]\n\n    if not username:\n        profile_links = self.page.locator('a[href^=\"/user/\"]')\n        count = await profile_links.count()\n        for i in range(count):\n            href = await profile_links.nth(i).get_attribute(\"href\")\n            if href and href.startswith(\"/user/\"):\n                parts = [p for p in href.split(\"/\") if p]\n                if len(parts) >= 2:\n                    username = parts[1]\n                    break\n    if not username:\n        raise RuntimeError(\"Could not determine signed-in username from current Reddit page context\")\n\n    edit_url = urljoin(origin + \"/\", f\"user/{username}/edit_biography\")\n    response = await self.page.goto(edit_url, wait_until=\"domcontentloaded\")\n    await self.page.wait_for_load_state(\"networkidle\")\n\n    textarea = self.page.get_by_role(\"textbox\", name=\"Biography\")\n    await textarea.fill(biography_text)\n    await self.page.get_by_role(\"button\", name=\"Save\").click()\n    await self.page.wait_for_load_state(\"networkidle\")\n\n    edit_page_text = await self.page.locator(\"main\").inner_text()\n    profile_url = urljoin(origin + \"/\", f\"user/{username}\")\n    profile_response = await self.page.goto(profile_url, wait_until=\"domcontentloaded\")\n    await self.page.wait_for_load_state(\"networkidle\")\n    body_text = await self.page.locator(\"body\").inner_text()\n    saved = biography_text in edit_page_text and biography_text in body_text\n\n    return {\n        \"profile_url\": self.page.url,\n        \"biography_text\": biography_text,\n        \"saved\": saved,\n        \"username\": username,\n        \"edit_http_status\": response.status if response else None,\n        \"profile_http_status\": profile_response.status if profile_response else None,\n    }\n",
+      "owns": [
+        "Navigate to the Reddit biography edit page for the authenticated user",
+        "Locate the Biography textbox on the edit form",
+        "Replace the biography text with caller-provided text",
+        "Submit the form with Save",
+        "Verify the updated biography text appears on the edit/profile pages after submission"
+      ],
+      "does_not_own": [
+        "Authenticating the user or supplying credentials",
+        "Choosing which account is signed in",
+        "Returning secret material or storage state",
+        "Generic page screenshotting or filesystem logging",
+        "Updating unrelated profile fields",
+        "Selecting an arbitrary target user other than the authenticated profile context"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "biography_text": {
+            "type": "string",
+            "description": "Exact biography text to set for the signed-in user's Reddit profile."
+          }
+        },
+        "required": [
+          "biography_text"
+        ],
+        "additionalProperties": false
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "profile_url": {
+            "type": "string",
+            "description": "URL of the signed-in user's profile page after the update."
+          },
+          "biography_text": {
+            "type": "string",
+            "description": "Biography text confirmed on the resulting Reddit profile."
+          },
+          "saved": {
+            "type": "boolean",
+            "description": "Whether the submitted biography text was observed after saving."
+          },
+          "username": {
+            "type": "string"
+          },
+          "edit_http_status": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "profile_http_status": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "profile_url",
+          "biography_text",
+          "saved",
+          "username"
+        ],
+        "additionalProperties": false
+      },
+      "requires": [
+        "authenticated_reddit_session"
+      ],
+      "provides": [
+        "updated_profile_biography"
+      ],
+      "supported_patterns": [
+        "set signed-in user's biography from edit page",
+        "verify saved biography on profile page"
+      ],
+      "guarantees": {
+        "collection_scope": "not_applicable",
+        "completeness": "not_applicable",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "none",
+          "input_field": null,
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "After clicking Save, the loaded edit/profile page contains the exact submitted biography text.",
+        "The returned saved field is true only if the exact requested biography text is observed on the resulting Reddit page.",
+        "The returned profile_url resolves to a Reddit user profile page for the authenticated account context, not the edit form."
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task403_t6",
+          "template_id": "6",
+          "code_quote": "page.goto(f\"{START_URL}/user/MarvelsGrantMan136/edit_biography\") ... textarea = page.get_by_role(\"textbox\", name=\"Biography\") ... await textarea.fill(TARGET_BIO) ... await page.get_by_role(\"button\", name=\"Save\").click() ... await page.goto(f\"{START_URL}/user/MarvelsGrantMan136\") ... target_locator = page.get_by_text(TARGET_BIO, exact=True).first",
+          "explanation": "Generalized the hard-coded biography text into an input and derived the username from current authenticated Reddit context rather than preserving a fixed deployment user path."
+        }
+      ],
+      "feature": "core"
+    },
+    {
+      "primitive_id": "reddit/core/upvote_reddit_submission_on_listing_article",
+      "method": "upvote_reddit_submission_on_listing_article",
+      "capability": "upvote a Reddit submission from its rendered article card on the current listing page by visible title, returning whether it was already upvoted or was newly upvoted.",
+      "method_code": "async def upvote_reddit_submission_on_listing_article(self, submission_title: str) -> dict:\n    \"\"\"Upvote a rendered submission article on the current Reddit page by exact visible title.\"\"\"\n    article = self.page.locator(\"article\", has=self.page.get_by_role(\"link\", name=submission_title)).first\n    await article.wait_for()\n    retract_button = article.get_by_role(\"button\", name=\"Retract upvote\")\n    if await retract_button.count() > 0:\n        return {\n            \"submission_title\": submission_title,\n            \"status\": \"already_upvoted\"\n        }\n    upvote_button = article.get_by_role(\"button\", name=\"Upvote\")\n    await upvote_button.click()\n    await article.get_by_role(\"button\", name=\"Retract upvote\").wait_for(timeout=5000)\n    return {\n        \"submission_title\": submission_title,\n        \"status\": \"upvoted\"\n    }\n",
+      "owns": [
+        "Locate a rendered submission article on the current Reddit page by the visible linked title",
+        "Detect whether the submission is already upvoted by checking for the article-local 'Retract upvote' button",
+        "Click the article-local 'Upvote' button when the submission is not already upvoted",
+        "Confirm post-mutation state by waiting for the article-local 'Retract upvote' button to appear"
+      ],
+      "does_not_own": [
+        "Navigating to a particular user submissions page or subreddit page",
+        "Choosing which submission titles should be upvoted",
+        "Looping over multiple target submissions",
+        "Filtering submissions by subreddit or author as task logic",
+        "Formatting a final natural-language answer"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "submission_title": {
+            "type": "string",
+            "description": "Exact visible title of the Reddit submission link within a rendered article card."
+          }
+        },
+        "required": [
+          "submission_title"
+        ],
+        "additionalProperties": false
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "submission_title": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "already_upvoted",
+              "upvoted"
+            ]
+          }
+        },
+        "required": [
+          "submission_title",
+          "status"
+        ],
+        "additionalProperties": false
+      },
+      "requires": [
+        "Authenticated Reddit session",
+        "Current page is a Reddit page containing a rendered submission article with a link named exactly as submission_title"
+      ],
+      "provides": [
+        "Typed receipt describing whether the target submission was already upvoted or newly upvoted"
+      ],
+      "supported_patterns": [
+        "Mutate a submission directly from a listing/user submissions page without opening the thread",
+        "Use visible submission title as the stable caller-supplied selector within the current page"
+      ],
+      "guarantees": {
+        "collection_scope": "not_applicable",
+        "completeness": "not_applicable",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "none",
+          "input_field": null,
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "Before action, the current page contains an article with a link named exactly as submission_title.",
+        "If the method returns already_upvoted, the matched article exposes a button named 'Retract upvote' without clicking.",
+        "If the method returns upvoted, after clicking the matched article-local 'Upvote' button the same article exposes a button named 'Retract upvote' within 5 seconds.",
+        "The click target is scoped to the matched article rather than a page-global control."
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task719_t25",
+          "template_id": "25",
+          "code_quote": "article = page.locator('article', has=page.get_by_role('link', name=title)).first\nup = article.get_by_role('button', name='Upvote')\nretract = article.get_by_role('button', name='Retract upvote')\nif await retract.count() > 0:\n    return 'already-liked'\nawait up.click()\nawait article.get_by_role('button', name='Retract upvote').wait_for(timeout=5000)",
+          "explanation": "Generalized the workflow's per-title upvote step into a single atomic mutation on the current page. Removed task-specific looping over two hard-coded titles while preserving the evidenced article-local selector and success check."
+        }
+      ],
+      "feature": "core"
+    },
+    {
+      "primitive_id": "reddit/core/upvote_submission_by_vote_action",
+      "method": "upvote_submission_by_vote_action",
+      "capability": "Upvote a Reddit submission represented by a visible vote form, idempotently preserving already-upvoted state.",
+      "method_code": "async def upvote_submission_by_vote_action(self, vote_action_path: str) -> dict:\n    if not isinstance(vote_action_path, str) or not vote_action_path.strip():\n        raise ValueError(\"vote_action_path must be a non-empty string\")\n\n    form = self.page.locator(f'form[action=\"{vote_action_path}\"]').first\n    await form.wait_for()\n    await form.scroll_into_view_if_needed()\n    await self.page.wait_for_timeout(400)\n\n    up_btn = form.locator('button[title=\"Upvote\"], button[title=\"Retract upvote\"]').first\n    before_title = await up_btn.get_attribute(\"title\")\n    if before_title == \"Retract upvote\":\n        before_state = \"upvoted\"\n        return {\n            \"vote_action_path\": vote_action_path,\n            \"before_upvote_state\": before_state,\n            \"after_upvote_state\": \"upvoted\",\n            \"changed\": False\n        }\n    if before_title != \"Upvote\":\n        raise RuntimeError(f\"Unsupported or unreadable vote button state: {before_title}\")\n\n    await up_btn.click()\n    await self.page.wait_for_timeout(1200)\n    await form.locator('button[title=\"Retract upvote\"]').wait_for(timeout=5000)\n\n    return {\n        \"vote_action_path\": vote_action_path,\n        \"before_upvote_state\": \"upvote_available\",\n        \"after_upvote_state\": \"upvoted\",\n        \"changed\": True\n    }",
+      "owns": [
+        "Locate a specific visible vote form by its action path on the current Reddit page",
+        "Read the current upvote control state from the button title",
+        "Click the Reddit upvote control when the current state is not already selected",
+        "Wait for the page to reflect successful upvote state by exposing a Retract upvote button",
+        "Treat an already-upvoted item as success without changing state"
+      ],
+      "does_not_own": [
+        "Discovering which submissions should be upvoted",
+        "Filtering by author, subreddit, title, or any other task condition",
+        "Navigating across pages to find more targets",
+        "Performing bulk orchestration over multiple independent submissions",
+        "Exposing authentication secrets"
+      ],
+      "input_contract": {
+        "type": "object",
+        "properties": {
+          "vote_action_path": {
+            "type": "string",
+            "description": "Exact form action path identifying the visible submission vote form on the current page"
+          }
+        },
+        "required": [
+          "vote_action_path"
+        ],
+        "additionalProperties": false
+      },
+      "output_contract": {
+        "type": "object",
+        "properties": {
+          "vote_action_path": {
+            "type": "string"
+          },
+          "before_upvote_state": {
+            "type": "string",
+            "enum": [
+              "upvote_available",
+              "upvoted"
+            ]
+          },
+          "after_upvote_state": {
+            "type": "string",
+            "enum": [
+              "upvoted"
+            ]
+          },
+          "changed": {
+            "type": "boolean",
+            "description": "True if a click was performed; false if already upvoted"
+          }
+        },
+        "required": [
+          "vote_action_path",
+          "before_upvote_state",
+          "after_upvote_state",
+          "changed"
+        ],
+        "additionalProperties": false
+      },
+      "requires": [
+        "authenticated_reddit_session",
+        "target_vote_form_visible_on_current_page"
+      ],
+      "provides": [
+        "reddit_submission_upvoted_or_already_upvoted"
+      ],
+      "supported_patterns": [
+        "Idempotent single-submission upvote on a currently visible Reddit page",
+        "Verification by observing the same form switch to a Retract upvote button"
+      ],
+      "guarantees": {
+        "collection_scope": "single",
+        "completeness": "not_applicable",
+        "supports_absence_proof": false,
+        "configuration": {
+          "kind": "none",
+          "input_field": null,
+          "supported_values": [],
+          "coupled_site_parameters_hidden": true
+        }
+      },
+      "acceptance_checks": [
+        "If before_upvote_state is upvote_available, the method clicks the visible upvote button and subsequently the same form exposes button title Retract upvote",
+        "If before_upvote_state is upvoted, changed is false and after_upvote_state remains upvoted",
+        "Failure to locate the form or to observe Retract upvote after click is surfaced as mutation failure rather than success"
+      ],
+      "source_evidence": [
+        {
+          "workflow_id": "task724_t25",
+          "template_id": "25",
+          "code_quote": "form = page.locator(f'form[action=\"{t[\"action\"]}\"]').first ... up_btn = form.locator('button[title=\"Upvote\"], button[title=\"Retract upvote\"]').first ... if title_before == 'Upvote': await up_btn.click() ... await form.locator('button[title=\"Retract upvote\"]').wait_for(timeout=5000) else: log(... 'already upvoted' ...)",
+          "explanation": "Generalized the demonstrated single-item Reddit vote-form mutation into an idempotent effectful primitive; the workflow loop over many items remains orchestration."
+        }
+      ],
+      "feature": "core"
+    }
+  ],
+  "package_sha256": "sha256:51a07c3a6e2ad7f5d3bbbc69ac963b0f9d3532106ee784f44ba7b1e2009ceb53"
+}
