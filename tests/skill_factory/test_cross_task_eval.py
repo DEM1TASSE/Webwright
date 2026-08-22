@@ -172,6 +172,26 @@ def test_navigate_completion_requires_saved_url_and_dom(tmp_path):
     assert E.has_complete_agent_response(tmp_path, "task44_scratch", "navigate") is True
 
 
+def test_official_artifact_uses_state_not_advisory_response_type(tmp_path):
+    run = tmp_path / "task45_workflow_001"
+    run.mkdir()
+    (run / "agent_response.json").write_text(json.dumps({
+        "task_type": "RETRIEVE",
+        "status": "SUCCESS",
+        "retrieved_data": ["done"],
+        "error_details": None,
+    }))
+    (run / "final_state.json").write_text(json.dumps({
+        "final_url": "https://example.test/final",
+        "html_path": "final_state.html",
+        "answer": ["done"],
+    }))
+    (run / "final_state.html").write_text("<html><body>done</body></html>")
+
+    assert E.has_complete_agent_response(tmp_path, "task45_workflow", "mutate") is False
+    assert E.has_complete_official_artifact(tmp_path, "task45_workflow") is True
+
+
 def test_vanilla_final_state_interface_does_not_reveal_task_type():
     assert "NAVIGATE" not in E.VANILLA_FINAL_STATE_SPEC
     assert "task_type" not in E.VANILLA_FINAL_STATE_SPEC

@@ -359,6 +359,16 @@ def has_complete_agent_response(runs, key, task_type="retrieve"):
     return has_complete_final_state(runs, key)
 
 
+def has_complete_official_artifact(runs, key):
+    """Whether an Official WebArena run has a browser state the gold evaluator can score.
+
+    Official WebArena judges captured browser state. Generated scripts can emit a legacy
+    ``agent_response.task_type`` (notably RETRIEVE for a mutate task); that advisory envelope
+    must not block evaluation of an otherwise complete ``final_state.json``.
+    """
+    return has_complete_final_state(runs, key)
+
+
 def terminate_process_group(proc, grace_seconds=20):
     """Stop a spawned agent and all of its descendants."""
     os.killpg(proc.pid, signal.SIGTERM)
@@ -1372,10 +1382,7 @@ def run_one(args, split, dataset, config):
             # The agent can continue reflecting after it has emitted a complete benchmark
             # artifact. Stop there: AgentResponseEvaluator needs no later browser events.
             if task_source == "official_webarena":
-                complete_artifact = has_complete_final_state(Path(args.runs), key) and (
-                    task_type == "navigate" and args.vanilla_task_interface
-                    or has_complete_agent_response(Path(args.runs), key, task_type)
-                )
+                complete_artifact = has_complete_official_artifact(Path(args.runs), key)
             else:
                 complete_artifact = has_complete_agent_response(
                     Path(args.runs), key, task_type
@@ -1403,7 +1410,7 @@ def run_one(args, split, dataset, config):
     # Treat a missing capture as an incomplete agent run instead of invoking the adapter and
     # crashing while normalizing a non-existent final_state.json.
     if task_source == "official_webarena" and run_dir:
-        complete_response = complete_response and (run_dir / "final_state.json").exists()
+        complete_response = has_complete_official_artifact(Path(args.runs), key)
     if task_source == "official_webarena":
         if not args.webarena_tasks or not args.webarena_root:
             raise SystemExit(
