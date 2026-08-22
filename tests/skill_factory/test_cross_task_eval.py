@@ -11,6 +11,28 @@ E = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(E)
 
 
+def test_official_prompt_contract_has_no_synthetic_task_type_or_agent_response():
+    assert '"task_type":"RETRIEVE"' not in E.OFFICIAL_FINAL_STATE_SPEC
+    assert "agent_response.json" not in E.OFFICIAL_FINAL_STATE_SPEC
+    assert "final_state.html" in E.OFFICIAL_FINAL_STATE_SPEC
+    assert "final_state.json" in E.OFFICIAL_FINAL_STATE_SPEC
+
+
+def test_official_storage_state_note_matches_deployment_auth_root(tmp_path):
+    auth_root = tmp_path / ".auth"
+    auth_root.mkdir()
+    state = auth_root / "gitlab.reddit_state.json"
+    state.write_text("{}")
+    task = {"task_id": 552, "storage_state": ".auth/gitlab.reddit_state.json"}
+    config = {"auth_root": str(auth_root)}
+
+    assert E.official_auth_state(task, config) == str(state.resolve())
+    note = E.official_storage_state_note(task, config)
+    assert f'storage_state="{state.resolve()}"' in note
+    assert "Never branch" in note
+    assert "never log in by hand" in note
+
+
 def test_agent_subprocess_env_prepends_runner_virtualenv():
     env = E.agent_subprocess_env(
         "/workspace/eval/.venv/bin/python", {"PATH": "/usr/bin:/bin", "KEEP": "1"}

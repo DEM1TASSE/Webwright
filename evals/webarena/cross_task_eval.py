@@ -67,6 +67,36 @@ Keep `agent_response.json.retrieved_data` and `final_state.json.answer` semantic
 Do not invent the final URL or DOM and do not use a HAR as a substitute.
 """
 
+# Kept byte-for-byte aligned with
+# skills/official-webarena/scripts/official_webarena.py::FINAL_STATE_SPEC.  Original WebArena
+# does not expose a synthetic RETRIEVE/NAVIGATE/MUTATE label to the agent and does not consume an
+# agent_response.json envelope.
+OFFICIAL_FINAL_STATE_SPEC = r"""
+
+## Required output artifacts
+Work only from the current goal and live website.
+Immediately before closing the same live Playwright page, wait for it to settle and save:
+
+1. `$WORKSPACE_DIR/final_state.html`: the exact result of `await page.content()`. For form tasks,
+   first mirror current input values/checked state and selected options into the DOM without
+   changing them, so serialization preserves live form state.
+   Where a list, table or count is rendered by client-side JavaScript, the page reaches
+   `networkidle` while that region is still an empty placeholder. Before reading a value out
+   of such a region — and before capturing — wait until it actually holds content, and read an
+   empty region as "not loaded yet" rather than as a genuine zero or absence.
+2. `$WORKSPACE_DIR/final_state.json`:
+   {"final_url": page.url, "html_path": "final_state.html",
+    "document_status": <integer HTTP status or null>,
+    "answer": <concise textual answer, or "" if the goal asks for no text>}
+
+The URL and DOM must come from the same live page. Do not invent either artifact and do not use a
+HAR as a substitute. If you believe the task is impossible to complete, use textual answer `N/A`.
+
+Derive every path you write from `$WORKSPACE_DIR`. Do not embed an absolute path and do not
+read any other environment variable: a script that does either only runs inside the directory
+that produced it, and cannot be re-executed elsewhere or reused later.
+"""
+
 NAVIGATE_SPEC = """
 
 ## Required final browser-state output
@@ -228,8 +258,49 @@ def credentials_for(task, config):
     return env.get("credentials")
 
 
+def official_auth_state(task, config):
+    """Resolve the task's Official WebArena storage state from the deployment."""
+    raw = task.get("storage_state")
+    auth_root = config.get("auth_root")
+    if not raw:
+        return None
+    if not auth_root:
+        raise ValueError(
+            f"official task {task.get('task_id')} requires storage_state but deployment has no "
+            "auth_root"
+        )
+    path = Path(auth_root) / Path(str(raw)).name
+    if not path.is_file():
+        raise ValueError(f"official task {task.get('task_id')} needs missing auth state: {path}")
+    return str(path.resolve())
+
+
+def official_storage_state_note(task, config):
+    path = official_auth_state(task, config)
+    if not path:
+        return ""
+    return (
+        f'\nYou are already signed in. Create every browser context with `storage_state="{path}"` '
+        "— always, unconditionally, in exploration scripts and in the final script alike. Never "
+        "branch on whether to pass it, and never log in by hand."
+    )
+
+
+def arm_run_dirs(runs, key):
+    """Run dirs belonging to exactly this arm, oldest first.
+
+    `{key}_*` alone cross-matches arms that share a prefix: with key="task122_package" the glob
+    also picks up task122_package_import_* dirs, and those sort AFTER the timestamped ones, so
+    matches[-1] silently returns the wrong arm's run. Anchor on the timestamp suffix.
+    """
+    return sorted(
+        path for path in glob.glob(str(Path(runs) / f"{key}_*"))
+        if re.fullmatch(rf"{re.escape(key)}_\d{{8}}_\d{{6}}", Path(path).name)
+    )
+
+
 def collect_run(runs, key):
-    matches = sorted(glob.glob(str(runs / f"{key}_*")))
+    matches = arm_run_dirs(runs, key)
     run_dir = Path(matches[-1]) if matches else None
     answer, steps = None, 0
     if run_dir:
@@ -240,6 +311,11 @@ def collect_run(runs, key):
                 answer = load_json(run_dir / "final_state.json").get("answer", "")
         except (OSError, ValueError):
             pass
+        if answer is None:
+            try:
+                answer = load_json(run_dir / "final_state.json").get("answer", "")
+            except (OSError, ValueError):
+                pass
         try:
             steps = int((load_json(run_dir / "trajectory.json").get("info") or {})
                         .get("api_calls") or 0)
@@ -308,7 +384,7 @@ def read_primitive_execution_trace(run_dir: Path) -> list[dict]:
 
 
 def has_complete_final_state(runs, key):
-    matches = sorted(glob.glob(str(Path(runs) / f"{key}_*")))
+    matches = arm_run_dirs(runs, key)
     if not matches:
         return False
     run_dir = Path(matches[-1])
@@ -337,7 +413,7 @@ def has_complete_agent_response(runs, key, task_type="retrieve"):
     NOT_FOUND_ERROR legitimately uses retrieved_data=null; treating null as unfinished makes those
     tasks run until timeout even after the benchmark response has been emitted.
     """
-    matches = sorted(glob.glob(str(Path(runs) / f"{key}_*")))
+    matches = arm_run_dirs(runs, key)
     if not matches:
         return False
     path = Path(matches[-1]) / "agent_response.json"
@@ -426,7 +502,10 @@ def normalize_official_answer(run_dir):
     state = load_json(path)
     answer = state.get("answer", "")
     status = state.get("document_status")
-    response = load_json(Path(run_dir) / "agent_response.json")
+    try:
+        response = load_json(Path(run_dir) / "agent_response.json")
+    except (OSError, ValueError):
+        response = {}
     # NOT_FOUND_ERROR is the structured task contract.  Do not let arbitrary agent-rendered
     # sentinels such as "NONE" or "No result" leak into WebArena's textual evaluator: the same
     # proven-absence outcome must always render as the official N/A token.
@@ -464,14 +543,22 @@ def normalize_official_answer(run_dir):
     return True
 
 
-def score_navigate(tid, run_dir, config, webarena_tasks, webarena_root, model_config=None):
+def score_navigate(tid, run_dir, config, webarena_tasks, webarena_root, model_config=None,
+                   auth_state=None):
     normalize_official_answer(run_dir)
     output = run_dir / "webarena_final_state_eval.json"
     # A forced rerun may already contain a score from an older artifact.  Never reinterpret that
     # stale file as the result of a failed evaluator subprocess.
     output.unlink(missing_ok=True)
+    official_adapter = (
+        Path(webarena_root).parent
+        / "webwright/skills/official-webarena/scripts/webarena_final_state_eval.py"
+    )
+    adapter = official_adapter if official_adapter.is_file() else HERE / "webarena_final_state_eval.py"
+    if auth_state and adapter == HERE / "webarena_final_state_eval.py":
+        raise RuntimeError("auth-capable Official WebArena evaluator adapter is unavailable")
     command = [
-        sys.executable, str(HERE / "webarena_final_state_eval.py"),
+        sys.executable, str(adapter),
         "--task-id", str(tid),
         "--final-state", str(run_dir / "final_state.json"),
         "--tasks", str(webarena_tasks),
@@ -481,6 +568,8 @@ def score_navigate(tid, run_dir, config, webarena_tasks, webarena_root, model_co
     ]
     if model_config:
         command += ["--model-config", str(model_config)]
+    if auth_state:
+        command += ["--auth-state", str(auth_state)]
     proc = subprocess.run(command, capture_output=True, text=True)
     if proc.returncode != 0 or not output.exists():
         return None, {
@@ -1199,6 +1288,7 @@ def run_one(args, split, dataset, config):
 
     url = resolve_url(task, config)
     credentials = credentials_for(task, config)
+    auth_state = official_auth_state(task, config) if task_source == "official_webarena" else None
     runtime_context = {
         "available_bindings": ["runtime.base_url", "runtime.browser_page"],
         "available_states": [],
@@ -1208,8 +1298,8 @@ def run_one(args, split, dataset, config):
         runtime_context["available_bindings"].extend([
             "runtime.credentials.username", "runtime.credentials.password",
         ])
-    login = ""
-    if credentials:
+    login = official_storage_state_note(task, config) if task_source == "official_webarena" else ""
+    if credentials and task_source != "official_webarena":
         login = (f"\nIf login is required, use username `{credentials.get('username', '')}` "
                  f"and password `{credentials.get('password', '')}`.")
     output_schema = (
@@ -1233,9 +1323,9 @@ def run_one(args, split, dataset, config):
             "retrieved_data=null."
         )
     task_spec = (
-        VANILLA_FINAL_STATE_SPEC if task_type == "navigate" and args.vanilla_task_interface
+        OFFICIAL_FINAL_STATE_SPEC if task_source == "official_webarena"
+        else VANILLA_FINAL_STATE_SPEC if task_type == "navigate" and args.vanilla_task_interface
         else NAVIGATE_SPEC if task_type == "navigate"
-        else OFFICIAL_RETRIEVE_SPEC if task_source == "official_webarena"
         else ANSWER_SPEC
     )
     prompt = (f"Complete this web task.\n\nGoal: {task['intent']}\n"
@@ -1419,7 +1509,7 @@ def run_one(args, split, dataset, config):
         if run_dir and complete_response:
             gold_score, eval_provenance = score_navigate(
                 args.task_id, run_dir, args.config, args.webarena_tasks, args.webarena_root,
-                args.model_config,
+                args.model_config, auth_state,
             )
         else:
             gold_score = None
