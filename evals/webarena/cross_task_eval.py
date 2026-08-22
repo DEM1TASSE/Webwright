@@ -326,7 +326,7 @@ def collect_run(runs, key):
 
 def assert_arm_isolation(runs: Path, mode: str) -> None:
     """Fail before execution when the run root exposes artifacts from the opposite arm."""
-    arms = {"scratch", "workflow", "primitive"}
+    arms = {"scratch", "workflow", "primitive", "asi"}
     if not runs.exists() or mode not in arms:
         return
     patterns = [pattern for opposite in arms - {mode} for pattern in (
@@ -1423,6 +1423,22 @@ def run_one(args, split, dataset, config):
             "reason": workflow["reason"], "remaining_gap": [],
             "skill_id": workflow["skill_id"],
         }
+    elif mode == "asi":
+        # ASI-induced action library: no retrieval (upstream's is dead code), no catalog entry, no
+        # contract, no gate.  The whole site action space that ASI's own policy model sees is
+        # prepended verbatim; see asi_hint.py for what is upstream text and what is not.
+        sys.path.insert(0, str(HERE))
+        from asi_hint import prepare_asi_hint
+        pkg = prepare_asi_hint(
+            task.get("sites") or [site], args.asi_library,
+            record_path=Path(args.runs) / f"{key}.asi_injection.json",
+        )
+        prompt = prepend_nonempty_hint(prompt, pkg["hint"])
+        offered = [{"primitive_id": pkg["library_file"], "content_hash": pkg["sha256"]}]
+        route_out = {
+            "route_stage": "asi", "route_decision": pkg["decision"],
+            "reason": pkg["reason"], "remaining_gap": [],
+        }
     elif mode == "package":
         # External skill package (SkillWeaver skillnet): retrieve, then prepend the source of the
         # selected functions.  No catalog entry, no contract, no gate -- prompt hint only.
@@ -1438,6 +1454,30 @@ def run_one(args, split, dataset, config):
         offered = [{"primitive_id": name, "content_hash": ""} for name in pkg["skill_ids"]]
         route_out = {
             "route_stage": "package", "route_decision": pkg["decision"],
+            "reason": pkg["reason"][:2000], "remaining_gap": [],
+        }
+    elif mode == "package_import":
+        # Same retrieval as `package`, different delivery: the selected functions are written to
+        # an importable module and the agent is told to import them, instead of being handed
+        # their source to copy. This is the analogue of SkillWeaver's own delivery, where the
+        # library is already in scope when the agent's code runs -- isolating delivery is the
+        # point, since `package` measures whether the agent copies source and this measures
+        # whether it calls a library that is simply there.
+        configure_router_model(args.model_config)
+        sys.path.insert(0, str(HERE))
+        from skillnet_hint import prepare_package_hint
+        Path(args.runs).mkdir(parents=True, exist_ok=True)
+        pkg = prepare_package_hint(
+            task["intent"], site, args.skillnet_root, url,
+            record_path=Path(args.runs) / f"{key}.skillnet_retrieval.json",
+            max_functions=args.skillnet_max_functions,
+            delivery="import",
+            module_path=Path(args.runs) / f"skillnet_lib_{key}.py",
+        )
+        prompt = prepend_nonempty_hint(prompt, pkg["hint"])
+        offered = [{"primitive_id": name, "content_hash": ""} for name in pkg["skill_ids"]]
+        route_out = {
+            "route_stage": "package_import", "route_decision": pkg["decision"],
             "reason": pkg["reason"][:2000], "remaining_gap": [],
         }
     elif mode == "routed":
@@ -1581,7 +1621,7 @@ def run_one(args, split, dataset, config):
 def summarize(split, results_dir, routed_library):
     records = {p.stem: load_json(p) for p in Path(results_dir).glob("task*_*.json")}
     heldout_ids = [tid for x in split["heldout"] for tid in x["task_ids"]]
-    comparison_mode = next((mode for mode in ("package", "primitive", "routed", "oracle")
+    comparison_mode = next((mode for mode in ("asi", "package", "primitive", "routed", "oracle")
                             if any(key.endswith(f"_{mode}") for key in records)), "oracle")
     pairs, wins, losses = [], [], []
     for tid in heldout_ids:
@@ -1666,7 +1706,9 @@ def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=["validate", "plan", "run", "table"])
     parser.add_argument("task_id", nargs="?", type=int)
-    parser.add_argument("mode", nargs="?", choices=["scratch", "workflow", "primitive", "routed", "oracle", "package"])
+    parser.add_argument("mode", nargs="?", choices=["scratch", "workflow", "primitive", "routed", "oracle", "package",
+                                 "asi",
+                                 "package_import"])
     parser.add_argument("--split", default=str(HERE / "cross_task_split.json"))
     parser.add_argument("--dataset", default=os.environ.get("WEBARENA_DATASET", ""))
     parser.add_argument("--config", default=os.environ.get("WEBARENA_CONFIG", ""))
@@ -1692,7 +1734,12 @@ def main(argv=None):
     )
     # skillnet(package) arm: an external SkillWeaver skill package, surfaced as a prompt hint only
     parser.add_argument("--skillnet-root", default="/home/t-demiwang/project/SkillWeaver/skillnet")
-    parser.add_argument("--skillnet-max-functions", type=int, default=5)
+    # 0 = no cap, matching upstream: SkillWeaver hands its agent every function the
+    # retrieval LM named. A cap of 5 measures a truncated library instead.
+    parser.add_argument("--skillnet-max-functions", type=int, default=0)
+    # asi arm: a frozen ASI action-space block per site combination, injected verbatim
+    parser.add_argument("--asi-library",
+                        default="/data/demiwang/results/webarena/ww_asi/library")
     parser.add_argument("--runs", default=str(HERE / ".runs"))
     parser.add_argument("--results", default=str(HERE / "cross_task_results"))
     parser.add_argument("--model-config", default="model_openai.yaml")
