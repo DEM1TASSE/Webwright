@@ -175,15 +175,17 @@ def serial_scope_lanes(jobs, serial_groups_path):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--partition", required=True, choices=["t1", "t2"])
-    ap.add_argument("--arm", required=True, choices=["scratch", "workflow", "primitive"])
+    ap.add_argument("--arm", required=True, choices=["scratch", "workflow", "primitive", "asi"])
     ap.add_argument("--split", required=True)
     ap.add_argument("--dataset", required=True)
     ap.add_argument("--config", required=True)
     ap.add_argument("--runs-root", required=True)
     ap.add_argument("--results-root", required=True)
-    ap.add_argument("--workflow-library", required=True)
+    ap.add_argument("--workflow-library", default="")
     ap.add_argument("--workflow-events", required=True)
-    ap.add_argument("--primitive-library", required=True)
+    ap.add_argument("--primitive-library", default="")
+    # asi arm: frozen ASI action-space blocks, one per site combination
+    ap.add_argument("--asi-library", default="/data/demiwang/results/webarena/ww_asi/library")
     ap.add_argument("--model-config", required=True)
     ap.add_argument("--eval-python", required=True)
     ap.add_argument("--webarena-tasks")
@@ -224,6 +226,12 @@ def main():
     args = ap.parse_args()
     if args.partition == "t1" and args.arm == "primitive":
         raise SystemExit("T1 has no primitive arm in the frozen protocol")
+    if args.partition == "t1" and args.arm == "asi":
+        raise SystemExit("The ASI library is induced from the cross-template TRAIN split; it has no T1 arm")
+    if args.arm == "workflow" and not args.workflow_library:
+        raise SystemExit("--workflow-library is required for the workflow arm")
+    if args.arm == "primitive" and not args.primitive_library:
+        raise SystemExit("--primitive-library is required for the primitive arm")
     if not os.environ.get("OPENAI_API_KEY"):
         raise SystemExit("OPENAI_API_KEY is missing")
 
@@ -313,6 +321,8 @@ def main():
         append_optional_eval_flags(cmd, scratch_first=args.scratch_first)
         if args.arm == "primitive":
             cmd += ["--primitive-routing-profile", args.primitive_routing_profile]
+        if args.arm == "asi":
+            cmd += ["--asi-library", args.asi_library]
         if task_type == "navigate":
             if not args.webarena_tasks or not args.webarena_root:
                 return {"site": site, "task_id": task_id, "status": "process_error",
