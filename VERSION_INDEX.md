@@ -11,7 +11,7 @@ exclusive implementations can coexist in one runtime tree.
 
 ## BEST — use this version
 
-Branch: [`web-skill-factory-best`](https://github.com/DEM1TASSE/Webwright/tree/web-skill-factory-best)
+Branch: [`web-skill-factory-best-20260821`](https://github.com/DEM1TASSE/Webwright/tree/web-skill-factory-best-20260821)
 
 Frozen commit: `100a0e3`
 
@@ -117,6 +117,6 @@ directories in the private handoff package.
 
 Historical implementations remain reachable through the archival merge history of this
 branch. The old experiment branch pointers were removed after their tips were verified as
-ancestors of `web-skill-factory-all`. They are intentionally not copied into parallel
+ancestors of `web-skill-factory-all-20260821`. They are intentionally not copied into parallel
 `v5/`, `v6/`, ... source trees, because that would create multiple editable copies of the
 same modules.
