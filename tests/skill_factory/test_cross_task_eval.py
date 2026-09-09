@@ -1017,3 +1017,13 @@ def test_execution_and_evaluation_status_are_separate_dimensions():
     assert E.evaluation_status({"status": "helper_dependency_error"}) == "dependency_error"
     assert E.evaluation_status({"status": "unsupported_saved_state"}) == "unsupported"
     assert E.evaluation_status({"status": "invalid_final_state"}) == "evaluation_failed"
+
+
+def test_infra_manifest_is_stamped_by_hash(tmp_path):
+    manifest = tmp_path / "INFRA_MANIFEST.json"
+    manifest.write_text('{"schema": "infra-manifest/1"}')
+    rec = E.infra_manifest_record(manifest)
+    import hashlib
+    assert rec["sha256"] == hashlib.sha256(manifest.read_bytes()).hexdigest()
+    assert rec["path"] == str(manifest.resolve())
+    assert E.infra_manifest_record(None) is None

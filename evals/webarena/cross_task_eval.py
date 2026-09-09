@@ -1259,6 +1259,20 @@ def prepare_workflow_hint(task, library, *, forced_skill_id=None):
     return {"decision": decision, "skill_id": skill_id, "reason": reason, "hint": hint}
 
 
+
+def infra_manifest_record(path):
+    """Stamp a result with the frozen-infrastructure manifest it was produced under.
+
+    The main table admits a result only if this hash matches a known frozen manifest; runs
+    made before the freeze carry None and stay labelled pre-freeze rather than being merged.
+    """
+    if not path:
+        return None
+    import hashlib
+    data = Path(path).read_bytes()
+    return {"path": str(Path(path).resolve()), "sha256": hashlib.sha256(data).hexdigest()}
+
+
 def build_base_prompt(task, task_source, url, *, login, schema_note, task_type,
                       vanilla_task_interface):
     """The prompt every arm shares. Skill material is prepended by the caller, never mixed in.
@@ -1695,6 +1709,7 @@ def run_one(args, split, dataset, config):
         "evaluation_status": evaluation_status(adapter_result),
         "eval_python": str(args.eval_python),
         "skill_module": skill_module,
+        "infra_manifest": infra_manifest_record(args.infra_manifest),
     }
     result_path.parent.mkdir(parents=True, exist_ok=True)
     result_path.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n")
@@ -1827,6 +1842,9 @@ def main(argv=None):
     parser.add_argument("--results", default=str(HERE / "cross_task_results"))
     parser.add_argument("--model-config", default="model_openai.yaml")
     parser.add_argument("--eval-python", default=sys.executable)
+    parser.add_argument("--infra-manifest", default=None,
+                        help="Frozen-infrastructure manifest; its sha256 is stamped into every "
+                             "result record as infra_manifest.sha256.")
     parser.add_argument("--emit-prompt-only", action="store_true",
                         help="Build the prompt (and any skill module) and write "
                              "<runs>/<key>.prompt.txt + .base_prompt.txt, then exit before "
