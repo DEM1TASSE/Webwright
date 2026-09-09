@@ -117,6 +117,14 @@ class OpenAIModel(BaseModel):
     _DEFAULT_CONFIG_CLASS = OpenAIModelConfig
 
     def _request_headers(self) -> dict[str, str]:
+        # Azure OpenAI authenticates with an `api-key` header rather than a bearer token,
+        # while its /openai/v1/responses endpoint speaks the same request and response shape
+        # as OpenAI's. Keying off the host keeps one model class serving both.
+        if "azure.com" in (self.config.openai_endpoint or ""):
+            return {
+                "Content-Type": "application/json",
+                "api-key": self.config.openai_api_key,
+            }
         return {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.config.openai_api_key}",
