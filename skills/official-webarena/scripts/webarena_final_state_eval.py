@@ -167,25 +167,50 @@ def _official_ua_message(pred: str, reference: str, question: str) -> str:
     return message
 
 
+def _judge_auth_headers(base):
+    """Azure authenticates with an `api-key` header; OpenAI-compatible bases use a bearer token.
+
+    The judge otherwise speaks the same chat/completions shape on both, so the host decides.
+    WEBARENA_JUDGE_API_KEY lets the judge live on a different Azure resource than the agent;
+    Azure keys are per-resource, so a judge on another resource needs its own. When judge and
+    agent share a resource it is unset and OPENAI_API_KEY covers both.
+    """
+    key = os.environ.get("WEBARENA_JUDGE_API_KEY") or os.environ["OPENAI_API_KEY"]
+    if "azure.com" in base:
+        return {"api-key": key, "Content-Type": "application/json"}
+    return {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+
+
 def _judge_call(message: str) -> str:
     """Official generate_from_openai_chat_completion parameters, over an OpenAI-compatible API."""
     import urllib.request
 
-    base = (os.environ.get("OPENAI_BASE_URL") or "https://api.openai.com/v1").rstrip("/")
-    body = json.dumps({
+    base = (os.environ.get("WEBARENA_JUDGE_BASE_URL")
+            or os.environ.get("OPENAI_BASE_URL")
+            or "https://api.openai.com/v1").rstrip("/")
+    payload = {
         "model": JUDGE_MODEL,
         "messages": [
             {"role": "system", "content": "You are a helpful assistant"},
             {"role": "user", "content": message},
         ],
         "temperature": 0,
-        "max_tokens": 768,
         "top_p": 1.0,
-    }).encode("utf-8")
+    }
+    # The gpt-5.x family rejects max_tokens and wants max_completion_tokens; gpt-4o and the
+    # OpenAI-compatible judges only understand the original name. Key off the model, not the
+    # host: the judge may be gpt-4o on Azure while the model under test is gpt-5.4.
+    payload["max_completion_tokens" if JUDGE_MODEL.startswith("gpt-5") else "max_tokens"] = 768
+    body = json.dumps(payload).encode("utf-8")
+    # Azure needs an api-version query on the deployment's chat/completions route; the
+    # OpenAI-compatible path takes none. WEBARENA_JUDGE_API_VERSION overrides the default.
+    url = f"{base}/chat/completions"
+    if "azure.com" in base:
+        url += "?api-version=" + os.environ.get(
+            "WEBARENA_JUDGE_API_VERSION", "2025-01-01-preview")
     request = urllib.request.Request(
-        f"{base}/chat/completions", data=body,
-        headers={"Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}",
-                 "Content-Type": "application/json"},
+        url, data=body,
+        headers=_judge_auth_headers(base),
     )
     with urllib.request.urlopen(request, timeout=180) as response:
         payload = json.loads(response.read().decode("utf-8"))
