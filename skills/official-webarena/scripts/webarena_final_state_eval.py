@@ -21,6 +21,48 @@ OFFICIAL_COMMIT = "dce04686a56253aefba7b18a4fa0937cf1dc987b"
 
 
 class UnsupportedSavedStateError(RuntimeError):
+    """The official evaluator needs something a saved DOM cannot provide."""
+
+
+class HelperDependencyError(UnsupportedSavedStateError):
+    """The official site helpers could not be imported, so they were never available at all.
+
+    Distinct from a genuine saved-state limit: nothing about the task is unsupported, the
+    evaluator's own dependencies are missing. Reporting it under `unsupported_saved_state`
+    hid a broken environment behind a capability label for two whole batches.
+    """
+
+
+_HELPER_LOAD_ERROR: str | None = None
+_SITE_ENV_NAMES = {
+    "__SHOPPING__": "SHOPPING", "__SHOPPING_ADMIN__": "SHOPPING_ADMIN", "__REDDIT__": "REDDIT",
+    "__GITLAB__": "GITLAB", "__MAP__": "MAP", "__WIKIPEDIA__": "WIKIPEDIA",
+    "__HOMEPAGE__": "HOMEPAGE",
+}
+
+
+def export_site_urls(environments: dict) -> dict:
+    """Publish the deployment's site URLs as the env vars the official checkout asserts on.
+
+    `browser_env/env_config.py` raises at import unless all seven are set, and the official
+    helpers import it. The runner has always known these URLs from the deployment file; the
+    evaluator just never handed them over, so the helper module failed to load and the stub
+    path took every helper task. An operator's explicit value is left alone.
+    """
+    exported = {}
+    for placeholder, name in _SITE_ENV_NAMES.items():
+        urls = (environments.get(placeholder) or {}).get("urls") or []
+        if urls and not os.environ.get(name):
+            os.environ[name] = urls[0]
+        if os.environ.get(name):
+            exported[name] = os.environ[name]
+    return exported
+
+
+def classify_saved_state_error(error: Exception, task_id) -> dict:
+    status = ("helper_dependency_error" if isinstance(error, HelperDependencyError)
+              else "unsupported_saved_state")
+    return {"score": None, "status": status, "errors": [str(error)], "task_id": task_id}
     """The official evaluator needs information absent from a saved DOM."""
 
 
@@ -42,6 +84,10 @@ def _identity_beartype(value=None, **_kwargs):
 
 
 def _unsupported_helper(*_args, **_kwargs):
+    if _HELPER_LOAD_ERROR:
+        raise HelperDependencyError(
+            "official site helpers were not loaded, so the evaluator's dynamic helper is "
+            f"unavailable: {_HELPER_LOAD_ERROR}")
     raise UnsupportedSavedStateError(
         "the official evaluator requested a dynamic site helper that cannot be "
         "reconstructed from a saved DOM"
@@ -71,9 +117,12 @@ def _load_official_helpers(root):
         sys.modules[name] = module
         try:
             spec.loader.exec_module(module)
-        except Exception:
+        except Exception as error:
+            global _HELPER_LOAD_ERROR
+            _HELPER_LOAD_ERROR = f"{type(error).__name__}: {error} (while importing {name})"
             sys.modules.pop(name, None)
             return None
+    _HELPER_LOAD_ERROR = None
     return sys.modules["evaluation_harness.helper_functions"]
 
 
@@ -379,6 +428,7 @@ def evaluate_saved_state(
             "errors": ["missing environments object"],
         }
     task = resolve_placeholders(task, environments)
+    export_site_urls(environments)
 
     try:
         evaluator_router = load_official_evaluator(webarena_root, model_config)
@@ -417,12 +467,7 @@ def evaluate_saved_state(
                 if playwright is not None:
                     playwright.stop()
     except UnsupportedSavedStateError as error:
-        return {
-            "score": None,
-            "status": "unsupported_saved_state",
-            "errors": [str(error)],
-            "task_id": task_id,
-        }
+        return classify_saved_state_error(error, task_id)
 
     return {
         "score": score,
@@ -433,6 +478,8 @@ def evaluate_saved_state(
         "final_url": final_state["final_url"],
         "official_webarena_commit": OFFICIAL_COMMIT,
         "judge_model": JUDGE_MODEL,
+        "helpers_source": "official" if _HELPER_LOAD_ERROR is None else "stub",
+        "eval_python": sys.executable,
         "official_judge_model": OFFICIAL_JUDGE_MODEL,
         "webarena_root": str(Path(webarena_root).resolve()),
         "llm_model_config": str(Path(model_config).resolve()) if model_config else None,

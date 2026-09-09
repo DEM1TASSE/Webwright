@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import unittest.mock
 import sys
 import tempfile
 import unittest
@@ -24,6 +26,7 @@ def load_module(name: str, filename: str):
 
 evaluator = load_module("webarena_final_state_eval", "webarena_final_state_eval.py")
 runner = load_module("official_webarena", "official_webarena.py")
+replayer = load_module("run_official", "run_official.py")
 
 
 def write_fixture(tmp_path: Path):
@@ -212,3 +215,110 @@ class OfficialWebArenaSkillTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HelperDependencyTests(unittest.TestCase):
+    """The official site helpers must load for real, and when they cannot, say why.
+
+    Two things went wrong in the skill-arm batches: the evaluator never exported the deployment's
+    site URLs, so the official env_config asserted on import; and a loader failure was silently
+    downgraded to a stub that reported `unsupported_saved_state`, which reads as a capability
+    limit rather than the dependency error it was.
+    """
+
+    def test_site_urls_are_exported_from_deployment_config(self):
+        environments = {
+            "__SHOPPING__": {"urls": ["http://h:7770"]},
+            "__SHOPPING_ADMIN__": {"urls": ["http://h:7780/admin"]},
+            "__REDDIT__": {"urls": ["http://h:9999"]},
+            "__GITLAB__": {"urls": ["http://h:8023"]},
+            "__MAP__": {"urls": ["http://h:3000"]},
+            "__WIKIPEDIA__": {"urls": ["http://h:8888/wikipedia"]},
+            "__HOMEPAGE__": {"urls": ["http://h:4399"]},
+        }
+        with unittest.mock.patch.dict("os.environ", {}, clear=False):
+            for name in ("SHOPPING", "SHOPPING_ADMIN", "REDDIT", "GITLAB", "MAP",
+                         "WIKIPEDIA", "HOMEPAGE"):
+                os.environ.pop(name, None)
+            exported = evaluator.export_site_urls(environments)
+            self.assertEqual(exported["SHOPPING_ADMIN"], "http://h:7780/admin")
+            self.assertEqual(os.environ["REDDIT"], "http://h:9999")
+            # An operator's explicit value wins over the deployment file.
+            os.environ["MAP"] = "http://override:3000"
+            evaluator.export_site_urls(environments)
+            self.assertEqual(os.environ["MAP"], "http://override:3000")
+
+    def test_loader_failure_is_reported_as_dependency_error_not_capability_limit(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "browser_env").mkdir()
+            (root / "evaluation_harness").mkdir()
+            (root / "browser_env" / "env_config.py").write_text("ACCOUNTS = {}\n")
+            (root / "evaluation_harness" / "helper_functions.py").write_text(
+                "import openai.error  # openai>=1 removed this module\n")
+            evaluator._HELPER_LOAD_ERROR = None
+            loaded = evaluator._load_official_helpers(root)
+            self.assertIsNone(loaded)
+            self.assertIsNotNone(evaluator._HELPER_LOAD_ERROR)
+            self.assertIn("openai.error", evaluator._HELPER_LOAD_ERROR)
+            with self.assertRaises(evaluator.HelperDependencyError) as ctx:
+                evaluator._unsupported_helper("x")
+            self.assertIn("openai.error", str(ctx.exception))
+            self.assertTrue(issubclass(evaluator.HelperDependencyError,
+                                       evaluator.UnsupportedSavedStateError))
+
+    def test_dependency_error_maps_to_its_own_status(self):
+        result = evaluator.classify_saved_state_error(
+            evaluator.HelperDependencyError("No module named 'openai.error'"), task_id=7)
+        self.assertEqual(result["status"], "helper_dependency_error")
+        self.assertEqual(result["task_id"], 7)
+        self.assertIn("openai.error", result["errors"][0])
+        plain = evaluator.classify_saved_state_error(
+            evaluator.UnsupportedSavedStateError("needs live page"), task_id=7)
+        self.assertEqual(plain["status"], "unsupported_saved_state")
+
+
+class ReplaySkillModuleTests(unittest.TestCase):
+    """Replay must carry the skill module the frozen script imports, and verify it."""
+
+    def _run_dir(self, td, tamper=False):
+        run_dir = Path(td) / "task1_package_import_20260101_000000"
+        run_dir.mkdir()
+        (run_dir / "final_script.py").write_text("print('hi')\n")
+        module = run_dir / "skillnet_lib.py"
+        module.write_text("async def f(page):\n    return 1\n")
+        digest = replayer.sha256_file(module)
+        manifest = {"module_file": "skillnet_lib.py", "module_sha256": digest,
+                    "functions": [{"name": "f", "sha256": "abc"}]}
+        (run_dir / "skillnet_lib.manifest.json").write_text(json.dumps(manifest))
+        if tamper:
+            module.write_text("async def f(page):\n    return 2\n")
+        return run_dir
+
+    def test_module_is_staged_into_workspace_with_matching_hash(self):
+        with tempfile.TemporaryDirectory() as td:
+            run_dir = self._run_dir(td)
+            workspace = run_dir / "replay"
+            workspace.mkdir()
+            staged = replayer.stage_skill_module(run_dir, workspace)
+            self.assertEqual(staged["status"], "staged")
+            self.assertTrue((workspace / "skillnet_lib.py").is_file())
+            self.assertTrue((workspace / "skillnet_lib.manifest.json").is_file())
+            self.assertEqual(staged["module_sha256"], replayer.sha256_file(workspace / "skillnet_lib.py"))
+
+    def test_tampered_module_is_refused(self):
+        with tempfile.TemporaryDirectory() as td:
+            run_dir = self._run_dir(td, tamper=True)
+            workspace = run_dir / "replay"
+            workspace.mkdir()
+            staged = replayer.stage_skill_module(run_dir, workspace)
+            self.assertEqual(staged["status"], "skill_module_hash_mismatch")
+            self.assertFalse((workspace / "skillnet_lib.py").exists())
+
+    def test_runs_without_a_module_are_untouched(self):
+        with tempfile.TemporaryDirectory() as td:
+            run_dir = Path(td) / "task1_scratch_20260101_000000"
+            run_dir.mkdir()
+            workspace = run_dir / "replay"
+            workspace.mkdir()
+            self.assertEqual(replayer.stage_skill_module(run_dir, workspace)["status"], "none")

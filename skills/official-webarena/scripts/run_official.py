@@ -153,6 +153,40 @@ def auth_state_for_task(task_id: int, args) -> str | None:
     return str(path) if path.is_file() else None
 
 
+def sha256_file(path: Path) -> str:
+    import hashlib
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+SKILL_MODULE = "skillnet_lib.py"
+SKILL_MANIFEST = "skillnet_lib.manifest.json"
+
+
+def stage_skill_module(run_dir: Path, workspace: Path) -> dict:
+    """Carry the skill module a frozen script imports into the replay workspace, verified.
+
+    `package_import` scripts do `from skillnet_lib import ...` against `$WORKSPACE_DIR`. A bare
+    replay workspace has no such file, and if the original runs directory happens to still be
+    on sys.path the script would silently import from there instead -- a replay that passes for
+    reasons the workspace does not contain. So: copy the module and its manifest, and refuse to
+    run when the module on disk no longer matches the hash the manifest recorded at run time.
+    """
+    manifest_path = run_dir / SKILL_MANIFEST
+    if not manifest_path.is_file():
+        return {"status": "none"}
+    manifest = load(manifest_path)
+    module = run_dir / manifest.get("module_file", SKILL_MODULE)
+    if not module.is_file():
+        return {"status": "skill_module_missing", "expected": str(module)}
+    digest = sha256_file(module)
+    if digest != manifest.get("module_sha256"):
+        return {"status": "skill_module_hash_mismatch", "expected": manifest.get("module_sha256"),
+                "found": digest}
+    shutil.copy2(module, workspace / module.name)
+    shutil.copy2(manifest_path, workspace / SKILL_MANIFEST)
+    return {"status": "staged", "module_sha256": digest, "functions": manifest.get("functions", [])}
+
+
 def replay_and_score(run_dir: Path, task_id: int, args) -> dict:
     """Re-execute the frozen final_script.py in a clean workspace and score that.
 
@@ -179,6 +213,10 @@ def replay_and_score(run_dir: Path, task_id: int, args) -> dict:
         if source.is_dir() and "replay" not in source.relative_to(run_dir).parts:
             (workspace / source.relative_to(run_dir)).mkdir(parents=True, exist_ok=True)
     shutil.copy2(script, workspace / "final_script.py")
+    staged = stage_skill_module(run_dir, workspace)
+    if staged["status"] in ("skill_module_missing", "skill_module_hash_mismatch"):
+        return {"status": staged["status"], "skill_module": staged, "produced_state": False,
+                "evaluation": None}
     started = time.time()
     try:
         proc = subprocess.run([str(PY), "final_script.py"], cwd=str(workspace),
@@ -210,7 +248,7 @@ def replay_and_score(run_dir: Path, task_id: int, args) -> dict:
         if (workspace / "official_eval.json").is_file():
             evaluation = load(workspace / "official_eval.json")
     return {"status": status, "returncode": returncode, "stderr_tail": tail,
-            "seconds": round(time.time() - started, 1),
+            "seconds": round(time.time() - started, 1), "skill_module": staged,
             "produced_state": state.is_file(), "evaluation": evaluation}
 
 
