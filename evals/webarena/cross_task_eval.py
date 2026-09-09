@@ -544,7 +544,7 @@ def normalize_official_answer(run_dir):
 
 
 def score_navigate(tid, run_dir, config, webarena_tasks, webarena_root, model_config=None,
-                   auth_state=None):
+                   auth_state=None, eval_python=None):
     normalize_official_answer(run_dir)
     output = run_dir / "webarena_final_state_eval.json"
     # A forced rerun may already contain a score from an older artifact.  Never reinterpret that
@@ -558,7 +558,7 @@ def score_navigate(tid, run_dir, config, webarena_tasks, webarena_root, model_co
     if auth_state and adapter == HERE / "webarena_final_state_eval.py":
         raise RuntimeError("auth-capable Official WebArena evaluator adapter is unavailable")
     command = [
-        sys.executable, str(adapter),
+        str(eval_python or sys.executable), str(adapter),
         "--task-id", str(tid),
         "--final-state", str(run_dir / "final_state.json"),
         "--tasks", str(webarena_tasks),
@@ -1259,6 +1259,62 @@ def prepare_workflow_hint(task, library, *, forced_skill_id=None):
     return {"decision": decision, "skill_id": skill_id, "reason": reason, "hint": hint}
 
 
+def build_base_prompt(task, task_source, url, *, login, schema_note, task_type,
+                      vanilla_task_interface):
+    """The prompt every arm shares. Skill material is prepended by the caller, never mixed in.
+
+    Keeping this a pure function is what lets a test assert that scratch, primitive and
+    package_import receive byte-identical bases -- the guarantee the 08-21 primitive batch
+    silently lacked.
+    """
+    task_spec = (
+        OFFICIAL_FINAL_STATE_SPEC if task_source == "official_webarena"
+        else VANILLA_FINAL_STATE_SPEC if task_type == "navigate" and vanilla_task_interface
+        else NAVIGATE_SPEC if task_type == "navigate"
+        else ANSWER_SPEC
+    )
+    return (f"Complete this web task.\n\nGoal: {task['intent']}\n"
+            f"Start URL: {url}{login}{schema_note}{task_spec}")
+
+
+def agent_command(prompt, key, url, runs, model_config, seed_files=()):
+    """The webwright CLI invocation. `seed_files` are copied into the run directory the CLI
+    creates, before the first agent step, so a script's `$WORKSPACE_DIR` import finds them."""
+    cmd = [
+        sys.executable, "-m", "webwright.run.cli", "main",
+        "-t", prompt, "--task-id", key, "--start-url", url, "-o", str(runs),
+        "-c", "base.yaml", "-c", str(model_config), "-c", str(HERE / "model.eval.yaml"),
+    ]
+    for path in seed_files or ():
+        cmd += ["--seed-file", str(path)]
+    return cmd
+
+
+def execution_status(*, timed_out, returncode, has_state):
+    """How the agent process ended, independent of whether anything was scored."""
+    if timed_out:
+        return "timeout"
+    if has_state:
+        return "completed"
+    if returncode not in (0, None, -15):
+        return "process_error"
+    return "missing_final_state"
+
+
+def evaluation_status(adapter_result):
+    """What the evaluator did, independent of how the agent ended."""
+    if not adapter_result:
+        return "not_evaluated"
+    status = adapter_result.get("status")
+    if status in ("scored_correct", "scored_incorrect"):
+        return "scored"
+    if status == "helper_dependency_error":
+        return "dependency_error"
+    if status == "unsupported_saved_state":
+        return "unsupported"
+    return "evaluation_failed"
+
+
 def run_one(args, split, dataset, config):
     tasks = {x["task_id"]: x for x in dataset}
     metadata_task = tasks[args.task_id]
@@ -1322,14 +1378,11 @@ def run_one(args, split, dataset, config):
             "acquisition until absence is justified; then return NOT_FOUND_ERROR with "
             "retrieved_data=null."
         )
-    task_spec = (
-        OFFICIAL_FINAL_STATE_SPEC if task_source == "official_webarena"
-        else VANILLA_FINAL_STATE_SPEC if task_type == "navigate" and args.vanilla_task_interface
-        else NAVIGATE_SPEC if task_type == "navigate"
-        else ANSWER_SPEC
-    )
-    prompt = (f"Complete this web task.\n\nGoal: {task['intent']}\n"
-              f"Start URL: {url}{login}{schema_note}{task_spec}")
+    prompt = build_base_prompt(task, task_source, url, login=login, schema_note=schema_note,
+                               task_type=task_type,
+                               vanilla_task_interface=args.vanilla_task_interface)
+    base_prompt = prompt
+    seed_files = []
     development_hint = ""
     if args.development_hint_file:
         if not args.allow_any_task:
@@ -1466,14 +1519,19 @@ def run_one(args, split, dataset, config):
         configure_router_model(args.model_config)
         sys.path.insert(0, str(HERE))
         from skillnet_hint import prepare_package_hint
-        Path(args.runs).mkdir(parents=True, exist_ok=True)
+        seed_dir = Path(args.runs) / f"{key}.seed"
+        seed_dir.mkdir(parents=True, exist_ok=True)
         pkg = prepare_package_hint(
             task["intent"], site, args.skillnet_root, url,
             record_path=Path(args.runs) / f"{key}.skillnet_retrieval.json",
             max_functions=args.skillnet_max_functions,
             delivery="import",
-            module_path=Path(args.runs) / f"skillnet_lib_{key}.py",
+            module_path=seed_dir / "skillnet_lib.py",
+            manifest_path=seed_dir / "skillnet_lib.manifest.json",
+            module_name="skillnet_lib",
         )
+        if pkg.get("module"):
+            seed_files += [Path(pkg["module"]), Path(pkg["manifest"])]
         prompt = prepend_nonempty_hint(prompt, pkg["hint"])
         offered = [{"primitive_id": name, "content_hash": ""} for name in pkg["skill_ids"]]
         route_out = {
@@ -1491,11 +1549,14 @@ def run_one(args, split, dataset, config):
         offered = route_out.get("primitive_sources") or []
 
     Path(args.runs).mkdir(parents=True, exist_ok=True)
-    cmd = [
-        sys.executable, "-m", "webwright.run.cli", "main",
-        "-t", prompt, "--task-id", key, "--start-url", url, "-o", args.runs,
-        "-c", "base.yaml", "-c", args.model_config, "-c", str(HERE / "model.eval.yaml"),
-    ]
+    if args.emit_prompt_only:
+        (Path(args.runs) / f"{key}.prompt.txt").write_text(prompt, encoding="utf-8")
+        (Path(args.runs) / f"{key}.base_prompt.txt").write_text(base_prompt, encoding="utf-8")
+        print(json.dumps({"task_id": args.task_id, "mode": mode, "emitted": True,
+                          "prompt_chars": len(prompt), "base_prompt_chars": len(base_prompt),
+                          "seed_files": [str(p) for p in seed_files]}, ensure_ascii=False))
+        return
+    cmd = agent_command(prompt, key, url, args.runs, args.model_config, seed_files=seed_files)
     log = Path(args.runs) / f"{key}.log"
     timed_out = False
     with log.open("a", encoding="utf-8") as f:
@@ -1549,7 +1610,7 @@ def run_one(args, split, dataset, config):
         if run_dir and complete_response:
             gold_score, eval_provenance = score_navigate(
                 args.task_id, run_dir, args.config, args.webarena_tasks, args.webarena_root,
-                args.model_config, auth_state,
+                args.model_config, auth_state, eval_python=args.eval_python,
             )
         else:
             gold_score = None
@@ -1582,6 +1643,21 @@ def run_one(args, split, dataset, config):
         declared = read_declared_usage(run_dir / "primitive_usage.json")
         declared_coverage = read_declared_coverage(run_dir / "primitive_usage.json")
     execution_trace = read_primitive_execution_trace(run_dir) if run_dir else []
+    adapter_result = None
+    skill_module = None
+    if run_dir:
+        try:
+            adapter_result = load_json(run_dir / "webarena_final_state_eval.json")
+        except (OSError, ValueError):
+            adapter_result = None
+        try:
+            manifest = load_json(run_dir / "skillnet_lib.manifest.json")
+            skill_module = {"file": manifest.get("module_file"),
+                            "sha256": manifest.get("module_sha256"),
+                            "functions": [f["name"] for f in manifest.get("functions", [])],
+                            "library": manifest.get("library")}
+        except (OSError, ValueError):
+            skill_module = None
     record = {
         "task_id": args.task_id,
         "task_type": task_type,
@@ -1612,6 +1688,13 @@ def run_one(args, split, dataset, config):
         "primitive_metadata_only": bool(args.primitive_metadata_only),
         "vanilla_task_interface": bool(args.vanilla_task_interface),
         "run_dir": str(run_dir) if run_dir else None,
+        # Diagnostics: two independent dimensions, kept beside (not instead of) run_status.
+        "execution_status": execution_status(
+            timed_out=timed_out, returncode=proc.returncode,
+            has_state=bool(run_dir and (run_dir / "final_state.json").is_file())),
+        "evaluation_status": evaluation_status(adapter_result),
+        "eval_python": str(args.eval_python),
+        "skill_module": skill_module,
     }
     result_path.parent.mkdir(parents=True, exist_ok=True)
     result_path.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n")
@@ -1744,6 +1827,10 @@ def main(argv=None):
     parser.add_argument("--results", default=str(HERE / "cross_task_results"))
     parser.add_argument("--model-config", default="model_openai.yaml")
     parser.add_argument("--eval-python", default=sys.executable)
+    parser.add_argument("--emit-prompt-only", action="store_true",
+                        help="Build the prompt (and any skill module) and write "
+                             "<runs>/<key>.prompt.txt + .base_prompt.txt, then exit before "
+                             "launching the agent. For prompt-parity audits.")
     parser.add_argument(
         "--webarena-tasks",
         default=os.environ.get("WEBARENA_ORIGINAL_TASKS", ""),

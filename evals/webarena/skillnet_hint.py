@@ -23,6 +23,30 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import subprocess
+
+
+def sha256_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def sha256_file(path) -> str:
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def _library_provenance(library_root):
+    """Commit plus dirty flag plus per-file hashes: a commit alone says nothing about a working
+    tree with uncommitted edits, and the skillnet package has been patched locally before."""
+    if not library_root:
+        return None
+    root = Path(library_root)
+    def git(*args):
+        proc = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True)
+        return proc.stdout.strip() if proc.returncode == 0 else None
+    files = sorted(str(f.relative_to(root)) for f in root.rglob("*_code.py"))
+    return {"root": str(root), "git_commit": git("rev-parse", "HEAD"),
+            "dirty": bool(git("status", "--porcelain") or ""),
+            "files": {f: sha256_file(root / f) for f in files}}
 import json
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -241,17 +265,31 @@ import re  # noqa: F401
 '''
 
 
-def write_skill_module(picked, origin, module_path):
-    """Materialize the retrieved functions as an importable module.  Returns its path."""
+def write_skill_module(picked, origin, module_path, *, manifest_path=None, library_root=None):
+    """Materialize the retrieved functions as an importable module.  Returns its path.
+
+    When `manifest_path` is given, also record what was written: the module's hash, each
+    function's source hash, and where the library came from. Replay verifies the module
+    against this before importing it, and the run record carries it for provenance.
+    """
     module_path = Path(module_path)
     module_path.parent.mkdir(parents=True, exist_ok=True)
     body = "\n\n".join(prepared_source(f) for f in picked)
     module_path.write_text(
         MODULE_DOC + GOTO_PATCH.format(origin=origin) + "\n\n" + body + "\n", encoding="utf-8")
+    if manifest_path is not None:
+        manifest = {
+            "module_file": module_path.name,
+            "module_sha256": sha256_file(module_path),
+            "functions": [{"name": f["name"], "sha256": sha256_text(f["source"])} for f in picked],
+            "library": _library_provenance(library_root),
+        }
+        Path(manifest_path).write_text(json.dumps(manifest, indent=1, ensure_ascii=False) + "\n",
+                                       encoding="utf-8")
     return module_path
 
 
-def render_import_hint(picked, origin, module_path):
+def render_import_hint(picked, origin, module_path=None, *, module_name=None):
     """`package_import` arm: the helpers are callable.  SkillWeaver's default mode.
 
     Upstream's prompt is `function_usage_instructions` followed by the <functions> block,
@@ -262,7 +300,6 @@ def render_import_hint(picked, origin, module_path):
     """
     if not picked:
         return ""
-    module_path = Path(module_path)
     names = ", ".join(f["name"] for f in picked)
     return "\n\n".join([
         UPSTREAM_MANDATE,
@@ -270,17 +307,19 @@ def render_import_hint(picked, origin, module_path):
         # Same parity as the paste arm, minus the source comment: an imported function is never
         # copied, so there is no copy to leave a marker in.
         REPORTING_PARITY_IMPORT,
-        "In this runtime they are not globals but a module on disk; make them available with:\n"
+        "In this runtime they are not globals but a module on disk inside your workspace; make "
+        "them available with:\n"
         "```python\n"
-        f"import sys; sys.path.insert(0, {str(module_path.parent)!r})\n"
-        f"from {module_path.stem} import {names}\n"
+        "import os, sys; sys.path.insert(0, os.environ[\"WORKSPACE_DIR\"])\n"
+        f"from {module_name or Path(module_path).stem} import {names}\n"
         "```",
         "<functions>\n" + "".join(_pretty(f) for f in picked) + "</functions>",
     ]).replace("\n\n\n", "\n\n")
 
 
 def prepare_package_hint(task, site, skillnet_root, url, record_path=None, max_functions=0,
-                         delivery="hint", module_path=None):
+                         delivery="hint", module_path=None, manifest_path=None,
+                         module_name=None):
     """Retrieve from the package and render the hint.  Fail-open: never block a solve.
 
     `delivery` selects how the selected functions reach the agent:
@@ -297,8 +336,11 @@ def prepare_package_hint(task, site, skillnet_root, url, record_path=None, max_f
         if delivery == "import" and picked:
             if module_path is None:
                 raise ValueError("delivery='import' requires module_path")
-            written_module = write_skill_module(picked, origin, module_path)
-            hint = render_import_hint(picked, origin, written_module)
+            written_module = write_skill_module(
+                picked, origin, module_path, manifest_path=manifest_path,
+                library_root=skillnet_root)
+            hint = render_import_hint(picked, origin, written_module,
+                                      module_name=module_name or Path(written_module).stem)
         else:
             hint = render_hint(picked, origin)
         error = ""
@@ -310,6 +352,8 @@ def prepare_package_hint(task, site, skillnet_root, url, record_path=None, max_f
         "site": site,
         "skillnet_root": str(skillnet_root),
         "library_size": len(functions),
+        "module": str(written_module) if written_module else None,
+        "manifest": str(manifest_path) if (written_module and manifest_path) else None,
         "delivery": delivery,
         "skill_module": str(written_module) if written_module else None,
         "decision": "adapt" if picked else "skip",

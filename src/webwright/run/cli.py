@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,7 @@ def run_one(
     resolved_output_dir: Path | None = None,
     debug: bool = False,
     snapshot_config: bool = True,
+    seed_files: list[Path] | None = None,
 ) -> Any:
     config_spec = config_spec or DEFAULT_CONFIGS
     configs = [get_config_from_spec(spec) for spec in config_spec]
@@ -57,6 +59,13 @@ def run_one(
     )
     if snapshot_config:
         snapshot_config_specs(config_spec, resolved_output_dir, merged_config=config)
+    # Files an orchestrator wants present in the workspace before the first agent step -- a
+    # skill module the generated script will import from $WORKSPACE_DIR, for instance. Copied
+    # here, after the run directory is fixed and before the environment opens it.
+    if seed_files:
+        resolved_output_dir.mkdir(parents=True, exist_ok=True)
+        for seed in seed_files:
+            shutil.copy2(Path(seed), resolved_output_dir / Path(seed).name)
 
     config = recursive_merge(
         config,
@@ -152,6 +161,10 @@ def main(
         "--debug",
         help="Launch headed local Playwright with devtools and keep it open for inspection.",
     ),
+    seed_file: list[Path] = typer.Option(
+        None, "--seed-file",
+        help="Copy this file into the run directory before the agent starts (repeatable).",
+    ),
 ) -> Any:
     return run_one(
         task=task,
@@ -160,6 +173,7 @@ def main(
         config_spec=config_spec,
         output_dir=output_dir,
         debug=debug,
+        seed_files=seed_file or None,
     )
 
 

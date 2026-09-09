@@ -1,5 +1,7 @@
 import importlib.util
 import json
+import os
+import sys
 import signal
 import subprocess
 from pathlib import Path
@@ -937,3 +939,81 @@ def test_summarize_reports_routed_pairs_decisions_and_site_breakdown(tmp_path):
     assert summary["wins"] == 1 and summary["losses"] == 0
     assert summary["route_decisions"] == {"adapt": 1, "skip": 1}
     assert summary["by_site"]["shopping"]["routed_correct"] == 2
+
+
+# --- Common base prompt, skill-module provenance, and diagnostic statuses -------------------
+
+_HINT_PATH = Path(__file__).parents[2] / "evals" / "webarena" / "skillnet_hint.py"
+_HINT_SPEC = importlib.util.spec_from_file_location("skillnet_hint", _HINT_PATH)
+H = importlib.util.module_from_spec(_HINT_SPEC)
+_HINT_SPEC.loader.exec_module(H)
+
+
+def _official_task():
+    return {"task_id": 1, "intent": "Find the project owner", "sites": ["gitlab"],
+            "intent_template_id": 1, "start_url": "__GITLAB__/explore",
+            "storage_state": "./.auth/gitlab_state.json", "eval": {"eval_types": ["url_match"]}}
+
+
+def test_base_prompt_is_identical_across_modes_for_official_tasks():
+    """Every arm must receive the same base prompt; only the prepended skill material differs."""
+    task = _official_task()
+    prompts = {mode: E.build_base_prompt(task, "official_webarena", "http://h:8023/explore",
+                                         login="\nYou are already signed in.", schema_note="",
+                                         task_type="navigate", vanilla_task_interface=False)
+               for mode in ("scratch", "primitive", "package_import")}
+    assert len(set(prompts.values())) == 1
+    base = prompts["scratch"]
+    assert base.startswith("Complete this web task.")
+    assert "## Required output artifacts" in base
+    assert "## Abstraction boundary" not in base
+    assert "If login is required" not in base
+
+
+def test_skill_module_manifest_records_hashes_and_imports_from_workspace(tmp_path):
+    picked = [{"name": "get_route", "signature": "async def get_route(page)",
+               "docstring": "Return the route.", "source": "async def get_route(page):\n    return 1\n"}]
+    seed = tmp_path / "seed"
+    module = H.write_skill_module(picked, "http://h:3000", seed / "skillnet_lib.py",
+                                  manifest_path=seed / "skillnet_lib.manifest.json",
+                                  library_root=None)
+    manifest = json.loads((seed / "skillnet_lib.manifest.json").read_text())
+    assert manifest["module_file"] == "skillnet_lib.py"
+    assert manifest["module_sha256"] == H.sha256_file(module)
+    assert manifest["functions"] == [{"name": "get_route",
+                                      "sha256": H.sha256_text(picked[0]["source"])}]
+    hint = H.render_import_hint(picked, "http://h:3000", module_name="skillnet_lib")
+    assert 'os.environ["WORKSPACE_DIR"]' in hint
+    assert "from skillnet_lib import get_route" in hint
+    assert str(seed) not in hint  # no absolute path leaks into the prompt
+    # The module must import from a clean directory that is not the one it was written in.
+    clean = tmp_path / "clean_workspace"
+    clean.mkdir()
+    (clean / "skillnet_lib.py").write_bytes(module.read_bytes())
+    out = subprocess.run([sys.executable, "-c",
+                          "import os,sys; sys.path.insert(0, os.environ['WORKSPACE_DIR']); "
+                          "from skillnet_lib import get_route; print('ok')"],
+                         env={**os.environ, "WORKSPACE_DIR": str(clean)},
+                         capture_output=True, text=True, cwd=tmp_path)
+    assert out.stdout.strip() == "ok", out.stderr
+
+
+def test_agent_command_seeds_skill_module_into_run_dir(tmp_path):
+    cmd = E.agent_command("prompt", "task1_package_import", "http://h", tmp_path,
+                          "model.yaml", seed_files=[tmp_path / "a.py", tmp_path / "b.json"])
+    assert cmd[cmd.index("--seed-file") + 1] == str(tmp_path / "a.py")
+    assert cmd.count("--seed-file") == 2
+    assert "--seed-file" not in E.agent_command("prompt", "task1_scratch", "http://h",
+                                                tmp_path, "model.yaml")
+
+
+def test_execution_and_evaluation_status_are_separate_dimensions():
+    assert E.execution_status(timed_out=True, returncode=None, has_state=False) == "timeout"
+    assert E.execution_status(timed_out=False, returncode=1, has_state=False) == "process_error"
+    assert E.execution_status(timed_out=False, returncode=0, has_state=False) == "missing_final_state"
+    assert E.execution_status(timed_out=False, returncode=-15, has_state=True) == "completed"
+    assert E.evaluation_status(None) == "not_evaluated"
+    assert E.evaluation_status({"status": "scored_correct"}) == "scored"
+    assert E.evaluation_status({"status": "helper_dependency_error"}) == "dependency_error"
+    assert E.evaluation_status({"status": "unsupported_saved_state"}) == "unsupported"
+    assert E.evaluation_status({"status": "invalid_final_state"}) == "evaluation_failed"
